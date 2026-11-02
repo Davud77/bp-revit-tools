@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2026</RevitInstallDir>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Viewer\Viewer.html" />
+    <EmbeddedResource Include="Viewer\Viewer.js" />
+    <EmbeddedResource Include="Viewer\Calculation.js" />
+    <EmbeddedResource Include="Viewer\RadiatorSelection.js" />
+    <EmbeddedResource Include="Viewer\RadiatorUI.js" />
+    <EmbeddedResource Include="Viewer\RadiatorCatalog.json" />
+  </ItemGroup>
+  <Target Name="CheckRevitApi" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(RevitInstallDir)\RevitAPI.dll')" Text="Revit 2026 API not found. Set -p:RevitInstallDir=path-to-Revit-2026." />
+  </Target>
+
+</Project>

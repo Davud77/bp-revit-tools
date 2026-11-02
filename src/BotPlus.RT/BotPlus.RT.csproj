@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.0.0</Version>
+    <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2026</RevitInstallDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
+    <Reference Include="RevitAPI"><HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath><Private>false</Private><ExternallyResolved>true</ExternallyResolved></Reference>
+    <Reference Include="RevitAPIUI"><HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath><Private>false</Private><ExternallyResolved>true</ExternallyResolved></Reference>
+    <ProjectReference Include="../../modules/codex-mcp/plugin/WEAM.Revit.AI.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../modules/ac2revit/revit/Ac2Revit/Ac2Revit.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../modules/ov/HeatLossViewer/HeatLossViewer.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

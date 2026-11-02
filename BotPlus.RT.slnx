@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/modules/" />
+  <Folder Name="/modules/ac2revit/" />
+  <Folder Name="/modules/ac2revit/revit/">
+    <Project Path="modules/ac2revit/revit/Ac2Revit/Ac2Revit.csproj" />
+  </Folder>
+  <Folder Name="/modules/codex-mcp/" />
+  <Folder Name="/modules/codex-mcp/plugin/">
+    <Project Path="modules/codex-mcp/plugin/WEAM.Revit.AI.csproj" />
+  </Folder>
+  <Folder Name="/modules/ov/">
+    <Project Path="modules/ov/HeatLossViewer/HeatLossViewer.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/BotPlus.RT/BotPlus.RT.csproj" />
+  </Folder>
+</Solution>

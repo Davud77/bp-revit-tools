@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>HeatLossViewer</AssemblyName>
+    <RootNamespace>HeatLossViewer</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="RevitIntegration\**\*.cs" />
+    <Compile Include="..\HeatLossViewer\Export\BuildingData.cs" Link="BuildingData.cs" />
+    <Compile Include="..\HeatLossViewer\Export\ContourTopology.cs" Link="ContourTopology.cs" />
+    <Compile Include="..\HeatLossViewer\Export\BuildingExportWriter.cs" Link="BuildingExportWriter.cs" />
+    <Compile Include="..\HeatLossViewer\HtmlTemplate.cs" Link="HtmlTemplate.cs" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\Viewer.html" LogicalName="HeatLossViewer.Viewer.Viewer.html" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\Viewer.js" LogicalName="HeatLossViewer.Viewer.Viewer.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\Calculation.js" LogicalName="HeatLossViewer.Viewer.Calculation.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\RadiatorSelection.js" LogicalName="HeatLossViewer.Viewer.RadiatorSelection.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\RadiatorUI.js" LogicalName="HeatLossViewer.Viewer.RadiatorUI.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\RadiatorCatalog.json" LogicalName="HeatLossViewer.Viewer.RadiatorCatalog.json" />
+  </ItemGroup>
+</Project>
