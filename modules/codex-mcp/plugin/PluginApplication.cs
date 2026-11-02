@@ -15,10 +15,10 @@ public sealed class PluginApplication : IExternalApplication
             try { application.CreateRibbonTab(tabName); }
             catch (Autodesk.Revit.Exceptions.ArgumentException) { }
 
-            var panel = application.CreateRibbonPanel(tabName, "Codex MCP");
+            var panel = application.CreateRibbonPanel(tabName, "MCP");
             var button = new PushButtonData(
                 "WeamRevitAiConnection",
-                "Codex\nMCP",
+                "MCP",
                 Assembly.GetExecutingAssembly().Location,
                 typeof(Commands.ShowConnectionCommand).FullName!);
             button.Image = RibbonAssets.Icon(16);

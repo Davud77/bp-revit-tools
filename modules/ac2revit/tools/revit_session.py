@@ -16,13 +16,19 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'exporter'))
-from ac2r.client import TapirClient, aligned, chunks
+from ac2r.client import TapirClient, ApiError, aligned, chunks
 from ac2r.export import export, write_json
 from ac2r.normalize import digest
 from ac2r.jsonio import file_sha256
+from export_options import KINDS, selected_kinds, publish_outputs, restrict_pipeline
 
 
 def error_message(exc):
+    if isinstance(exc, ApiError) and exc.command == 'IFCFileOperation' and exc.code == -2130313109:
+        return ('Archicad отказал в экспорте IFC из активного окна (APIERR_BADWINDOW, -2130313109). '
+                'В Archicad откройте обычный план этажа и закройте диалоговые окна. '
+                'В Revit нажмите «Продолжить сеанс» и выберите session.json этого сеанса. '
+                'Ранее прочитанные данные сохранены; продолжение сначала проверит исходную модель.')
     if isinstance(exc, MemoryError):
         return str(exc) or 'Недостаточно памяти Python при обработке модели. Прочитанные ответы API сохранены в source/raw; подробности в failure.txt.'
     return str(exc) or type(exc).__name__
@@ -89,8 +95,20 @@ def export_ifc(api, project, translator, ifc_path):
     if api.call('GetProjectInfo') != project:
         raise ValueError('Source changed before IFC export')
     print('Экспорт IFC всего проекта: '+translator, flush=True)
-    result = api.call('IFCFileOperation', {'method':'save', 'ifcFilePath':str(ifc_path), 'fileType':'ifc',
-                      'translatorName':translator, 'elementsToExport':'EntireProject'})
+    # Named-translator Save requires a model window. Never rely on the user's active layout/schedule.
+    api.call('ChangeWindow', {'windowType':'FloorPlan'})
+    parameters={'method':'save','ifcFilePath':str(ifc_path),'fileType':'ifc',
+                'translatorName':translator,'elementsToExport':'EntireProject'}
+    try:
+        result=api.call('IFCFileOperation',parameters)
+    except ApiError as exc:
+        if exc.code!=-2130313109:raise
+        print('Archicad отклонил окно плана; переключение в 3D и один повтор IFC.',flush=True)
+        api.call('ChangeWindow',{'windowType':'3DModel'})
+        if api.call('GetProjectInfo')!=project:raise ValueError('Source changed during IFC window recovery')
+        if ifc_path.exists():
+            ifc_path.rename(ifc_path.with_name('failed-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S%f')+'.ifc'))
+        result=api.call('IFCFileOperation',parameters)
     if not result.get('success', result.get('succeeded', False)) or not ifc_path.is_file() or ifc_path.stat().st_size < 1024:
         raise RuntimeError('Archicad не подтвердил экспорт IFC: '+str(result))
 
@@ -112,9 +130,13 @@ def project_identity(project, registry=None):
 def probe(port):
     api = TapirClient(port, timeout=12)
     project = api.call('GetProjectInfo')
+    try:translators=api.call('GetIFCExportTranslators').get('translators',[])
+    except ApiError:translators=[]  # JSON export does not require IFC availability.
+    try:window_type=api.call('GetCurrentWindowType').get('currentWindowType','Unknown')
+    except ApiError:window_type='Unknown'
     return {'port': port, 'project': project, 'projectId': project_identity(project),
             'tapir': api.call('GetAddOnVersion'),
-            'translators': api.call('GetIFCExportTranslators').get('translators', [])}
+            'translators': translators, 'windowType':window_type}
 
 
 def write_separator_plan(source_path, manifest_path, output):
@@ -201,25 +223,52 @@ def run(args):
     if not session.is_relative_to(ROOT/'artifacts/sessions'):
         raise ValueError('Session must be inside artifacts/sessions')
     if session.exists(): raise FileExistsError(session)
+    mode=getattr(args,'mode','combined');selected=selected_kinds(getattr(args,'kinds',None))
     info = probe(args.port)
     if info['projectId'] != args.project_id or info['project']['projectPath'] != args.project_path:
         raise ValueError('Активный проект Archicad изменился. Подключитесь повторно.')
     names = [t['name'] for t in info['translators']]
-    if args.translator not in names: raise ValueError('Выбранный IFC-транслятор отсутствует')
+    if mode!='json' and args.translator not in names: raise ValueError('Выбранный IFC-транслятор отсутствует')
     session.mkdir(parents=True)
-    write_json(session/'session.json', dict(format='ac2r.session/1', status='exporting', selectedTranslator=args.translator, **info))
+    options=dict(exportMode=mode,exportKinds=selected)
+    write_json(session/'session.json', dict(format='ac2r.session/1', status='exporting', selectedTranslator=args.translator, **options, **info))
     phase = 'json-export'
     try:
         export_args = argparse.Namespace(output=str(session/'source'), port=args.port, timeout=180,
             resume=False, include_2d=False, limit=None, batch=100, metadata_batch=100,
             property_batch=100, property_scope='custom', properties=args.properties, gdl=getattr(args,'gdl',False), ifc=False,
             project_id=args.project_id)
+        if mode=='ifc':
+            # Only identity inventory is needed; no detailed JSON export or geometry preparation.
+            api=TapirClient(args.port,session/'ifc-api',timeout=3600);elements=[]
+            for kind in KINDS:
+                if kind=='Grid':continue
+                for item in api.call('GetElementsByType',{'elementType':kind},tapir=False).get('elements',[]):
+                    elements.append(dict(sourceGuid=item['elementId']['guid'].upper(),kind=kind,raw={}))
+            for batch in chunks(elements,100):
+                ids=[dict(elementId=dict(guid=e['sourceGuid'])) for e in batch]
+                values=api.call('GetIFCIdsOfElements',{'elements':ids})
+                for element,row in aligned(values,'elementIFCIds',batch):element['raw']['ifcIdentifiers']=row
+            manifest=dict(elements=elements)
+            (session/'source').mkdir(exist_ok=True)
+            export_ifc(api,info['project'],args.translator,session/'source/model.ifc')
+            outputs=publish_outputs(session,manifest,selected,mode)
+            state=dict(format='ac2r.session/1',status='exported',**info,**options,outputs=outputs)
+            write_json(session/'session.json',state);return state
         export(export_args)
         manifest_path = session/'source/manifest.json'
+        if mode=='json':
+            manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
+            outputs=publish_outputs(session,manifest,selected,mode)
+            state=dict(format='ac2r.session/1',status='ready',**info,**options,outputs=outputs,pipeline=outputs['json'],manifestSha256=file_sha256(Path(outputs['json'])))
+            write_json(session/'session.json',state)
+            write_json(ROOT/'artifacts/sessions/last-completed.json',{'session':str(session/'session.json')})
+            return state
         api = TapirClient(args.port, session/'ifc-api', timeout=3600)
         phase = 'ifc-export'
         ifc_path = session/'source/model.ifc'
         export_ifc(api, info['project'], args.translator, ifc_path)
+        outputs=publish_outputs(session,json.loads(manifest_path.read_text(encoding='utf-8')),selected,mode)
         from export_room_separators import extract
         phase = 'room-separators'
         print('Чтение исходных границ помещений', flush=True)
@@ -232,7 +281,7 @@ def run(args):
         budget=memory_budget(ifc_path)
         if budget['defer']:
             manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
-            state=dict(format='ac2r.session/1',status='captured',**info,selectedTranslator=args.translator,
+            state=dict(format='ac2r.session/1',status='captured',**info,**options,outputs=outputs,selectedTranslator=args.translator,
                 captureHash=capture['hash'],memoryBudget=budget,manifest=str(manifest_path),
                 counts=dict(collections.Counter(e['kind'] for e in manifest['elements'])))
             write_json(session/'session.json',state)
@@ -240,9 +289,10 @@ def run(args):
             return state
         phase = 'geometry-preparation'
         prepare_pipeline(session, manifest_path, ifc_path, args.assets.resolve())
+        restrict_pipeline(session/'pipeline.json',selected)
         verify(session)
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-        state = dict(format='ac2r.session/1', status='ready', **info,
+        state = dict(format='ac2r.session/1', status='ready', **info, **options, outputs=outputs,
             completedUtc=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             pipeline=str(session/'pipeline.json'), manifest=str(manifest_path),
             manifestSha256=file_sha256(manifest_path),
@@ -258,7 +308,7 @@ def run(args):
         return state
     except BaseException as exc:
         write_json(session/'session.json', dict(format='ac2r.session/1', status='failed', error=error_message(exc),
-                   errorType=type(exc).__name__, phase=phase, selectedTranslator=args.translator, **info))
+                   errorType=type(exc).__name__, phase=phase, selectedTranslator=args.translator, **options, **info))
         (session/'failure.txt').write_text(traceback.format_exc(),encoding='utf-8')
         raise
 
@@ -286,6 +336,11 @@ def _continue_session(args):
     state_path=session/'session.json'
     state=json.loads(state_path.read_text(encoding='utf-8-sig'))
     if state.get('format')!='ac2r.session/1':raise ValueError('Выберите session.json сеанса транслятора')
+    if state.get('exportMode')=='ifc':raise ValueError('Этот сеанс сохраняет только IFC. Для сборки выберите комбинированный экспорт или откройте IFC средствами Revit.')
+    if state.get('exportMode')=='json' and state.get('status')=='ready':
+        if file_sha256(Path(state['pipeline']))!=state.get('manifestSha256'):raise ValueError('JSON изменён после экспорта; создайте новый сеанс.')
+        write_json(ROOT/'artifacts/sessions/last-completed.json',{'session':str(state_path)})
+        return state
     if (session/'capture.json').is_file():return prepare_captured_session(session,args.assets.resolve())
     manifest_path=session/'source/manifest.json';ifc_path=session/'source/model.ifc'
     report=json.loads((session/'source/export-report.json').read_text(encoding='utf-8'))
@@ -316,6 +371,7 @@ def _continue_session(args):
         if b'END-ISO-10303-21;' not in stream.read():raise ValueError('Файл IFC ещё записывается или повреждён')
     manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
     if manifest['source']['projectId']!=state['projectId']:raise ValueError('JSON belongs to a different source project')
+    state['outputs']=publish_outputs(session,manifest,state.get('exportKinds',KINDS),'combined')
     before_manifest=file_sha256(manifest_path)
     before_ifc=file_sha256(ifc_path)
     attempt=session/('prepared-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S%f'))
@@ -327,6 +383,7 @@ def _continue_session(args):
         extract(manifest_path,Path(info['project']['projectPath']),attempt/'separator-source',port=args.port)
         write_separator_plan(attempt/'separator-source/elements.json',manifest_path,attempt/'separators.json')
         prepare_pipeline(attempt,manifest_path,ifc_path,args.assets.resolve())
+        restrict_pipeline(attempt/'pipeline.json',state.get('exportKinds',KINDS))
         if before_manifest!=file_sha256(manifest_path) or before_ifc!=file_sha256(ifc_path):
             raise ValueError('Source JSON/IFC changed during preparation')
         state.update(status='ready',pipeline=str(attempt/'pipeline.json'),manifest=str(manifest_path),
@@ -360,6 +417,7 @@ def prepare_captured_session(session,assets):
     try:
         write_separator_plan(session/'separator-source/elements.json',manifest_path,attempt/'separators.json')
         prepare_pipeline(attempt,manifest_path,ifc_path,Path(assets).resolve());verify(session)
+        restrict_pipeline(attempt/'pipeline.json',state.get('exportKinds',KINDS))
         manifest=json.loads(manifest_path.read_text(encoding='utf-8'))
         state.update(status='ready',pipeline=str(attempt/'pipeline.json'),manifest=str(manifest_path),captureHash=capture['hash'],preparedOffline=True,
             manifestSha256=capture['files']['source/manifest.json'],ifcSha256=capture['files']['source/model.ifc'],
@@ -403,7 +461,9 @@ def main():
     a.add_argument('--result', type=Path, required=True)
     a = sub.add_parser('export'); a.add_argument('--port', type=int, required=True)
     a.add_argument('--project-id', required=True); a.add_argument('--project-path', required=True)
-    a.add_argument('--translator', required=True); a.add_argument('--output', type=Path, required=True)
+    a.add_argument('--translator', default=''); a.add_argument('--output', type=Path, required=True)
+    a.add_argument('--mode',choices=['json','ifc','combined'],default='combined')
+    a.add_argument('--kinds',nargs='+',choices=KINDS)
     a.add_argument('--assets', type=Path, required=True); a.add_argument('--properties', action='store_true')
     a.add_argument('--gdl', action='store_true', help='Full library parameters; may produce gigabytes of data')
     a=sub.add_parser('prepare');a.add_argument('--session',type=Path,required=True);a.add_argument('--port',type=int,default=19723)

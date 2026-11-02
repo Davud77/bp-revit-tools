@@ -18,7 +18,7 @@ sealed class SetupWindow : Form
         Font = new Font("Segoe UI", 10);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 10 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.Controls.Add(new Label { Text = "BotPlus RT 1.1.0", Font = new Font(Font.FontFamily, 19, FontStyle.Bold), AutoSize = true });
+        layout.Controls.Add(new Label { Text = "BotPlus RT 1.2.0", Font = new Font(Font.FontFamily, 19, FontStyle.Bold), AutoSize = true });
         layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(560, 0), Text = uninstall
             ? "Удаление надстройки и её MCP-подключения. Ваши модели, снимки и настройки сохранятся. Закройте Revit и AI-клиент."
             : "Единая вкладка BotPlus RT: Codex MCP, Ac2Revit и ОВ. Node.js, Python и библиотеки IFC включены. Требуется Autodesk Revit 2026 x64." });

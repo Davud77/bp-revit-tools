@@ -11,6 +11,7 @@ public static class PipelineRunner
     public sealed class Plan
     {
         public string PipelineFormat {get;set;}="";
+        public List<string>? ExportKinds {get;set;}
         public string SourceManifest {get;set;}="";
         public string Mapping {get;set;}="";
         public string GridsManifest {get;set;}="";
@@ -46,6 +47,14 @@ public static class PipelineRunner
     {
         var plan=JsonSerializer.Deserialize<Plan>(File.ReadAllText(path),Json.Options)??throw new InvalidDataException("Empty pipeline");
         if(plan.PipelineFormat!="ac2r.pipeline/1")throw new InvalidDataException("Unsupported pipeline format");
+        if(plan.ExportKinds!=null)
+        {
+            if(plan.ExportKinds.Count==0 || plan.ExportKinds.Any(k=>!ImportSelection.KnownKinds.Contains(k)))throw new InvalidDataException("Invalid export category scope");
+            var allowed=plan.ExportKinds.ToHashSet(StringComparer.Ordinal);
+            var requested=selection==null?allowed:selection.Requested.Where(allowed.Contains).ToHashSet();
+            selection=new ImportSelection(requested);
+            selection.RestrictTo(allowed);
+        }
         if(plan.ProfileColumnMode is not ("auto" or "native" or "ifc"))throw new InvalidDataException("Invalid profileColumnMode");
         string Resolve(string value)
         {

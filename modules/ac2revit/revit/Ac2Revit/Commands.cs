@@ -21,7 +21,7 @@ public sealed class App : IExternalApplication
             target.AddItem(button);
         }
         Add(panel,"AcTransfer","Archicad\n→ Revit",typeof(TransferCommand),"transfer","Выгрузить открытый проект Archicad через Tapir и собрать его в Revit. JSON, IFC и отчёты сохраняются в папке обмена.",true);
-        Add(panel,"AcExport","Экспорт\nArchicad",typeof(ExportArchicadCommand),"export","Прочитать открытый PLN, экспортировать JSON и IFC, подготовить этапы импорта. Работает без открытой модели Revit.",true);
+        Add(panel,"AcExport","Экспорт\nArchicad",typeof(ExportArchicadCommand),"export","Экспортировать JSON, IFC или оба формата; выбрать категории. Работает без открытой модели Revit.",true);
         Add(panel,"AcBuildLatest","Собрать\nэкспорт",typeof(BuildLatestCommand),"build","Собрать последний успешно подготовленный экспорт. Неполные выгрузки не используются.",true);
         Add(panel,"AcContinueSession","Продолжить\nсеанс",typeof(ContinueSessionCommand),"resume","Восстановить JSON из архива и продолжить подготовку. Готовый IFC используется повторно; отсутствующий экспортируется после проверки источника.",true);
         panel.AddSeparator();

@@ -18,6 +18,13 @@ public sealed class ImportSelection
         do{changed=false;foreach(var (child,host) in dependencies)if(Included.Contains(child) && KnownKinds.Contains(host))changed|=Included.Add(host);}while(changed);
     }
     public bool Includes(string kind)=>Included.Contains(kind);
+    public void RestrictTo(IEnumerable<string> allowed)
+    {
+        var scope=allowed.ToHashSet(StringComparer.Ordinal);
+        if(scope.Count==0 || scope.Any(k=>!KnownKinds.Contains(k)))throw new InvalidDataException("Invalid export category scope");
+        Requested.IntersectWith(scope);Included.IntersectWith(scope);
+        if(Requested.Count==0)throw new InvalidDataException("Нет выбранных категорий в пределах исходного экспорта.");
+    }
     public bool IncludesType(string kind)=>Includes(kind=="Floor"?"Slab":kind);
     public bool AllowsStage(string name)=>name switch
     {

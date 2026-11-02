@@ -35,7 +35,8 @@ class SourceCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);session,info=self.capture(root);capture=seal(session,info)
             args=argparse.Namespace(session=session,port=19723,assets=root/'assets')
-            with patch.object(revit_session,'ROOT',root),patch.object(revit_session,'probe') as probe,patch.object(revit_session,'prepare_pipeline'),patch.object(revit_session,'write_separator_plan'),patch('source_capture.memory_budget',return_value=dict(defer=False)):
+            def prepare(folder,*args):write_json(folder/'pipeline.json',dict(pipelineFormat='ac2r.pipeline/1'))
+            with patch.object(revit_session,'ROOT',root),patch.object(revit_session,'probe') as probe,patch.object(revit_session,'prepare_pipeline',side_effect=prepare),patch.object(revit_session,'write_separator_plan'),patch('source_capture.memory_budget',return_value=dict(defer=False)):
                 state=revit_session.continue_session(args)
             probe.assert_not_called();self.assertTrue(state['preparedOffline']);self.assertEqual(state['captureHash'],capture['hash'])
             self.assertEqual(json.loads((session.parent/'last-completed.json').read_text())['session'],str(session/'session.json'))

@@ -18,6 +18,7 @@ internal sealed class ImportSelectionWindow:Window
     readonly TextBlock dependencies=new(){TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,12,0,12)};
     readonly Button run=new(){Content="Начать импорт",Padding=new Thickness(18,7,18,7),IsDefault=true};
     readonly List<(string Child,string Host)> hostKinds=[];
+    HashSet<string>? exportAllowed;
     public ImportSelection? Selection {get;private set;}
     public ImportSelectionWindow(IntPtr owner,string path)
     {
@@ -27,6 +28,7 @@ internal sealed class ImportSelectionWindow:Window
         if(PipelineRunner.IsPipeline(path))
         {
             var plan=JsonSerializer.Deserialize<PipelineRunner.Plan>(File.ReadAllText(path),Json.Options)!;
+            exportAllowed=plan.ExportKinds?.ToHashSet(StringComparer.Ordinal);
             string Resolve(string p)=>Path.GetFullPath(p,Path.GetDirectoryName(path)!);
             sourcePath=Resolve(plan.SourceManifest);axes=Manifest.Load(Resolve(plan.GridsManifest));
             var source=Manifest.Load(sourcePath);var kinds=source.Elements.ToDictionary(e=>e.SourceGuid,e=>e.Kind,StringComparer.OrdinalIgnoreCase);
@@ -50,13 +52,18 @@ internal sealed class ImportSelectionWindow:Window
         var list=new StackPanel();root.Children.Add(new ScrollViewer{Content=list,VerticalScrollBarVisibility=ScrollBarVisibility.Auto});
         foreach(string kind in ImportSelection.KnownKinds)
         {
-            int count=counts.GetValueOrDefault(kind);if(count==0)continue;
+            int count=counts.GetValueOrDefault(kind);if(count==0 || exportAllowed!=null && !exportAllowed.Contains(kind))continue;
             var box=new CheckBox{Content=$"{Label(kind)} — {count:N0}",IsChecked=true,Margin=new Thickness(3,5,3,5),FontSize=15};
             boxes[kind]=box;list.Children.Add(box);box.Checked+=(_,_)=>Refresh();box.Unchecked+=(_,_)=>Refresh();
         }
         run.Click+=(_,_)=>{Selection=Current();DialogResult=true;};Refresh();
     }
-    ImportSelection Current()=>new(boxes.Where(p=>p.Value.IsChecked==true).Select(p=>p.Key),hostKinds);
+    ImportSelection Current()
+    {
+        var selection=new ImportSelection(boxes.Where(p=>p.Value.IsChecked==true).Select(p=>p.Key),hostKinds);
+        if(exportAllowed!=null)selection.RestrictTo(exportAllowed);
+        return selection;
+    }
     void Refresh()
     {
         if(!boxes.Values.Any(b=>b.IsChecked==true)){dependencies.Text="Выберите хотя бы одну категорию.";run.IsEnabled=false;return;}

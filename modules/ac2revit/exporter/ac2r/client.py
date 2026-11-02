@@ -5,7 +5,10 @@ from .jsonio import write_json
 
 
 class ApiError(RuntimeError):
-    pass
+    def __init__(self, message, *, command=None, code=None):
+        super().__init__(message)
+        self.command = command
+        self.code = code
 
 
 class TapirClient:
@@ -54,12 +57,16 @@ class TapirClient:
                 write_json(path, {'request': payload, 'response': result}, compact=True)
                 self.last_archive = path
         if result.get('succeeded') is not True:
-            raise ApiError(f'{command}: {result.get("error", result)}')
+            error = result.get('error', result)
+            raise ApiError(f'{command}: {error}', command=command,
+                           code=error.get('code') if isinstance(error, dict) else None)
         body = result.get('result', {})
         if tapir:
             body = body.get('addOnCommandResponse', {})
         if 'error' in body:
-            raise ApiError(f'{command}: {body["error"]}')
+            error = body['error']
+            raise ApiError(f'{command}: {error}', command=command,
+                           code=error.get('code') if isinstance(error, dict) else None)
         return body
 
 

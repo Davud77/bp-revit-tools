@@ -15,6 +15,9 @@ internal sealed class ExchangeWindow : Window
     readonly Button connect=new(){Content="Подключиться",Padding=new Thickness(14,5,14,5)};
     readonly TextBlock source=new(){Text="Подключение к Archicad…",TextWrapping=TextWrapping.Wrap};
     readonly ComboBox translators=new(){MinHeight=30};
+    readonly ComboBox exportMode=new(){MinHeight=30,SelectedIndex=0};
+    readonly Dictionary<string,CheckBox> exportKinds=[];
+    readonly WrapPanel categories=new(){Margin=new Thickness(0,6,0,6)};
     readonly CheckBox properties=new(){Content="Пользовательские свойства элементов (увеличивает время экспорта)",Margin=new Thickness(0,10,0,6)};
     readonly CheckBox gdl=new(){Content="Все GDL-параметры — отдельный архив (может занять несколько ГБ)",Margin=new Thickness(0,0,0,6),ToolTip="Полные параметры сохраняются в source/raw; JSON содержит ссылки с SHA-256. Для построения геометрии этот флажок не требуется."};
     readonly CheckBox newProject=new(){Content="Собрать в новом проекте Revit",IsChecked=true,Margin=new Thickness(0,6,0,6)};
@@ -32,6 +35,9 @@ internal sealed class ExchangeWindow : Window
     readonly bool hasProject;
     string resumeSession;
     public string PipelinePath {get;private set;}="";
+    public string ExportFolder {get;private set;}="";
+    public bool ExportOnly {get;private set;}
+    string Mode=>exportMode.SelectedIndex switch{1=>"json",2=>"ifc",_=>"combined"};
     public bool CreateNewProject=>newProject.IsChecked==true;
     public string TemplatePath=>template.Text.Trim();
 
@@ -39,7 +45,7 @@ internal sealed class ExchangeWindow : Window
     {
         build=buildAfter;this.hasProject=hasProject;this.resumeSession=resumeSession;
         Title="BotPlus Ac2Revit — "+(resumeSession.Length>0?"Продолжить сеанс":build?"Перенос модели":"Экспорт из Archicad");
-        Width=790;Height=740;MinWidth=680;MinHeight=620;WindowStartupLocation=WindowStartupLocation.CenterOwner;
+        Width=850;Height=920;MinWidth=720;MinHeight=720;WindowStartupLocation=WindowStartupLocation.CenterOwner;
         new WindowInteropHelper(this){Owner=owner};
         var root=new DockPanel{Margin=new Thickness(20)};Content=root;
         var bottom=new StackPanel();DockPanel.SetDock(bottom,Dock.Bottom);root.Children.Add(bottom);
@@ -53,9 +59,15 @@ internal sealed class ExchangeWindow : Window
         ports.Children.Add(new TextBlock{Text="Tapir · 127.0.0.1 : ",VerticalAlignment=VerticalAlignment.Center});ports.Children.Add(port);
         connect.Margin=new Thickness(10,0,0,0);ports.Children.Add(connect);
         top.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(235,244,252)),Padding=new Thickness(12),Child=source,Margin=new Thickness(0,0,0,12)});
+        exportMode.Items.Add("JSON + IFC — комбинированный перенос");exportMode.Items.Add("Только JSON — параметры и нативные адаптеры");exportMode.Items.Add("Только IFC — сохранить файл для обмена");exportMode.SelectedIndex=0;
+        top.Children.Add(exportMode);
+        var scope=new Expander{Header="Элементы экспорта — по умолчанию все",Content=categories,Margin=new Thickness(0,8,0,4)};top.Children.Add(scope);
+        foreach(var (kind,label) in new[]{("Wall","Стены"),("Slab","Перекрытия"),("Door","Двери"),("Window","Окна"),("Zone","Помещения"),("Column","Колонны"),("Beam","Балки"),("Roof","Кровли"),("Mesh","3D-сетки"),("Morph","Морфы"),("Stair","Лестницы"),("Railing","Ограждения"),("CurtainWall","Витражи"),("Object","Объекты"),("Shell","Оболочки"),("Skylight","Световые люки"),("Lamp","Светильники"),("Opening","Проёмы"),("Grid","Оси IFC")})
+        {var box=new CheckBox{Content=label,IsChecked=true,Margin=new Thickness(0,3,16,3),MinWidth=130};exportKinds[kind]=box;categories.Children.Add(box);}
+        if(resumeSession.Length>0){exportMode.IsEnabled=false;scope.IsEnabled=false;using var saved=JsonDocument.Parse(File.ReadAllText(resumeSession));exportMode.SelectedIndex=saved.RootElement.S("exportMode") switch{"json"=>1,"ifc"=>2,_=>0};}
         top.Children.Add(new TextBlock{Text=resumeSession.Length>0?"Подготовка сохранённых JSON и IFC":"IFC-транслятор Archicad",Margin=new Thickness(0,0,0,5)});top.Children.Add(translators);
         if(resumeSession.Length>0)translators.Visibility=Visibility.Collapsed;
-        top.Children.Add(new TextBlock{Text=resumeSession.Length>0?"JSON восстанавливается из завершённых ответов API. Сохранённый IFC используется повторно; отсутствующий IFC экспортируется после сверки всех элементов. Откройте тот же PLN и не редактируйте модель во время проверки.":"Выберите переводчик, сохраняющий исходные координаты. GUID сверяются по данным Archicad и IFC. Экспортируется весь проект; во время чтения не редактируйте Archicad.",TextWrapping=TextWrapping.Wrap,FontSize=12,Margin=new Thickness(0,6,0,0)});
+        top.Children.Add(new TextBlock{Text=resumeSession.Length>0?"Сохранённый IFC используется повторно; отсутствующий экспортируется после сверки исходной модели. Откройте тот же PLN.":"Выбор категорий применяется к итоговым файлам и сборке. Служебный снимок исходного проекта сохраняется для проверки координат, связей и восстановления. Для окон и дверей в JSON нужны их стены. Во время чтения не редактируйте Archicad.",TextWrapping=TextWrapping.Wrap,FontSize=12,Margin=new Thickness(0,6,0,0)});
         top.Children.Add(properties);
         top.Children.Add(gdl);
         if(resumeSession.Length>0){properties.Visibility=Visibility.Collapsed;gdl.Visibility=Visibility.Collapsed;}
@@ -86,11 +98,14 @@ internal sealed class ExchangeWindow : Window
         port.TextChanged+=(_,_)=>{connection=null;run.IsEnabled=false;};
         Closing+=OnClosing;
         Loaded+=async(_,_)=>await Connect();
+        exportMode.SelectionChanged+=(_,_)=>{translators.IsEnabled=!busy && Mode!="json";properties.IsEnabled=!busy && Mode!="ifc";gdl.IsEnabled=properties.IsEnabled;run.Content=Mode=="ifc"?"Экспортировать IFC":build?"Экспортировать и собрать":"Экспортировать";};
     }
     void Log(string line)=>Dispatcher.BeginInvoke(new Action(()=>{log.AppendText(line+Environment.NewLine);log.ScrollToEnd();}));
     void SetBusy(bool value)
     {
         busy=value;connect.IsEnabled=!value;port.IsEnabled=!value;translators.IsEnabled=!value && resumeSession.Length==0;properties.IsEnabled=!value;gdl.IsEnabled=!value;
+        exportMode.IsEnabled=!value && resumeSession.Length==0;categories.IsEnabled=!value && resumeSession.Length==0;
+        translators.IsEnabled=translators.IsEnabled && Mode!="json";properties.IsEnabled=properties.IsEnabled && Mode!="ifc";gdl.IsEnabled=properties.IsEnabled;
         run.IsEnabled=!value && connection!=null;newProject.IsEnabled=!value && hasProject;
         template.IsEnabled=!value && newProject.IsChecked==true;browse.IsEnabled=template.IsEnabled;
         cancel.IsEnabled=true;cancel.Content=value?"Остановить":"Закрыть";progress.IsIndeterminate=value;
@@ -115,12 +130,11 @@ internal sealed class ExchangeWindow : Window
             await ExchangeServices.RunAsync("revit_session.py",["probe","--port",number.ToString(),"--result",result],Log,cancellation.Token);
             using var parsed=JsonDocument.Parse(File.ReadAllText(result));connection=parsed.RootElement.Clone();
             var info=connection.Value;var project=info.GetProperty("project");
-            source.Text=project.S("projectName")+"\n"+project.S("projectPath")+"\nID: "+info.S("projectId");
+            source.Text=project.S("projectName")+"\n"+project.S("projectPath")+"\nTapir: "+info.D("port")+" · окно: "+info.S("windowType");
             foreach(var t in info.GetProperty("translators").EnumerateArray())translators.Items.Add(t.S("name"));
             translators.SelectedItem=translators.Items.Cast<string>().FirstOrDefault(s=>s=="Точный Экспорт Геометрии");
             if(translators.SelectedIndex<0 && translators.Items.Count>0)translators.SelectedIndex=0;
-            if(translators.Items.Count==0 && resumeSession.Length==0)throw new InvalidDataException("В Archicad не найдены IFC-трансляторы.");
-            Log("Подключено. Читается весь проект, без фильтра видимости.");
+            Log("Подключено. Выберите формат и категории экспорта.");
             if(resumeSession.Length>0)Log("Восстановление и подготовка: "+resumeSession+". Готовый IFC используется повторно; отсутствующий экспортируется после проверки источника.");
         }
         catch(OperationCanceledException){source.Text="Подключение остановлено.";}
@@ -129,9 +143,12 @@ internal sealed class ExchangeWindow : Window
     }
     async Task Export()
     {
-        if(busy || connection==null || (resumeSession.Length==0 && translators.SelectedItem is not string))return;
+        if(busy || connection==null)return;
+        if(resumeSession.Length==0 && Mode!="json" && translators.SelectedItem is not string){Log("Выберите IFC-транслятор.");return;}
+        var selected=exportKinds.Where(p=>p.Value.IsChecked==true).Select(p=>p.Key).ToList();
+        if(resumeSession.Length==0 && selected.Count==0){Log("Выберите хотя бы одну категорию.");return;}
         string translator=translators.SelectedItem as string??"";
-        if(build && CreateNewProject && TemplatePath.Length>0 && !File.Exists(TemplatePath)){Log("Шаблон Revit не найден.");return;}
+        if(build && Mode!="ifc" && CreateNewProject && TemplatePath.Length>0 && !File.Exists(TemplatePath)){Log("Шаблон Revit не найден.");return;}
         var info=connection.Value;
         string name=info.GetProperty("project").S("projectName","Archicad");
         name=new string(name.Select(c=>Path.GetInvalidFileNameChars().Contains(c)?'_':c).ToArray());
@@ -141,6 +158,7 @@ internal sealed class ExchangeWindow : Window
             "--project-path",info.GetProperty("project").S("projectPath"),"--translator",translator,"--output",session,"--assets",ExchangeServices.Assets};
         if(properties.IsChecked==true)args.Add("--properties");
         if(gdl.IsChecked==true)args.Add("--gdl");
+        args.AddRange(["--mode",Mode,"--kinds"]);args.AddRange(selected);
         if(resumeSession.Length>0)args=["prepare","--session",resumeSession,"--port",((int)info.D("port")).ToString(),"--assets",ExchangeServices.Assets];
         SetBusy(true);cancellation=new CancellationTokenSource();
         using var journal=new StreamWriter(Path.Combine(ExchangeServices.Sessions,"export-"+DateTime.Now.ToString("yyyyMMdd-HHmmssfff")+".log"),false,System.Text.Encoding.UTF8){AutoFlush=true};
@@ -150,6 +168,8 @@ internal sealed class ExchangeWindow : Window
             Log("Новый сеанс: "+session);
             await ExchangeServices.RunAsync("revit_session.py",args,line=>{lock(sync)journal.WriteLine(line);Log(line);},cancellation.Token);
             using var state=JsonDocument.Parse(File.ReadAllText(Path.Combine(session,"session.json")));
+            ExportFolder=Path.Combine(session,"export");
+            if(state.RootElement.S("status")=="exported"){ExportOnly=true;DialogResult=true;return;}
             if(build && CreateNewProject)
             {
                 var saved=System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(session,"session.json")))!;
@@ -173,7 +193,7 @@ internal sealed class ExchangeWindow : Window
             string statePath=Path.Combine(session,"session.json");
             if(resumeSession.Length==0 && File.Exists(statePath)){var node=System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(statePath))!;if(node["status"]?.GetValue<string>()!="ready"){node["status"]="cancelled";File.WriteAllText(statePath,node.ToJsonString(Json.Options));}}
         }
-        catch(Exception ex){Log(ex.Message);Log("Сеанс и диагностика: "+session);}
+        catch(Exception ex){if(!ex.Message.TrimStart().StartsWith("ОШИБКА:",StringComparison.Ordinal))Log(ex.Message);Log("Сеанс и диагностика: "+session);}
         finally{cancellation.Dispose();cancellation=null;SetBusy(false);}
     }
     void OnClosing(object? sender,CancelEventArgs e)

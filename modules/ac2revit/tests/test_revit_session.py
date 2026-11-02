@@ -5,12 +5,29 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from io import BytesIO
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 import revit_session as session
 
 
 class SessionTests(unittest.TestCase):
+    def test_archicad_window_error_has_actionable_recovery_and_retains_code(self):
+        payload={'succeeded':True,'result':{'addOnCommandResponse':{
+            'error':{'code':-2130313109,'message':'Failed to save the project as IFC'},'success':False}}}
+        with patch('urllib.request.urlopen',return_value=BytesIO(json.dumps(payload).encode())):
+            with self.assertRaises(session.ApiError) as caught:
+                session.TapirClient().call('IFCFileOperation',{'method':'save'})
+        self.assertEqual(caught.exception.code,-2130313109)
+        message=session.error_message(caught.exception)
+        for text in ('APIERR_BADWINDOW','план этажа','Продолжить сеанс','session.json'):
+            self.assertIn(text,message)
+
+    def test_other_api_errors_do_not_suggest_wrong_window_recovery(self):
+        for command,code in [('IFCFileOperation',-2130312310),('GetProjectInfo',-2130313109)]:
+            error=session.ApiError('original diagnostic',command=command,code=code)
+            self.assertEqual(session.error_message(error),'original diagnostic')
+
     def saved_session(self,root,complete=True,ifc_end=True):
         folder=root/'artifacts/sessions/saved';(folder/'source').mkdir(parents=True)
         state={'format':'ac2r.session/1','status':'ready','projectId':'wanted','project':{'projectPath':'source.pln'},'pipeline':'previous'}
@@ -70,7 +87,9 @@ class SessionTests(unittest.TestCase):
             (folder/'session.json').write_text(json.dumps(state),encoding='utf-8')
             args=argparse.Namespace(session=folder,port=19723,assets=root/'assets')
             info={'projectId':'wanted','project':{'projectPath':'source.pln'}}
-            with patch.object(session,'ROOT',root),patch.object(session,'probe',return_value=info),patch('export_room_separators.extract'),patch.object(session,'write_separator_plan'),patch.object(session,'prepare_pipeline'):
+            def prepared(folder,*args):
+                (folder/'pipeline.json').write_text('{"pipelineFormat":"ac2r.pipeline/1"}',encoding='utf-8')
+            with patch.object(session,'ROOT',root),patch.object(session,'probe',return_value=info),patch('export_room_separators.extract'),patch.object(session,'write_separator_plan'),patch.object(session,'prepare_pipeline',side_effect=prepared):
                 session.continue_session(args)
             ready=json.loads((folder/'session.json').read_text())
             self.assertEqual(ready['status'],'ready')

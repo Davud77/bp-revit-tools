@@ -72,6 +72,7 @@ internal static class ExchangeCommands
         {
             var window=new ExchangeWindow(ui.MainWindowHandle,build,ui.ActiveUIDocument?.Document is Document d && !d.IsFamilyDocument && !d.IsReadOnly,ui.Application.DefaultProjectTemplate,resumeSession);
             if(window.ShowDialog()!=true)return Result.Cancelled;
+            if(window.ExportOnly){TaskDialog.Show("Экспорт IFC","IFC сохранён: "+window.ExportFolder+"\nДля открытия IFC используйте Файл → Открыть → IFC в Revit.");ExchangeServices.OpenFolder(window.ExportFolder);return Result.Succeeded;}
             if(!build){TaskDialog.Show("Экспорт Archicad","Экспорт и подготовка завершены.\n\n"+window.PipelinePath+"\n\nНажмите «Собрать экспорт» для построения модели.");return Result.Succeeded;}
             if(window.CreateNewProject)NewProject(ui,window.PipelinePath,window.TemplatePath);
             return Command.RunPath(ui,window.PipelinePath,ref message);

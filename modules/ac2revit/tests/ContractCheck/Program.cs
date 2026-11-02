@@ -73,6 +73,11 @@ foreach(double sweep in new[]{Math.PI,-Math.PI,1.5*Math.PI,-1.5*Math.PI,1e-4})
 var largeArc=new Edge{Kind="arc",Start=P(500000,-200000),Mid=P(500001,-200001),End=P(500002,-200000)};
 Near(SourcePlanarGeometry.SignedArea(new[]{largeArc,new Edge{Start=largeArc.End,End=largeArc.Start}}),Math.PI/2);
 Console.WriteLine("PASS: analytic minor/major/reversed/tiny arcs and large-coordinate area checks");
+var limited=new ImportSelection(new[]{"Zone","Wall"});limited.RestrictTo(new[]{"Zone","Wall"});
+if(limited.Includes("Door") || limited.Includes("Window"))throw new Exception("Excluded export fillings returned as room dependencies");
+try{new ImportSelection(new[]{"Door"}).RestrictTo(new[]{"Wall"});throw new Exception("Empty export intersection accepted");}
+catch(InvalidDataException){ }
+Console.WriteLine("PASS: export category limits override automatic dependencies");
 if(args.Length==0)return;
 
 var manifest = Manifest.Load(args[0]);

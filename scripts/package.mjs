@@ -28,6 +28,8 @@ await cp(path.join(repo, 'modules/ac2revit/revit/assets'), path.join(ac, 'dist/R
 await writeFile(path.join(ac, 'config/exchange-settings.json'), '{"projectTemplate":""}\n');
 run(python, [path.join(repo, 'scripts/package-python.py'), path.join(ac, 'runtime/python')]);
 await cp(path.join(repo, 'README.md'), path.join(stage, 'README.md'));
+await cp(path.join(repo, 'USAGE.md'), path.join(stage, 'USAGE.md'));
+await cp(path.join(repo, 'docs/UPSTREAM-MCP.md'), path.join(stage, 'UPSTREAM-MCP.md'));
 const hashes = {};
 async function walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -41,5 +43,5 @@ async function walk(dir) {
 await rm(path.join(stage, 'release.json'));
 // The four distributable Ac2Revit families/templates are intentionally allowed.
 await walk(stage);
-await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: '1.1.0', target: 'Revit 2026 / Windows x64', modules: ['Codex MCP', 'Ac2Revit', 'ОВ'], node: process.version, files: hashes }, null, 2));
+await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: '1.2.0', target: 'Revit 2026 / Windows x64', modules: ['MCP', 'Ac2Revit', 'ОВ'], node: process.version, files: hashes }, null, 2));
 console.log(`BotPlus RT payload: ${Object.keys(hashes).length} files`);

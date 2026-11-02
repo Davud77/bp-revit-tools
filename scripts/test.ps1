@@ -5,6 +5,8 @@ function CheckExit([string]$step) { if ($LASTEXITCODE -ne 0) { throw "$step fail
 & (Join-Path $root 'build.ps1')
 dotnet run --project (Join-Path $root 'tests\HostChecks\HostChecks.csproj') -c Release
 CheckExit 'Host lifecycle checks'
+dotnet run --project (Join-Path $root 'modules/codex-mcp/tests/ApprovalSettings.Tests/ApprovalSettings.Tests.csproj') -c Release
+CheckExit 'MCP approval settings'
 Push-Location (Join-Path $root 'modules\codex-mcp\server')
 try { node --test test/*.test.js; CheckExit 'MCP tests' } finally { Pop-Location }
 Push-Location $root
