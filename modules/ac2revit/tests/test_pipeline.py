@@ -25,6 +25,38 @@ def snapshot():
 
 
 class PipelineTests(unittest.TestCase):
+    def zone(self, **vertical):
+        s = snapshot()
+        s['stories']['stories'].append(dict(index=6,level=15.15,height=3,name='Верх'))
+        s['elements']=[dict(sourceGuid=WALL,type='Zone',floorIndex=5,id='Z',details=dict(
+            zCoordinate=12.35,name='Комната',numberStr='101',
+            polygonOutline=[dict(x=x,y=y) for x,y in [(0,0),(4,0),(4,3),(0,3)]],**vertical))]
+        return normalize(s,PROJECT)['elements'][0]
+
+    def test_room_linked_vertical_constraints(self):
+        e=self.zone(height=2.7,bottomOffset=.2,relativeTopStory=1,topOffset=-.1)
+        self.assertEqual(e['status'],'ready')
+        self.assertEqual(e['payload']['upperLevelKey'],'story:6')
+        self.assertAlmostEqual(e['payload']['upperOffset'],-.1)
+        self.assertAlmostEqual(e['payload']['baseOffset'],.2)
+
+    def test_room_unlinked_height_does_not_invent_next_story_link(self):
+        p=self.zone(height=4,relativeTopStory=0)['payload']
+        self.assertEqual(p['upperLevelKey'],'story:5')
+        self.assertFalse(p['sourceTopLinked'])
+        self.assertAlmostEqual(p['upperOffset'],4.2)
+
+    def test_room_invalid_vertical_constraints_are_rejected(self):
+        for fields in [dict(height=-1),dict(height=3,bottomOffset=.3),
+                       dict(height=3,relativeTopStory=2,topOffset=0),
+                       dict(height=3,relativeTopStory=1,topOffset=0)]:
+            with self.subTest(fields=fields):self.assertEqual(self.zone(**fields)['status'],'unsupported')
+
+    def test_legacy_zone_missing_height_does_not_invent_upper_binding(self):
+        e=self.zone()
+        self.assertEqual(e['status'],'ready')
+        self.assertNotIn('upperLevelKey',e['payload'])
+
     def slab(self,ref='CoreTop',offset=0):
         s=snapshot();s['elements']=[dict(sourceGuid=WALL,type='Slab',floorIndex=5,id='S',details=dict(
             structureType='Composite',thickness=.3,zCoordinate=12.15,referencePlaneLocation=ref,offsetFromTop=offset,

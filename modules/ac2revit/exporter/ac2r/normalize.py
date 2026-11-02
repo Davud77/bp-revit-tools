@@ -146,10 +146,32 @@ def normalize(snapshot, project_id):
                     raise ValueError('Invalid opening dimensions')
                 e['status'] = 'needsMapping'
             elif kind == 'Zone':
+                d = dict(raw.get('verticalConstraints', {}), **d)
                 profile = loops(d, float(d['zCoordinate']))
                 p = interior_point(profile[0], profile[1:])
                 e['payload'] = {'loops': profile, 'point': p, 'name': d['name'],
                                 'number': d['numberStr'], 'baseOffset': float(d['zCoordinate'])-level}
+                # Tapir >= versions exposing API_ZoneType vertical constraints.
+                # A missing source constraint must never become an invented next-story link.
+                if 'bottomOffset' in d and abs(float(d['bottomOffset'])-e['payload']['baseOffset']) > 1e-6:
+                    raise ValueError('Zone absolute Z and bottom offset disagree')
+                if 'height' in d:
+                    height = float(d['height'])
+                    if not math.isfinite(height) or height <= 0:
+                        raise ValueError('Invalid source zone height')
+                    relative = d.get('relativeTopStory', 0)
+                    if not isinstance(relative, int) or relative < 0:
+                        raise ValueError('Invalid source zone top-story relation')
+                    upper = by_index.get(raw['floorIndex']+relative)
+                    if upper is None:
+                        raise ValueError('Source zone upper story missing')
+                    absolute_top = float(d['zCoordinate'])+height
+                    upper_offset = absolute_top-upper['elevation']
+                    if relative:
+                        if 'topOffset' not in d or abs(float(d['topOffset'])-upper_offset) > 1e-6:
+                            raise ValueError('Source zone height and linked upper-story offset disagree')
+                    e['payload'].update(upperLevelKey=upper['key'], upperOffset=upper_offset,
+                                        sourceTopLinked=bool(relative) if d.get('upperRelationVerified', True) else None, height=height)
                 e['status'] = 'ready'
             elif kind in ('Column', 'Beam', 'Object', 'Lamp'):
                 e['payload'] = {'details': d, 'libraryGuid': guid(d.get('libPart', {}).get('ownUnID')) or guid(d.get('profileId')),

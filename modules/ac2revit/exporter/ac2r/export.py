@@ -7,6 +7,7 @@ import uuid
 
 from .client import TapirClient, ApiError, chunks, aligned
 from .normalize import normalize, guid
+from .zone_constraints import capture as capture_zone_constraints
 from .jsonio import write_json, archive_reference
 
 
@@ -70,6 +71,10 @@ def export(args):
         snapshot['attributes'][kind] = attr
         print('Attributes:', kind, len(headers), flush=True)
 
+    try:
+        capture_zone_constraints(api, snapshot, args.batch)
+    except (ApiError, KeyError, TypeError, ValueError) as exc:
+        snapshot['warnings'].append('Zone vertical constraints unavailable: '+str(exc))
     # Make a usable geometry checkpoint even if an expensive calculated property times out.
     write_json(target/'snapshot.json', snapshot)
     write_json(target/'manifest.json', normalize(snapshot, args.project_id))

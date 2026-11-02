@@ -74,6 +74,7 @@ public static class OpeningStage
                             CutBeamReplacer.BuildVoid(doc.Application,template,file,source,report,key);
                             using var load=new Transaction(doc,"Load exact source opening void");load.Start();
                             if(!doc.LoadFamily(file,out cutFamily) || cutFamily==null)throw new InvalidDataException("Could not load opening void family");
+                            SourceNames.RenameFamily(doc,cutFamily,"Вырез проёма — "+record.S("mark"));
                             Storage.Tag(cutFamily,project,familyKey,root.S("ifcSha256"),"");load.Commit();index[familyKey]=cutFamily;
                         }
                         families[shapeKey]=cutFamily;

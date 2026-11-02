@@ -8,7 +8,7 @@ namespace Autodesk.Revit.UI
     }
     public class UIControlledApplication { public void CreateRibbonTab(string name) { } public RibbonPanel CreateRibbonPanel(string tab,string name)=>new(); }
     public class RibbonPanel { public void AddItem(PushButtonData data) { } }
-    public class PushButtonData(string id,string text,string assembly,string type) { }
+    public class PushButtonData { public PushButtonData(string id,string text,string assembly,string type) { } }
     public static class TaskDialog { public static void Show(string title, string message) => State.Errors.Add(message); }
 }
 namespace Autodesk.Revit.Exceptions { public class ArgumentException : System.ArgumentException { } }

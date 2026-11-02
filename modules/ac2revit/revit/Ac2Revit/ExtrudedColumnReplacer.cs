@@ -58,6 +58,7 @@ public static class ExtrudedColumnReplacer
                 string file=BuildFamily(doc.Application,template,folder,group.First(),report);
                 using var t=new Transaction(doc,"Load generated source profile");t.Start();
                 if(!doc.LoadFamily(file,out var family) || family==null)throw new InvalidDataException("Could not load isolated generated family");
+                SourceNames.RenameFamily(doc,family,"Колонна — "+group.First().Mark);
                 if(family.FamilyPlacementType!=FamilyPlacementType.TwoLevelsBased || family.FamilyCategory.Id!=new ElementId(BuiltInCategory.OST_StructuralColumns))throw new InvalidDataException("Generated family is not a two-level structural column");
                 symbol=(FamilySymbol)doc.GetElement(family.GetFamilySymbolIds().First());
                 Storage.Tag(family,project,"profile-family:"+group.Key,group.Key,"");

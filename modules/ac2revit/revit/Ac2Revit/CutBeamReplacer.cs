@@ -119,6 +119,7 @@ public static class CutBeamReplacer
                     BuildVoid(doc.Application,voidTemplate,file,cuts,report,key);
                     using var load=new Transaction(doc,"Load exact beam voids");load.Start();
                     if(!doc.LoadFamily(file,out voidFamily) || voidFamily==null)throw new InvalidDataException("Cannot load generated void family");
+                    SourceNames.RenameFamily(doc,voidFamily,"Вырез балки — "+record.S("mark"));
                     Storage.Tag(voidFamily,project,"beamcut-family:"+key,root.S("ifcSha256"),"");load.Commit();
                 }
                 using(var t=new Transaction(doc,"Replace mesh with natively cut beam"))
