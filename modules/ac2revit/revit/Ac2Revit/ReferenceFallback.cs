@@ -81,7 +81,7 @@ public static class ReferenceFallback
                 shape.ApplicationId="Ac2Revit.IFC.ReferenceFallback";shape.ApplicationDataId=key;shape.SetShape(objects);
                 var comments=shape.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS);
                 comments?.Set("IFC geometry fallback; source "+key+"; "+record.GetProperty("reason").GetString()+(uniqueMarks?"; Исходная марка: "+record.S("mark"):""));
-                if(record.TryGetProperty("mark",out var mark))shape.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(uniqueMarks?$"{mark.GetString()} [AC {key}]":mark.GetString());
+                if(record.TryGetProperty("mark",out var mark))shape.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(mark.GetString());
                 stage="tagAndRegenerate";Storage.Tag(shape,project,key,"ifc-mesh:"+ifcHash,record.GetRawText());doc.Regenerate();
                 var box=shape.get_BoundingBox(null);if(box==null)throw new InvalidDataException("Fallback has no bounds");
                 var expectedLo=new XYZ(points.Min(p=>p.X),points.Min(p=>p.Y),points.Min(p=>p.Z));var expectedHi=new XYZ(points.Max(p=>p.X),points.Max(p=>p.Y),points.Max(p=>p.Z));

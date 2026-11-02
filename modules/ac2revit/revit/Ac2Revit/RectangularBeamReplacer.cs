@@ -78,7 +78,8 @@ public static class RectangularBeamReplacer
                 bool newType=!types.TryGetValue(typeKey,out var symbol);
                 if(newType)
                 {
-                    symbol=(FamilySymbol)first.Duplicate("AC2R "+typeKey[..16]);
+                    var occupied=first.Family.GetFamilySymbolIds().Select(id=>doc.GetElement(id).Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    symbol=(FamilySymbol)first.Duplicate(GridLabels.Unique(FormattableString.Invariant($"АС Балка {beam.Width*1000:G8} × {beam.Height*1000:G8} мм"),occupied));
                     Dimension(symbol,BuiltInParameter.STRUCTURAL_SECTION_COMMON_WIDTH,"b").Set(Geometry.Feet(beam.Width));
                     Dimension(symbol,BuiltInParameter.STRUCTURAL_SECTION_COMMON_HEIGHT,"h").Set(Geometry.Feet(beam.Height));
                 }

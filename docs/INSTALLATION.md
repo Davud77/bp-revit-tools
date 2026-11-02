@@ -1,7 +1,7 @@
-# Установка BotPlus RT 1.0.0
+# Установка BotPlus RT 1.1.0
 
 1. Сохраните проекты и закройте Revit.
-2. Запустите `BotPlus.RT-1.0.0-Setup.exe`.
+2. Запустите `BotPlus.RT-1.1.0-Setup.exe`.
 3. Проверьте папку Revit 2026. При необходимости выберите подключение Codex/Claude Desktop и автоподтверждение MCP.
 4. Нажмите «Установить», затем запустите Revit. Вкладка **BotPlus RT** содержит панели **Codex MCP → Ac2Revit → ОВ**.
 
@@ -9,7 +9,7 @@
 
 ## Размещение
 
-- Приложение: `%LOCALAPPDATA%\BotPlus.RT\Application\versions\1.0.0`.
+- Приложение: `%LOCALAPPDATA%\BotPlus.RT\Application\versions\1.1.0`.
 - Единственный манифест Revit: `%APPDATA%\Autodesk\Revit\Addins\2026\BotPlus.RT.addin`.
 - Лог и резервные копии: `%LOCALAPPDATA%\BotPlus.RT`.
 - Существующие токен и настройки MCP: `%LOCALAPPDATA%\WEAM.Revit.AI` (путь сохранён).
@@ -24,10 +24,10 @@
 ## Командная строка
 
 ```powershell
-.\BotPlus.RT-1.0.0-Setup.exe --silent --codex
-.\BotPlus.RT-1.0.0-Setup.exe --silent --revit="D:\Autodesk\Revit 2026"
-.\BotPlus.RT-1.0.0-Setup.exe --uninstall
-.\BotPlus.RT-1.0.0-Setup.exe --silent --verify-payload="D:\empty-test-folder"
+.\BotPlus.RT-1.1.0-Setup.exe --silent --codex
+.\BotPlus.RT-1.1.0-Setup.exe --silent --revit="D:\Autodesk\Revit 2026"
+.\BotPlus.RT-1.1.0-Setup.exe --uninstall
+.\BotPlus.RT-1.1.0-Setup.exe --silent --verify-payload="D:\empty-test-folder"
 ```
 
 Последняя команда проверяет распаковку в пустую папку, без установки, изменения реестра или настройки клиентов.

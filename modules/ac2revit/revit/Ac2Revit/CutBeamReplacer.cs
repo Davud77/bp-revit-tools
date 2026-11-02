@@ -88,7 +88,7 @@ public static class CutBeamReplacer
                 var expected=NativeGeometry.MeshSolids(record,localToWorld.Inverse);
                 var sourcePoints=record.GetProperty("vertices").Read<List<Point>>().Select(p=>localToWorld.Inverse.OfPoint(NativeGeometry.At(p))).ToList();
                 double startExtension=Math.Max(0,-sourcePoints.Min(p=>p.X)),endExtension=Math.Max(0,sourcePoints.Max(p=>p.X)-a.DistanceTo(b));
-                FamilySymbol symbol;string typeName="AC2R Cut "+Json.Hash(new{width=d.D("width"),height=d.D("height")})[..16];
+                FamilySymbol symbol;string typeName=FormattableString.Invariant($"АС Балка с подрезкой {d.D("width")*1000:G8} × {d.D("height")*1000:G8} мм");
                 using(var t=new Transaction(doc,"Prepare native cut-beam section"))
                 {
                     t.Start();symbol=family.GetFamilySymbolIds().Select(id=>(FamilySymbol)doc.GetElement(id)).FirstOrDefault(s=>s.Name==typeName) ?? (FamilySymbol)first.Duplicate(typeName);

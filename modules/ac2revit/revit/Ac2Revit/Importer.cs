@@ -44,10 +44,14 @@ public sealed class Importer
     }
     string ElementHash(ElementRecord e) => Json.Hash(new { e.ContentHash, e.Kind, e.LevelKey, e.Mark, e.Dependencies,
         e.Status, e.Payload, e.Raw, manifest.Coordinates.Transform, Config = config });
-    static string Name(string value, string key)
+    HashSet<string>? occupiedNames;
+    string Name(string value, string key)
     {
         var clean = new string(value.Select(c => "\\:{}[]|;<>?`~".Contains(c) || char.IsControl(c) ? '_' : c).ToArray());
-        return "AC " + clean[..Math.Min(clean.Length, 100)] + " " + Json.Hash(key)[..12];
+        occupiedNames ??= new FilteredElementCollector(doc).WhereElementIsNotElementType().OfClass(typeof(Level)).Cast<Level>()
+            .Select(e=>e.Name).Concat(new FilteredElementCollector(doc).WhereElementIsElementType().Select(e=>e.Name))
+            .Concat(new FilteredElementCollector(doc).OfClass(typeof(Material)).Select(e=>e.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return GridLabels.Unique("АС \"" + clean.Trim() + "\"", occupiedNames);
     }
     bool Existing(string key, string hash, string kind, out Element? element)
     {
@@ -572,6 +576,18 @@ public sealed class Importer
                 if (number != null && !number.IsReadOnly) number.Set(p.S("number"));
                 var offset = zone.get_Parameter(BuiltInParameter.ROOM_LOWER_OFFSET);
                 if (offset != null && !offset.IsReadOnly) offset.Set(Geometry.Feet(p.D("baseOffset")));
+                if(p.S("upperLevelKey") is string upperKey && upperKey.Length>0)
+                {
+                    if(!levels.TryGetValue(upperKey,out var upper))throw new InvalidDataException("Source upper room level missing");
+                    if(!p.TryGetProperty("upperOffset",out var upperOffset) || !upperOffset.TryGetDouble(out double value) || !double.IsFinite(value))
+                        throw new InvalidDataException("Explicit finite upper room offset required");
+                    if(upper.Elevation+Geometry.Feet(value)<=level.Elevation+Geometry.Feet(p.D("baseOffset")))
+                        throw new InvalidDataException("Room top must be above its base");
+                    var upperParameter=zone.get_Parameter(BuiltInParameter.ROOM_UPPER_LEVEL);
+                    if(upperParameter==null || upperParameter.IsReadOnly || !upperParameter.Set(upper.Id))throw new InvalidDataException("Room upper level is not writable");
+                    Set(zone,BuiltInParameter.ROOM_UPPER_OFFSET,Geometry.Feet(value));
+                }
+                else Report.Add(e.SourceGuid,"Zone","notice","Source export has no upper level constraint; source vertical extent is not verified");
                 doc.Regenerate();
                 double area = zone is Room room ? room.Area : ((Space)zone).Area;
                 // Source lines and circular arcs are integrated analytically, including holes.

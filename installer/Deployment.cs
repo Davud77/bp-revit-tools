@@ -11,7 +11,7 @@ namespace BotPlus.RT.Setup;
 
 static partial class Deployment
 {
-    public const string Version = "1.0.0";
+    public const string Version = "1.1.0";
     const string AddinId = "DE07865F-0FBF-4CC3-B71E-AC2B149113E6";
     const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BotPlus.RT";
     static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotPlus.RT");

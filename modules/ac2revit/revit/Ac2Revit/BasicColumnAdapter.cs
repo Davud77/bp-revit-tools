@@ -45,7 +45,7 @@ public sealed class BasicColumnAdapter(Document doc, ImportConfig config, Geomet
         report.Add(familyKey,"ColumnFamily","notice",string.Join("; ",first.Parameters.Cast<Parameter>().Where(p=>p.StorageType==StorageType.Double && p.Definition.GetDataType()==SpecTypeId.Length).Select(p=>p.Definition.Name)));
         foreach(var e in selected.GroupBy(Section).Select(g=>g.First()))
         {
-            Validate(e);var d=e.Payload.GetProperty("details");string name=(nominalOnly?"НЕПОЛНОЦЕННАЯ КОЛОННА ":"AC2R ")+Section(e)[..16];
+            Validate(e);var d=e.Payload.GetProperty("details");string name=FormattableString.Invariant($"АС Колонна {d.D("width")*1000:G8} × {d.D("depth")*1000:G8} мм")+(nominalOnly?" (номинальная)":"");
             var symbol=family.GetFamilySymbolIds().Select(id=>(FamilySymbol)doc.GetElement(id)).SingleOrDefault(s=>s.Name==name) ?? (FamilySymbol)first.Duplicate(name);
             void Size(string parameterName,double meters)
             {

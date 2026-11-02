@@ -29,6 +29,9 @@ public sealed class Application : IExternalApplication
                 if (module.OnStartup(application) != Result.Succeeded)
                     throw new InvalidOperationException($"Не удалось загрузить модуль {type}.");
             }
+            var service = application.CreateRibbonPanel("BotPlus RT", "Сервис");
+            service.AddItem(new PushButtonData("BotPlusRTService", "Сервис", typeof(Application).Assembly.Location,
+                typeof(ServiceCommand).FullName!));
             return Result.Succeeded;
         }
         catch (Exception error)

@@ -57,7 +57,7 @@ public static class SupplementalBodiesStage
             if(missing.Length>0)
             {
                 string kind=sourceKind;
-                var stage=ReferenceFallback.Run(doc,input,Resolve,(done,total)=>progress?.Invoke("supplemental:"+kind,
+                var stage=kind=="Mesh"?TerrainStage.Run(doc,input,manifest):ReferenceFallback.Run(doc,input,Resolve,(done,total)=>progress?.Invoke("supplemental:"+kind,
                     totalBodies>0?processedBodies+batchBodies-missing.Length+done:done,totalBodies>0?totalBodies:total),BuiltInCategory.OST_GenericModel,"Supplemental:"+kind,uniqueMarks:true);
                 report.Items.AddRange(stage.Items);report.Save(Path.Combine(folder,"checkpoint-report.json"));
                 committed=stage.Items.Any(i=>i.Status=="created");

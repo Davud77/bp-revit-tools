@@ -6,7 +6,9 @@ namespace Autodesk.Revit.UI
         Result OnStartup(UIControlledApplication application);
         Result OnShutdown(UIControlledApplication application);
     }
-    public class UIControlledApplication { public void CreateRibbonTab(string name) { } }
+    public class UIControlledApplication { public void CreateRibbonTab(string name) { } public RibbonPanel CreateRibbonPanel(string tab,string name)=>new(); }
+    public class RibbonPanel { public void AddItem(PushButtonData data) { } }
+    public class PushButtonData(string id,string text,string assembly,string type) { }
     public static class TaskDialog { public static void Show(string title, string message) => State.Errors.Add(message); }
 }
 namespace Autodesk.Revit.Exceptions { public class ArgumentException : System.ArgumentException { } }
@@ -34,3 +36,4 @@ public abstract class FakeModule(string name) : Autodesk.Revit.UI.IExternalAppli
 namespace WEAM.Revit.AI { public sealed class PluginApplication() : FakeModule("mcp"); }
 namespace Ac2Revit { public sealed class App() : FakeModule("ac2revit"); }
 namespace HeatLossViewer { public sealed class App() : FakeModule("ov"); }
+namespace BotPlus.RT { public sealed class ServiceCommand { } }

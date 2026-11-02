@@ -41,5 +41,5 @@ async function walk(dir) {
 await rm(path.join(stage, 'release.json'));
 // The four distributable Ac2Revit families/templates are intentionally allowed.
 await walk(stage);
-await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: '1.0.0', target: 'Revit 2026 / Windows x64', modules: ['Codex MCP', 'Ac2Revit', 'ОВ'], node: process.version, files: hashes }, null, 2));
+await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: '1.1.0', target: 'Revit 2026 / Windows x64', modules: ['Codex MCP', 'Ac2Revit', 'ОВ'], node: process.version, files: hashes }, null, 2));
 console.log(`BotPlus RT payload: ${Object.keys(hashes).length} files`);
