@@ -177,6 +177,11 @@ def normalize(snapshot, project_id):
                 e['payload'] = {'details': d, 'libraryGuid': guid(d.get('libPart', {}).get('ownUnID')) or guid(d.get('profileId')),
                                 'libraryName': d.get('libPart', {}).get('name', '')}
                 e['status'] = 'needsMapping'
+            elif kind == 'Mesh':
+                if raw.get('terrain',{}).get('format') != 'ac2r.terrain/1':
+                    raise ValueError(raw.get('terrainError','Native Mesh geometry unavailable; Tapir 1.8+ required'))
+                e['payload'] = raw['terrain']
+                e['status'] = 'ready'
             elif kind == 'Morph':
                 e['payload'] = {'mesh': morph_mesh(d), 'materialKey': guid(d.get('buildingMaterialId'))}
                 e['status'] = 'ready'

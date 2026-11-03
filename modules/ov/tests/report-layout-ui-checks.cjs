@@ -1,0 +1,43 @@
+const {chromium}=require('playwright'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{execFileSync}=require('node:child_process');
+(async()=>{
+ const output=path.resolve('artifacts/report-layout');fs.mkdirSync(output,{recursive:true});
+ const data=JSON.parse(fs.readFileSync(path.resolve(process.argv[2] || 'artifacts/demo/building.json'),'utf8'));
+ for(const [i,r] of data.rooms.entries())if(!Number.isSafeInteger(r.id))r.id=i+1;
+ const source=path.join(output,'building.json');fs.writeFileSync(source,JSON.stringify(data));
+ execFileSync('dotnet',['run','--project','tests/ExportChecks.csproj','-c','Release','--','--render',source]);
+ const browser=await chromium.launch({headless:true,channel:'msedge'});
+ try{
+  const context=await browser.newContext({viewport:{width:1600,height:1050}}),page=await context.newPage(),errors=[];
+  context.on('page',p=>p.on('pageerror',e=>errors.push(e.message)));page.on('pageerror',e=>errors.push(e.message));
+  await page.goto(pathToFileURL(path.join(output,'heat_loss_viewer.html')).href);await page.waitForFunction(()=>document.getElementById('load-state').hidden);
+  const panel=page.locator('#room-card'),handle=page.locator('#panel-resizer');
+  const original=(await panel.boundingBox()).width,box=await handle.boundingBox();
+  await page.mouse.move(box.x+box.width/2,box.y+60);await page.mouse.down();await page.mouse.move(box.x-100,box.y+60,{steps:8});await page.mouse.up();
+  assert.ok((await panel.boundingBox()).width>original+70);
+  await handle.focus();await handle.press('ArrowRight');const width=(await panel.boundingBox()).width;
+  await page.reload();await page.waitForFunction(()=>document.getElementById('load-state').hidden);assert.ok(Math.abs((await panel.boundingBox()).width-width)<5);
+  await page.screenshot({path:path.join(output,'resized-panels.png'),fullPage:true});
+  await page.setViewportSize({width:900,height:950});assert.equal(await handle.isVisible(),false);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+2));
+  await page.setViewportSize({width:1600,height:1050});
+  await page.locator('#show-shell').check();await page.locator('.slice-btn[data-slice=single]').click();await page.waitForTimeout(700);
+  const before=await page.locator('#canvas-container canvas').screenshot();
+  await page.locator('.tabs button[data-view=totals]').click();assert.equal(await handle.isVisible(),false);
+  const opened=page.waitForEvent('popup');await page.locator('#print-report').click();const report=await opened;
+  await report.waitForSelector('#report-cover img');await report.waitForFunction(()=>document.querySelector('#report-cover img').complete);
+  const dims=await report.locator('#report-cover img').evaluate(img=>({width:img.naturalWidth,height:img.naturalHeight}));assert.ok(dims.width>100 && dims.height>100);
+  assert.equal(await report.locator('#report-table col').count(),15);assert.equal(await report.locator('tr.room').count(),data.rooms.length);
+  assert.ok(await report.locator('tr.construction').count()>0);
+  const known=new Set(data.rooms.map(r=>r.key)),unbound=data.openings.filter(o=>!o.roomKeys?.some(k=>known.has(k))).length;
+  if(unbound)assert.match(await report.locator('.appendix h2').textContent(),new RegExp(String(unbound)));
+  await report.evaluate(()=>window.print=()=>{window.printRequested=true;});await report.locator('#report-print').click();assert.equal(await report.evaluate(()=>window.printRequested),true);
+  const pdf=path.resolve(process.argv[3] || '../../output/pdf/heat-loss-report.pdf');fs.mkdirSync(path.dirname(pdf),{recursive:true});
+  await report.pdf({path:pdf,preferCSSPageSize:true,printBackground:true});
+  fs.writeFileSync(path.join(output,'report.html'),await report.content());
+  await report.screenshot({path:path.join(output,'report-preview.png'),fullPage:false});
+  await page.locator('.tabs button[data-view=model]').click();assert.equal(await page.locator('#show-shell').isChecked(),true);assert.equal(await page.locator('.slice-btn[data-slice=single]').getAttribute('aria-pressed'),'true');await page.waitForTimeout(700);
+  const {PNG}=require('pngjs'),a=PNG.sync.read(before),b=PNG.sync.read(await page.locator('#canvas-container canvas').screenshot());let changed=0;
+  for(let i=0;i<a.data.length;i+=4)if(Math.max(...[0,1,2].map(c=>Math.abs(a.data[i+c]-b.data[i+c])))>3)changed++;
+  assert.ok(changed<a.width*a.height*.001,'printing must restore the camera, transparency and visible room faces');
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({passed:true,rooms:data.rooms.length,unbound,pdf,checks:['pointer/keyboard resize','persistent ratio','mobile overflow','15-column Poteri table','3D cover','print invocation','all rooms and orphan appendix']}));
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e);process.exit(1)});

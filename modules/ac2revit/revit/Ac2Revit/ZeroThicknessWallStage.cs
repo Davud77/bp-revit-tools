@@ -72,7 +72,7 @@ public static class ZeroThicknessWallStage
                         if(view==null)
                         {
                             var type=new FilteredElementCollector(doc).OfClass(typeof(ViewFamilyType)).Cast<ViewFamilyType>().First(v=>v.ViewFamily==ViewFamily.FloorPlan);
-                            view=ViewPlan.Create(doc,type.Id,level.Id);view.Name="AC Zero width boundaries "+level.Id.Value;
+                            view=ViewPlan.Create(doc,type.Id,level.Id);view.Name="АС Границы стен нулевой толщины — "+level.Name;
                         }
                         views[level.Id]=view;
                     }

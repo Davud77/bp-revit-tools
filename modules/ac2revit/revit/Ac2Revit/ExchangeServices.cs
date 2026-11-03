@@ -10,12 +10,19 @@ internal static class ExchangeServices
 {
     public static string Root => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location)!, "..", ".."));
     public static string Sessions => Path.Combine(Root,"artifacts","sessions");
+    public static string Outputs { get {var folder=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),"BotPlus.RT","Выходные данные");Directory.CreateDirectory(folder);return folder;} }
     public static string Assets => Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location)!,"assets");
     public static string Python => File.Exists(Path.Combine(Root,"runtime","python","python.exe"))
         ? Path.Combine(Root,"runtime","python","python.exe")
         : Path.Combine(Root,".ifc-env","Scripts","python.exe");
     public static string ProjectTemplate(string fallback)
     {
+        string userSettings=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"BotPlus.RT","Ac2Revit","settings.json");
+        if(File.Exists(userSettings))
+        {
+            using var user=JsonDocument.Parse(File.ReadAllText(userSettings));string selected=user.RootElement.S("projectTemplate");
+            if(selected.Length>0){if(!File.Exists(selected))throw new FileNotFoundException("Выбранный шаблон Revit не найден",selected);return selected;}
+        }
         string config=Path.Combine(Root,"config","exchange-settings.json");
         if(File.Exists(config))
         {
@@ -29,7 +36,7 @@ internal static class ExchangeServices
         using var pointer=JsonDocument.Parse(File.ReadAllText(Path.Combine(Sessions,"last-completed.json")));
         using var state=JsonDocument.Parse(File.ReadAllText(CheckedPath(pointer.RootElement.S("session"))));
         string saved=state.RootElement.S("templatePath");
-        return File.Exists(saved)?saved:ProjectTemplate(fallback);
+        return ProjectTemplate(File.Exists(saved)?saved:fallback);
     }
     public static string CheckedPath(string path)
     {

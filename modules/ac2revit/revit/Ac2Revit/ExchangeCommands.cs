@@ -41,6 +41,7 @@ public sealed class BuildLatestCommand : IExternalCommand
             if(selected==TaskDialogResult.CommandLink1)ExchangeCommands.NewProject(data.Application,path,ExchangeServices.LastTemplate(data.Application.Application.DefaultProjectTemplate));
             return Command.RunPath(data.Application,path,ref message);
         }
+        catch(OperationCanceledException){return Result.Cancelled;}
         catch(Exception ex){message=ex.Message;return Result.Failed;}
     }
 }
@@ -48,7 +49,8 @@ public sealed class BuildLatestCommand : IExternalCommand
 public sealed class ExchangeFolderCommand : IExternalCommand
 {
     public Result Execute(ExternalCommandData data,ref string message,ElementSet elements)
-    {try{ExchangeServices.OpenFolder(ExchangeServices.Sessions);return Result.Succeeded;}catch(Exception ex){message=ex.Message;return Result.Failed;}}
+    {try{ExchangeServices.OpenFolder(ExchangeServices.Sessions);return Result.Succeeded;}catch(OperationCanceledException){return Result.Cancelled;}
+        catch(Exception ex){message=ex.Message;return Result.Failed;}}
 }
 [Transaction(TransactionMode.Manual)]
 public sealed class ContinueSessionCommand : IExternalCommand
@@ -61,6 +63,7 @@ public sealed class ContinueSessionCommand : IExternalCommand
             if(dialog.ShowDialog()!=true)return Result.Cancelled;
             return ExchangeCommands.Export(data.Application,true,ref message,ExchangeServices.CheckedPath(dialog.FileName));
         }
+        catch(OperationCanceledException){return Result.Cancelled;}
         catch(Exception ex){message=ex.Message;return Result.Failed;}
     }
 }
@@ -74,14 +77,22 @@ internal static class ExchangeCommands
             if(window.ShowDialog()!=true)return Result.Cancelled;
             if(window.ExportOnly){TaskDialog.Show("Экспорт IFC","IFC сохранён: "+window.ExportFolder+"\nДля открытия IFC используйте Файл → Открыть → IFC в Revit.");ExchangeServices.OpenFolder(window.ExportFolder);return Result.Succeeded;}
             if(!build){TaskDialog.Show("Экспорт Archicad","Экспорт и подготовка завершены.\n\n"+window.PipelinePath+"\n\nНажмите «Собрать экспорт» для построения модели.");return Result.Succeeded;}
-            if(window.CreateNewProject)NewProject(ui,window.PipelinePath,window.TemplatePath);
+            if(window.CreateNewProject)NewProject(ui,window.PipelinePath,window.TemplatePath,window.OutputPath);
             return Command.RunPath(ui,window.PipelinePath,ref message);
         }
+        catch(OperationCanceledException){return Result.Cancelled;}
         catch(Exception ex){message=ex.Message;return Result.Failed;}
     }
-    public static void NewProject(UIApplication ui,string pipeline,string template)
+    public static void NewProject(UIApplication ui,string pipeline,string template,string output="")
     {
-        string output=Path.Combine(Path.GetDirectoryName(pipeline)!,"model-"+DateTime.Now.ToString("yyyyMMdd-HHmmssfff")+".rvt");
+        if(string.IsNullOrWhiteSpace(output))
+        {
+            var dialog=new SaveFileDialog{Title="Сохранить импортируемую модель Revit",Filter="Модель Revit|*.rvt",FileName="Archicad.rvt",InitialDirectory=ExchangeServices.Outputs,OverwritePrompt=false};
+            if(dialog.ShowDialog()!=true)throw new OperationCanceledException("Создание модели отменено.");output=dialog.FileName;
+        }
+        output=Path.GetFullPath(output);
+        if(!output.EndsWith(".rvt",StringComparison.OrdinalIgnoreCase)||File.Exists(output))throw new IOException("Выберите новое имя RVT: существующий файл не перезаписывается.");
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
         // Save a new metric project before the pipeline, allowing stage checkpoints.
         var document=string.IsNullOrWhiteSpace(template)?ui.Application.NewProjectDocument(UnitSystem.Metric):ui.Application.NewProjectDocument(template);
         try{document.SaveAs(output,new SaveAsOptions{MaximumBackups=1});}

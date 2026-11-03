@@ -19,9 +19,15 @@ namespace HeatLossViewer
 
             RibbonPanel panel = application.GetRibbonPanels(tabName).FirstOrDefault(p => p.Name == "ОВ")
                 ?? application.CreateRibbonPanel(tabName, "ОВ");
-            if (panel.GetItems().Any(i => i.Name == "ExportHeatLoss3D")) return Result.Succeeded;
-
             string assemblyPath = Assembly.GetExecutingAssembly().Location;
+            if (!panel.GetItems().Any(i => i.Name == "OVProjectInformation"))
+                panel.AddItem(new PushButtonData("OVProjectInformation", "Сведения\nо проекте", assemblyPath,
+                    typeof(ProjectInformationCommand).FullName!)
+                {
+                    ToolTip = "Название, адрес, климатический район, температуры и ветер. Сохраняет параметры в модели для выгрузки ОВ."
+                });
+            if (!panel.GetItems().Any(i => i.Name == "ExportHeatLoss3D"))
+            {
             PushButtonData buttonData = new PushButtonData(
                 name: "ExportHeatLoss3D",
                 text: "Выгрузить\n3D-модель",
@@ -33,6 +39,12 @@ namespace HeatLossViewer
             };
 
             panel.AddItem(buttonData);
+            }
+            if (!panel.GetItems().Any(i => i.Name == "OVLibrary"))
+                panel.AddItem(new PushButtonData("OVLibrary", "Библиотека", assemblyPath, typeof(OvLibraryCommand).FullName!) { ToolTip = "Материалы, типы конструкций и радиаторы из текущего проекта." });
+            if (!panel.GetItems().Any(i => i.Name == "OVRadiators"))
+                panel.AddItem(new PushButtonData("OVRadiators", "Радиаторы", assemblyPath, typeof(OvRadiatorsCommand).FullName!) { ToolTip = "Открыть вкладку подбора радиаторов в библиотеке проекта." });
+
             return Result.Succeeded;
         }
 

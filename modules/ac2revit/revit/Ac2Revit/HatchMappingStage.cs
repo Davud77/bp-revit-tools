@@ -25,10 +25,61 @@ public static class HatchMappingStage
         public string Reason {get;set;}="";
         public string TargetName {get;set;}="";
         public string TargetFingerprint {get;set;}="";
+        public GridPattern? TargetGeometry {get;set;}
         public int[] ForegroundRgb {get;set;}=[0,0,0];
         public string Background {get;set;}="transparent";
         public int[] BackgroundRgb {get;set;}=[255,255,255];
         public string BackgroundFingerprint {get;set;}="";
+    }
+    public sealed class GridPattern
+    {
+        public string Target {get;set;}="";
+        public string Orientation {get;set;}="";
+        public bool Solid {get;set;}
+        public List<Grid> Grids {get;set;}=[];
+    }
+    public sealed class Grid
+    {
+        public double Angle {get;set;}
+        public double[] Origin {get;set;}=[];
+        public double Offset {get;set;}
+        public double Shift {get;set;}
+        public double[] Segments {get;set;}=[];
+    }
+    static bool Same(FillPattern pattern,GridPattern expected)
+    {
+        static bool Near(double a,double b)=>double.IsFinite(a)&&double.IsFinite(b)&&Math.Abs(a-b)<1e-9;
+        var grids=pattern.GetFillGrids();
+        return pattern.Target==FillPatternTarget.Drafting && !pattern.IsSolidFill && pattern.HostOrientation==FillPatternHostOrientation.ToView
+            && grids.Count==expected.Grids.Count && grids.Zip(expected.Grids).All(pair=>{
+                var (a,b)=pair;return Near(a.Angle,b.Angle)&&Near(a.Offset,b.Offset)&&Near(a.Shift,b.Shift)
+                    && Near(a.Origin.U,b.Origin[0])&&Near(a.Origin.V,b.Origin[1])
+                    && a.GetSegments().Count==b.Segments.Length&&a.GetSegments().Zip(b.Segments).All(v=>Near(v.First,v.Second));});
+    }
+    static void EnsurePatterns(Document doc,Plan plan)
+    {
+        foreach(var row in plan.Materials.Where(r=>r.TargetGeometry!=null))
+        {
+            var spec=row.TargetGeometry!;
+            if(row.Match is not ("sourceVector" or "portableAnalogue") || !row.TargetName.StartsWith("АС ",StringComparison.Ordinal)
+                || spec.Target!="Drafting"||spec.Orientation!="ToView"||spec.Solid||spec.Grids.Count is <1 or >1024)
+                throw new InvalidDataException("Invalid generated drafting pattern");
+            foreach(var grid in spec.Grids)
+                if(grid.Origin.Length!=2 || !grid.Origin.Concat(grid.Segments).Append(grid.Angle).Append(grid.Offset).Append(grid.Shift).All(double.IsFinite)
+                    || grid.Offset<1e-6||grid.Offset>100||grid.Segments.Length>1024)
+                    throw new InvalidDataException("Invalid generated fill grid");
+            var existing=new FilteredElementCollector(doc).OfClass(typeof(FillPatternElement)).Cast<FillPatternElement>().Where(e=>e.Name==row.TargetName).ToArray();
+            if(existing.Length>1)throw new InvalidDataException("Ambiguous generated hatch name");
+            if(existing.Length==1){using var found=existing[0].GetFillPattern();if(!Same(found,spec))throw new InvalidDataException("Generated hatch changed: "+row.TargetName);continue;}
+            using var pattern=new FillPattern(row.TargetName,FillPatternTarget.Drafting,FillPatternHostOrientation.ToView);
+            var grids=spec.Grids.Select(g=>{
+                var grid=new FillGrid{Angle=g.Angle,Origin=new UV(g.Origin[0],g.Origin[1]),Offset=g.Offset,Shift=g.Shift};
+                grid.SetSegments(g.Segments.ToList());return grid;
+            }).ToList();
+            try{pattern.SetFillGrids(grids);var created=FillPatternElement.Create(doc,pattern);using var readback=created.GetFillPattern();
+                if(!Same(readback,spec))throw new InvalidDataException("Generated hatch readback differs: "+row.TargetName);}
+            finally{foreach(var grid in grids)grid.Dispose();}
+        }
     }
     static int[] Rgb(Color c)=>c.IsValid?[c.Red,c.Green,c.Blue]:[];
     public static object Pattern(FillPattern pattern)=>new{
@@ -81,14 +132,16 @@ public static class HatchMappingStage
         {
             if(!Guid.TryParse(row.MaterialGuid,out _) || !Guid.TryParse(row.SourceFillGuid,out _) || !guids.Add(row.MaterialGuid)
                 || !source.TryGetValue(row.MaterialGuid,out var raw) || raw.D("cutFillIndex")!=row.SourceFillIndex
-                || row.Match is not ("analogue" or "empty" or "solid") || string.IsNullOrWhiteSpace(row.Reason)
+                || row.Match is not ("analogue" or "empty" or "solid" or "sourceVector" or "portableAnalogue") || string.IsNullOrWhiteSpace(row.Reason)
                 || row.ForegroundRgb.Length!=3 || row.ForegroundRgb.Any(v=>v<0 || v>255) || row.Background is not ("transparent" or "solid")
                 || row.BackgroundRgb.Length!=3 || row.BackgroundRgb.Any(v=>v<0 || v>255))throw new InvalidDataException("Invalid or duplicate explicit hatch mapping");
+            if(manifest.Fills.Count>0 && !manifest.Fills.Any(f=>f.D("index")==row.SourceFillIndex && f.GetProperty("attributeId").S("guid").Equals(row.SourceFillGuid,StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException("Source hatch identity differs");
             if(index.GetValueOrDefault("material:"+row.MaterialGuid.ToUpperInvariant()) is not Material material)throw new InvalidDataException("Source material not imported: "+row.MaterialGuid);
             ElementId patternId=ElementId.InvalidElementId;
             if(row.Match!="empty")
             {
-                var candidates=patterns.Where(e=>e.Name==row.TargetName).Where(e=>{using var p=e.GetFillPattern();return p.Target==FillPatternTarget.Drafting && Json.Hash(Pattern(p))==row.TargetFingerprint;}).ToArray();
+                var candidates=patterns.Where(e=>e.Name==row.TargetName).Where(e=>{using var p=e.GetFillPattern();return p.Target==FillPatternTarget.Drafting && (row.TargetGeometry==null?Json.Hash(Pattern(p))==row.TargetFingerprint:Same(p,row.TargetGeometry));}).ToArray();
                 if(candidates.Length!=1)throw new InvalidDataException("Missing/changed/ambiguous drafting hatch: "+row.TargetName);
                 using var pattern=candidates[0].GetFillPattern();
                 if(pattern.IsSolidFill!=(row.Match=="solid"))throw new InvalidDataException("Solid versus line hatch mapping differs");
@@ -100,15 +153,17 @@ public static class HatchMappingStage
     }
     public static Report Run(Document doc,Manifest manifest,string manifestPath,string input,string output)
     {
-        var plan=Load(manifest,manifestPath,input);var prepared=Prepare(doc,manifest,plan);var index=Storage.Index(doc,plan.ProjectId);
+        var plan=Load(manifest,manifestPath,input);var index=Storage.Index(doc,plan.ProjectId);
         var report=new Report{ProjectId=plan.ProjectId,Mode="hatchMapping"};
+        using var group=new TransactionGroup(doc,"Mapped Archicad material cut patterns");group.Start();
+        try
+        {
+        using(var create=new Transaction(doc,"Native drafting hatch definitions")){create.Start();EnsurePatterns(doc,plan);if(create.Commit()!=TransactionStatus.Committed)throw new InvalidDataException("Hatch definition transaction rolled back");}
+        var prepared=Prepare(doc,manifest,plan);
         // A changed mapped material is a user edit, not permission to silently overwrite it on resume.
         foreach(var row in prepared)
             if(index.GetValueOrDefault(StateKey(row.Row.MaterialGuid)) is Element state && Metadata(state).S("stateHash")!=Json.Hash(State(row.Material)))
                 throw new InvalidDataException("Mapped material graphics changed after previous import: "+row.Material.Name);
-        using var group=new TransactionGroup(doc,"Mapped Archicad material cut patterns");group.Start();
-        try
-        {
             using var transaction=new Transaction(doc,"Material cut hatch mapping");transaction.Start();NativeGeometry.Configure(transaction,report,"hatch-mapping","HatchMapping");
             foreach(var row in prepared)
             {
@@ -140,7 +195,7 @@ public static class HatchMappingStage
                 && r.Material.CutBackgroundPatternId==BackgroundId(doc,r.Row)
                 && (r.Row.Background=="transparent" || Rgb(r.Material.CutBackgroundPatternColor).SequenceEqual(r.Row.BackgroundRgb)),state=State(r.Material)}).ToArray();
         var result=new{format="ac2r.hatch-audit/1",document=doc.PathName,expected=prepared.Count,verified=rows.Count(r=>r.verified),failed=rows.Count(r=>!r.verified),
-            analogues=rows.Count(r=>r.match=="analogue"),empty=rows.Count(r=>r.match=="empty"),solid=rows.Count(r=>r.match=="solid"),materials=rows};
+            analogues=rows.Count(r=>r.match is "analogue" or "portableAnalogue"),sourceVectors=rows.Count(r=>r.match=="sourceVector"),empty=rows.Count(r=>r.match=="empty"),solid=rows.Count(r=>r.match=="solid"),materials=rows};
         File.WriteAllText(output,JsonSerializer.Serialize(result,Json.Options));
         if(rows.Any(r=>!r.verified))throw new InvalidDataException("Material cut hatch readback differs");return result;
     }

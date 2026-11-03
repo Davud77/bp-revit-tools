@@ -56,6 +56,103 @@ public static class RuntimeJobs
             var job = JsonSerializer.Deserialize<Job>(File.ReadAllText(sourceInbox), Json.Options) ?? throw new InvalidDataException("Empty runtime job");
             File.Move(sourceInbox, Path.Combine(Path.GetDirectoryName(sourceInbox)!, "job-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+".json"));
             resultPath = WorkspacePath(job.ResultPath);
+            if(job.Operation=="release16Check")
+            {
+                string output=WorkspacePath(job.OutputRvt),folder=Path.GetDirectoryName(output)!;
+                var result=RoadmapValidation.Run(ui,WorkspacePath(job.ManifestPath),WorkspacePath(job.TemplatePath),output);
+                var document=ui.Application.OpenDocumentFile(output);
+                string renamed=Path.Combine(folder,"Проверка сохранения с новым именем.rvt");
+                try
+                {
+                    var journalReport=new Report();journalReport.Add("validation","Journal","verified","Persistence after ordinary Save and SaveAs");ImportJournal.Write(document,journalReport);
+                    using(var change=new Transaction(document,"Journal validation change")){change.Start();document.ProjectInformation.Name="Проверка журнала";change.Commit();}
+                    document.Save();
+                    using(var previous=JsonDocument.Parse(File.ReadAllText(Path.ChangeExtension(output,"botplus-import.json"))))
+                        if(previous.RootElement.GetProperty("outcomes").GetArrayLength()!=1)throw new InvalidDataException("Save lost journal outcomes");
+                    document.SaveAs(renamed,new SaveAsOptions());
+                    if(!File.Exists(Path.ChangeExtension(renamed,"botplus-import.log")))throw new InvalidDataException("SaveAs journal missing");
+                    using(var renamedJournal=JsonDocument.Parse(File.ReadAllText(Path.ChangeExtension(renamed,"botplus-import.json"))))
+                        if(renamedJournal.RootElement.GetProperty("outcomes").GetArrayLength()!=1)throw new InvalidDataException("SaveAs lost journal outcomes");
+                }
+                finally{document.Close(false);}
+                string chosen=Path.Combine(folder,"Выбранная папка","Имя модели.rvt");
+                ExchangeCommands.NewProject(ui,job.ManifestPath,WorkspacePath(job.TemplatePath),chosen);
+                bool protectedExisting=false;
+                try{ExchangeCommands.NewProject(ui,job.ManifestPath,WorkspacePath(job.TemplatePath),chosen);}catch(IOException){protectedExisting=true;}
+                if(!protectedExisting)throw new InvalidDataException("Existing RVT not protected");
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",result,chosen,protectedExisting,journalSaveAndSaveAs=true},Json.Options));return;
+            }
+            if(job.Operation=="hatchValidation")
+            {
+                var result=HatchValidation.Run(ui.Application,WorkspacePath(job.ManifestPath),WorkspacePath(job.TemplatePath),Path.GetDirectoryName(WorkspacePath(job.ReportPath))!);
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(result,Json.Options));return;
+            }
+            if(job.Operation=="wallNetTrimCopy")
+            {
+                string output=WorkspacePath(job.OutputRvt);if(File.Exists(output))throw new IOException("Trim output exists");
+                File.Copy(WorkspacePath(job.SourceRvt),output,false);
+                var document=ui.OpenAndActivateDocument(output).Document;
+                var trimReport=EvaluatedWallTrim.Run(document,WorkspacePath(job.ManifestPath),WorkspacePath(job.TemplatePath),Path.Combine(Path.GetDirectoryName(output)!,"trim-families"),job.Limit);
+                trimReport.Save(WorkspacePath(job.ReportPath));document.Save();
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",output,outcomes=trimReport.Items.GroupBy(i=>i.Status).ToDictionary(g=>g.Key,g=>g.Count())},Json.Options));return;
+            }
+            if(job.Operation=="comparisonAudit")
+            {
+                var comparisonManifest=Manifest.Load(WorkspacePath(job.ManifestPath));
+                var document=ui.Application.OpenDocumentFile(WorkspacePath(job.SourceRvt));
+                try
+                {
+                    var index=Storage.Index(document,comparisonManifest.Source.ProjectId);var comparisonReport=new Report();
+                    var rooms=comparisonManifest.Elements.Where(e=>e.Kind=="Zone").Select(e=>
+                    {
+                        var room=index.GetValueOrDefault(e.SourceGuid) as Autodesk.Revit.DB.Architecture.Room;
+                        var loops=e.Payload.GetProperty("loops").Read<List<List<Edge>>>();
+                        double expected=Math.Abs(SourcePlanarGeometry.SignedArea(loops[0]))-loops.Skip(1).Sum(l=>Math.Abs(SourcePlanarGeometry.SignedArea(l)));
+                        double actual=room==null?0:UnitUtils.ConvertFromInternalUnits(room.Area,UnitTypeId.SquareMeters);
+                        comparisonReport.ZoneAreas.Add(new(e.SourceGuid,expected,actual,Math.Abs(expected-actual),1,room!=null && actual>0 && Math.Abs(expected-actual)<=1,room==null?"missing":"present"));
+                        return new{e.SourceGuid,number=e.Payload.S("number"),name=e.Payload.S("name"),expectedArea=expected,actualArea=actual,id=room?.Id.Value,height=room==null?(double?)null:UnitUtils.ConvertFromInternalUnits(room.UnboundedHeight,UnitTypeId.Meters)};
+                    }).ToArray();
+                    string path=WorkspacePath(job.ReportPath),folder=Path.GetDirectoryName(path)!;
+                    Directory.CreateDirectory(folder);
+                    RoomBoundaryAudit.Write(document,comparisonManifest,comparisonReport,Path.Combine(folder,"room-boundaries.json"));
+                    HatchMappingStage.Inventory(document,comparisonManifest,Path.Combine(folder,"hatch-inventory.json"));
+                    GeometryAudit.Write(document,Path.Combine(folder,"roofs-geometry.jsonl"),comparisonManifest.Elements.Where(e=>e.Kind=="Roof").Select(e=>e.SourceGuid).ToHashSet(),null,BuiltInCategory.OST_GenericModel);
+                    foreach(var (name,category) in new[]{("walls",BuiltInCategory.OST_Walls),("doors",BuiltInCategory.OST_Doors),("windows",BuiltInCategory.OST_Windows)})
+                        GeometryAudit.Write(document,Path.Combine(folder,name+"-geometry.jsonl"),null,null,category);
+                    var physical=comparisonManifest.Elements.Where(e=>e.Kind is "Roof" or "Shell" or "Wall" or "Door" or "Window").Select(e=>
+                    {
+                        var native=index.GetValueOrDefault(e.SourceGuid);var box=native?.get_BoundingBox(null);
+                        double[]? P(XYZ? p)=>p==null?null:new[]{p.X,p.Y,p.Z}.Select(v=>UnitUtils.ConvertFromInternalUnits(v,UnitTypeId.Meters)).ToArray();
+                        return new{e.SourceGuid,e.Kind,id=native?.Id.Value,elementClass=native?.GetType().Name,name=native?.Name,min=P(box?.Min),max=P(box?.Max)};
+                    }).ToArray();
+                    var result=new{status="complete",source=job.SourceRvt,rooms,physical,probeTransactions="rolled back; source RVT not saved"};
+                    File.WriteAllText(path,JsonSerializer.Serialize(result,Json.Options));
+                    File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",comparisonReport=path,roomCount=rooms.Count(r=>r.actualArea>0),missing=rooms.Where(r=>r.id==null).Select(r=>r.number)},Json.Options));
+                }
+                finally{document.Close(false);}
+                return;
+            }
+            if(job.Operation=="ovCheck")
+            {
+                var assembly=AppDomain.CurrentDomain.GetAssemblies().Single(a=>a.GetName().Name=="HeatLossViewer");
+                var method=assembly.GetType("HeatLossViewer.Export.ExportValidation",true)!.GetMethod("Run")!;
+                var result=method.Invoke(null,[ui,WorkspacePath(job.ManifestPath)]);
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(result,Json.Options));return;
+            }
+            if(job.Operation=="roadmapCheck")
+            {
+                var result=RoadmapValidation.Run(ui,WorkspacePath(job.ManifestPath),WorkspacePath(job.TemplatePath),WorkspacePath(job.OutputRvt));
+                File.WriteAllText(WorkspacePath(job.ReportPath),JsonSerializer.Serialize(result,Json.Options));
+                ui.OpenAndActivateDocument(WorkspacePath(job.OutputRvt));
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",result},Json.Options));return;
+            }
+            if(job.Operation=="namingCheck")
+            {
+                var result=NamingValidation.Run(ui,WorkspacePath(job.ManifestPath),WorkspacePath(job.OutputRvt));
+                File.WriteAllText(WorkspacePath(job.ReportPath),JsonSerializer.Serialize(result,Json.Options));
+                ui.OpenAndActivateDocument(WorkspacePath(job.OutputRvt));
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",result},Json.Options));return;
+            }
             if(job.Operation is "nominalColumnsCheckCopy" or "completeColumnsCopy")
             {
                 string output=WorkspacePath(job.OutputRvt);if(File.Exists(output))throw new IOException("Nominal column output already exists");

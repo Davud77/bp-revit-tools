@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../HeatLossViewer/ProjectCalculationEditor.cs" Link="ProjectCalculationEditor.cs" />
+    <Compile Include="../../HeatLossViewer/Export/ProjectCalculationInputs.cs" Link="ProjectCalculationInputs.cs" />
+  </ItemGroup>
+</Project>

@@ -24,6 +24,22 @@ public sealed class BatchApplication : IExternalApplication
         ui.Idling-=Run;
         var settings=JsonSerializer.Deserialize<BatchConfig>(File.ReadAllText(config))!;
         Directory.CreateDirectory(settings.OutputDirectory);
+        if(settings.OvLibraryCheck)
+        {
+            try{var report=OvLibraryValidation.Run(ui,settings.OutputDirectory,settings.ShowLibraryWindow);File.WriteAllText(Path.Combine(settings.OutputDirectory,"library-report.json"),JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}));}
+            catch(Exception ex){File.WriteAllText(Path.Combine(settings.OutputDirectory,"library-error.txt"),ex.ToString());}
+            return;
+        }
+        if (settings.ProjectConditionsCheck)
+        {
+            try
+            {
+                var report = ProjectConditionsCheck.Run(ui, settings.OutputDirectory);
+                File.WriteAllText(Path.Combine(settings.OutputDirectory, "project-conditions-report.json"), JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch (Exception ex) { File.WriteAllText(Path.Combine(settings.OutputDirectory, "project-conditions-error.txt"), ex.ToString()); }
+            return;
+        }
         var reports=new List<object>();
         foreach(string path in settings.Files)
         {
@@ -57,5 +73,8 @@ public sealed class BatchApplication : IExternalApplication
     {
         public string OutputDirectory {get;set;}="";
         public List<string> Files {get;set;}=[];
+        public bool ProjectConditionsCheck {get;set;}
+        public bool OvLibraryCheck {get;set;}
+        public bool ShowLibraryWindow {get;set;}
     }
 }

@@ -1,15 +1,15 @@
-# Установка BotPlus RT 1.2.0
+# Установка BotPlus RT 1.5
 
 1. Сохраните проекты и закройте Revit.
-2. Запустите `BotPlus.RT-1.2.0-Setup.exe`.
-3. Проверьте папку Revit 2026. При необходимости выберите подключение Codex/Claude Desktop и автоподтверждение MCP.
-4. Нажмите «Установить», затем запустите Revit. Вкладка **BotPlus RT** содержит панели **Codex MCP → Ac2Revit → ОВ**.
+2. Запустите `BotPlus.RT-1.6-Setup.exe`.
+3. Проверьте папку Revit 2026. Выберите, для какой версии Archicad установить Tapir (25–30, по умолчанию 28), и её папку. Можно выбрать «Не устанавливать Tapir». Перед установкой Tapir закройте выбранный Archicad. Для записи в Program Files Windows может запросить права администратора. Подключение AI-клиентов и автоподтверждение выбираются позже на ленте Revit.
+4. Нажмите «Установить», затем запустите Revit. Вкладка **BotPlus RT** содержит панели **MCP → Ac2Revit → ОВ**.
 
 Установщик включает все три модуля. SDK и отдельные Python/Node.js на целевом компьютере не требуются. Archicad и Tapir нужны для чтения PLN. Расчёт теплопотерь и подбор радиаторов находятся в модуле ОВ; проверяйте демонстрационные исходные значения перед использованием.
 
 ## Размещение
 
-- Приложение: `%LOCALAPPDATA%\BotPlus.RT\Application\versions\1.2.0`.
+- Приложение: `%LOCALAPPDATA%\BotPlus.RT\Application\versions\1.5`.
 - Единственный манифест Revit: `%APPDATA%\Autodesk\Revit\Addins\2026\BotPlus.RT.addin`.
 - Лог и резервные копии: `%LOCALAPPDATA%\BotPlus.RT`.
 - Существующие токен и настройки MCP: `%LOCALAPPDATA%\WEAM.Revit.AI` (путь сохранён).
@@ -24,12 +24,18 @@
 ## Командная строка
 
 ```powershell
-.\BotPlus.RT-1.2.0-Setup.exe --silent --codex
-.\BotPlus.RT-1.2.0-Setup.exe --silent --revit="D:\Autodesk\Revit 2026"
-.\BotPlus.RT-1.2.0-Setup.exe --uninstall
-.\BotPlus.RT-1.2.0-Setup.exe --silent --verify-payload="D:\empty-test-folder"
+.\BotPlus.RT-1.6-Setup.exe --silent
+.\BotPlus.RT-1.6-Setup.exe --silent --revit="D:\Autodesk\Revit 2026"
+.\BotPlus.RT-1.6-Setup.exe --silent --tapir=29 --archicad="D:\Graphisoft\Archicad 29"
+.\BotPlus.RT-1.6-Setup.exe --silent --no-tapir
+.\BotPlus.RT-1.6-Setup.exe --uninstall
+.\BotPlus.RT-1.6-Setup.exe --silent --verify-payload="D:\empty-test-folder"
 ```
 
 Последняя команда проверяет распаковку в пустую папку, без установки, изменения реестра или настройки клиентов.
 
+Tapir 1.7.0 включён в поставку для каждой поддерживаемой версии Archicad, интернет при установке не нужен. Версия APX выбирается строго по выбранному Archicad и проверяется по SHA-256; папки расширений учитывают локализацию. Tapir остаётся в Archicad при удалении BotPlus RT.
+
 Удаление доступно через «Установленные приложения» Windows. Закройте Revit и MCP-клиент перед удалением. Сеансы Ac2Revit архивируются в `%LOCALAPPDATA%\BotPlus.RT\saved-sessions`; экспорт ОВ, локальные проекты и настройки MCP сохраняются. EXE не подписан цифровой подписью; Revit может запросить доверие к надстройке.
+
+Установщик не меняет настройки Codex / Claude и автоподтверждения. Во время установки видны текущий этап, процент и журнал. Полный лог: `%LOCALAPPDATA%\BotPlus.RT\setup.log`; кнопка «Открыть лог» открывает этот файл. Окно работает во время распаковки, закрытие до окончания операции заблокировано.

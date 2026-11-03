@@ -34,6 +34,7 @@ public sealed class ImportSelection
         "wallCompletion"=>Includes("Wall"),
         "beamBodies" or "rectangularBeams" or "nativeCutBeams"=>Includes("Beam"),
         "openingsAndFillings"=>Included.Overlaps(["Door","Window","Opening"]),
+        "nativeTerrain"=>Includes("Mesh"),
         "supplementalBodies"=>Included.Overlaps(["Roof","Mesh","Stair","Railing","CurtainWall","Object","Shell","Skylight","Lamp"]),
         "roomSeparators" or "roomSeparatorRecheck"=>Includes("Zone"),
         "wallJoinsAndRooms"=>Includes("Wall") || Includes("Zone"),

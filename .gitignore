@@ -1,4 +1,7 @@
 local/
+Входные данные/
+Выходные данные/
+output/
 dist/
 artifacts/
 **/bin/

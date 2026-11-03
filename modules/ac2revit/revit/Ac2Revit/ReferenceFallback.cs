@@ -79,6 +79,7 @@ public static class ReferenceFallback
                 stage="createElement";transaction.Start();var options=transaction.GetFailureHandlingOptions();options.SetFailuresPreprocessor(new Failures(report,key,recordKind));options.SetClearAfterRollback(true);transaction.SetFailureHandlingOptions(options);
                 var shape=DirectShape.CreateElement(doc,new ElementId(category));
                 shape.ApplicationId="Ac2Revit.IFC.ReferenceFallback";shape.ApplicationDataId=key;shape.SetShape(objects);
+                shape.Name=SourceLabel.Format(record.S("mark",recordKind))+" — геометрия IFC";
                 var comments=shape.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS);
                 comments?.Set("IFC geometry fallback; source "+key+"; "+record.GetProperty("reason").GetString()+(uniqueMarks?"; Исходная марка: "+record.S("mark"):""));
                 if(record.TryGetProperty("mark",out var mark))shape.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(mark.GetString());

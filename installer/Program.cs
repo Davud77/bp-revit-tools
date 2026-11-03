@@ -11,6 +11,12 @@ internal static class Program
         bool uninstall = args.Contains("--uninstall") || args.Contains("--uninstall-worker");
         try
         {
+            var tapirWorker = args.FirstOrDefault(a => a.StartsWith("--tapir-worker="));
+            if (tapirWorker is not null)
+            {
+                Deployment.InstallTapir(int.Parse(tapirWorker[15..]), args.FirstOrDefault(a => a.StartsWith("--archicad="))?[11..], false);
+                return 0;
+            }
             var verify = args.FirstOrDefault(a => a.StartsWith("--verify-payload="));
             if (verify is not null)
             {
@@ -40,8 +46,9 @@ internal static class Program
             if (silent)
             {
                 if (uninstall) Deployment.Uninstall();
-                else Deployment.Install(args.Contains("--codex"), args.Contains("--claude"), args.Contains("--auto-confirm"),
-                    args.FirstOrDefault(a => a.StartsWith("--revit="))?[8..]);
+                else Deployment.Install(args.FirstOrDefault(a => a.StartsWith("--revit="))?[8..], null,
+                    args.Contains("--no-tapir") ? null : int.Parse(args.FirstOrDefault(a => a.StartsWith("--tapir="))?[8..] ?? "28"),
+                    args.FirstOrDefault(a => a.StartsWith("--archicad="))?[11..]);
             }
             else
             {

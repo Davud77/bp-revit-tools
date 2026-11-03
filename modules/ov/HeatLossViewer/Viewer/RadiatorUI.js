@@ -1,11 +1,11 @@
 const radiatorEngine=globalThis.RadiatorSelection;
 const radiatorCatalog=JSON.parse($('radiator-catalog').textContent);
-let radiatorSettings={...radiatorEngine.defaults,roomOverrides:{}},customRadiators=[];
+let radiatorSettings={...radiatorEngine.defaults,...(DATA.ovLibrary?.radiators?.settings || {}),roomOverrides:DATA.ovLibrary?.radiators?.settings?.roomOverrides || {}},customRadiators=DATA.ovLibrary?.radiators?.custom || [];
 const radiatorStorage=storageKey+':radiators';
-try{const saved=JSON.parse(localStorage.getItem(radiatorStorage));if(saved){radiatorSettings={...radiatorSettings,...saved.settings};customRadiators=saved.custom || [];}}catch{}
+try{const saved=DATA.nativeRadiators?null:JSON.parse(localStorage.getItem(radiatorStorage));if(saved){radiatorSettings={...radiatorSettings,...saved.settings};customRadiators=saved.custom || [];}}catch{}
 const radiatorSave=()=>{try{localStorage.setItem(radiatorStorage,JSON.stringify({settings:radiatorSettings,custom:customRadiators}));}catch{}};
 const mountNames={wall:'Настенный панельный',floor:'Напольный на опорах',vertical:'Вертикальный настенный',trench:'Внутрипольный, естественная конвекция','trench-fan':'Внутрипольный с вентилятором',sectional:'Секционный / свой прибор'};
-const radiatorStatus={selected:'Подобран · бета',insufficient:'Недостаточно мощности / места',demo:'демо',restricted:'Нужна проверка размещения','catalog-missing':'Нужен каталог','placement-missing':'Место вручную',excluded:'Исключён',zero:'Нагрузка 0'};
+const radiatorStatus={selected:'Подобран',insufficient:'Недостаточно мощности / места',demo:'нет данных',restricted:'Нужна проверка размещения','catalog-missing':'Нужен каталог','placement-missing':'Место вручную',excluded:'Исключён',zero:'Нагрузка 0'};
 for(const [index,row] of (radiatorCatalog.referenceLoads?.rooms || []).entries())$('rad-source-load').append(option(index,`Этаж ${row.floor} · ${row.number}. ${row.name} · ${row.watts} Вт · стр. ${row.page}`));
 for(const [value,label] of Object.entries(mountNames)){$('rad-mount').append(option(value,label));$('rad-room-mount').append(option(value,label));}
 function radiatorProducts(){return [...radiatorCatalog.products,...customRadiators];}
@@ -19,7 +19,7 @@ function fillRadiatorInputs(){
  fillRadiatorSeries();
 }
 function recalculateRadiators(){
- radiatorPlans=new Map(rooms.map(room=>[room.key,radiatorEngine.select(room,results.get(room.key),openings,radiatorProducts(),radiatorSettings,settings,overrides)]));
+ radiatorPlans=new Map(rooms.map(room=>[room.key,radiatorEngine.select(room,results.get(room.key),openings,radiatorProducts(),radiatorSettings,settings,currentThermalOverrides())]));
  radiatorSave();renderRadiatorTable();renderRadiatorCard(rooms.find(r=>r.key===selectedKey));refreshRadiatorScene();refresh3D();
 }
 function renderRadiatorTable(){
@@ -29,7 +29,7 @@ function renderRadiatorTable(){
   count+=plan.devices.length;wattsInstalled+=plan.installed || 0;if(plan.status==='selected')selected++;
   const row=document.createElement('tr');row.dataset.key=room.key;row.className=room.key===selectedKey?'selected':'';row.tabIndex=0;
   for(const value of [room.number,room.name,room.levelName,watts(plan.required),plan.devices.length,watts(plan.installed),radiatorStatus[plan.status]])cell(row,value);
-  row.onclick=()=>{selectRoom(room.key);$('rad-selected-room').textContent=`Выбрано: № ${room.number} · ${room.name}. Индивидуальные настройки — в карточке.`;};
+  row.onclick=event=>{selectRoom(room.key,false,event);$('rad-selected-room').textContent=`Выбрано: № ${room.number} · ${room.name}. Индивидуальные настройки — в карточке.`;};
   row.onkeydown=e=>{if(e.key==='Enter'){row.click();}};fragment.append(row);
  }
  $('radiator-rows').replaceChildren(fragment);
@@ -42,7 +42,7 @@ function renderRadiatorTable(){
 function renderRadiatorCard(room){
  const plan=room && radiatorPlans.get(room.key),o=room && radiatorSettings.roomOverrides?.[room.key];
  $('rad-room-state').textContent=plan ? `${radiatorStatus[plan.status]} · ${plan.reason}`:'Выберите помещение';
- $('rad-room-q').textContent=plan?`${watts(plan.required)} требуется / ${watts(plan.installed)} установлено`:'демо';
+ $('rad-room-q').textContent=plan?`${watts(plan.required)} требуется / ${watts(plan.installed)} установлено`:'нет данных';
  $('rad-room-mount').value=o?.mount || '';$('rad-room-target').value=o?.targetWatts ?? '';
  $('rad-room-reviewed').checked=!!o?.accessReviewed;$('rad-room-excluded').checked=!!o?.excluded;
  $('rad-room-wall').replaceChildren(option('','Автоматически по наружным стенам'));
@@ -75,9 +75,10 @@ $('radiator-form').onsubmit=e=>{
 function roomRadiatorChange(event){
  if(!selectedKey)return;
  radiatorSettings.roomOverrides??={};const row=radiatorSettings.roomOverrides[selectedKey]??={};
+ const previousTarget=row.targetWatts;
  for(const [id,key] of [['rad-room-mount','mount'],['rad-room-wall','wallKey']]){if($(id).value)row[key]=$(id).value;else delete row[key];}
  if($('rad-room-target').value==='')delete row.targetWatts;else row.targetWatts=Number($('rad-room-target').value);
- if(event?.target?.id==='rad-room-target')delete row.sourceLoad;
+ if(event?.target?.id==='rad-room-target' || previousTarget!==row.targetWatts)delete row.sourceLoad;
  row.accessReviewed=$('rad-room-reviewed').checked;row.excluded=$('rad-room-excluded').checked;
  // A room-specific mounting type should not inherit an incompatible global series filter.
  if(row.mount && row.mount!==radiatorSettings.mount)row.series='';else delete row.series;
@@ -93,7 +94,7 @@ $('rad-apply-source-load').onclick=()=>{
  recalculateRadiators();$('rad-source-state').textContent=`Нагрузка ${reference.watts} Вт применена только к выбранному Room. Привязку выбрал пользователь.`;
 };
 $('rad-reset').onclick=()=>{radiatorSettings={...radiatorEngine.defaults,roomOverrides:{}};fillRadiatorInputs();recalculateRadiators();};
-function radiatorDownload(name,data){const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+function radiatorDownload(name,data){if(globalThis.chrome?.webview){chrome.webview.postMessage({type:'export-file',name,text:JSON.stringify(data,null,2)});return;}const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 $('rad-export').onclick=()=>radiatorDownload('radiator_selection.json',{schemaVersion:'radiator-selection-1',projectName:DATA.projectName,exportedAt:new Date().toISOString(),
  status:'beta-proposal',coordinateSystem:DATA.coordinateSystem,units:{length:'m',power:'W'},settings:radiatorSettings,heatLossSettings:settings,
  normative:radiatorCatalog.normative,catalogSource:radiatorCatalog.source,catalogSha256:radiatorCatalog.sha256,
@@ -101,7 +102,7 @@ $('rad-export').onclick=()=>radiatorDownload('radiator_selection.json',{schemaVe
   power:d.power,position:d.position,tangent:d.tangent,normal:d.normal,lengthMm:d.product.lengthMm,heightMm:d.product.heightMm,depthMm:d.product.depthMm,
   depthIsSchematic:!!d.product.depthIsSchematic,floorElevation:d.floorElevation,floorReferenceSource:d.floorReferenceSource,
   qNominal:d.product.qNominal,n:d.product.n,referenceSupply:d.product.referenceSupply,referenceReturn:d.product.referenceReturn,referenceRoom:d.product.referenceRoom,referenceDelta:d.product.referenceDelta,
-  indoor:settings.roomOverrides?.[p.roomKey]?.indoor ?? settings.indoor,coverage:d.coverage,groupCoverage:d.groupCoverage,groupSize:d.groupSize,windowKey:d.windowKey,surfaceKey:d.surfaceKey,source:d.product.source,sheet:d.product.sheet,sourceCells:d.product.sourceCells,fanMode:d.product.fanMode}))}))});
+  indoor:engine.resolve(rooms.find(r=>r.key===p.roomKey),settings).indoor,coverage:d.coverage,groupCoverage:d.groupCoverage,groupSize:d.groupSize,windowKey:d.windowKey,surfaceKey:d.surfaceKey,source:d.product.source,sheet:d.product.sheet,sourceCells:d.product.sourceCells,fanMode:d.product.fanMode}))}))});
 $('rad-schedule').onclick=()=>{
  const quote=v=>'"'+(typeof v==='string' && /^[\s]*[=+@-]/.test(v)?"'"+v:String(v??'')).replaceAll('"','""')+'"';
  const rows=[['Помещение','Имя','Этаж','Прибор','Длина мм','Высота мм','Мощность Вт','График','Статус']];

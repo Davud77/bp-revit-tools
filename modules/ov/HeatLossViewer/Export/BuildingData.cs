@@ -7,6 +7,9 @@ public sealed class BuildingData
 {
     public string SchemaVersion { get; init; } = "1.1";
     public string ProjectName { get; init; } = "";
+    public ProjectConditions? ProjectConditions { get; init; }
+    public OvLibraryData? OvLibrary { get; set; }
+    public bool NativeRadiators { get; set; }
     public DateTimeOffset ExportedAt { get; init; } = DateTimeOffset.Now;
     public string CoordinateSystem { get; init; } = "host-internal-XY-Z-up";
     public object Units { get; init; } = new { length = "m", area = "m2", volume = "m3" };
@@ -15,6 +18,7 @@ public sealed class BuildingData
     public List<RoomData> Rooms { get; init; } = [];
     public List<string> Warnings { get; init; } = [];
     public List<OpeningData> Openings { get; init; } = [];
+    public Dictionary<string,int> OpeningCoverage { get; init; } = [];
 }
 
 public sealed class RoomData
@@ -44,6 +48,7 @@ public sealed class RoomData
 
 public sealed class SurfaceData
 {
+    public string TypeKey { get; init; } = "";
     public string Key { get; init; } = "";
     public string HostKey { get; init; } = "";
     public string ElementId { get; init; } = "";
@@ -77,6 +82,7 @@ public sealed class SurfaceCutData
 
 public sealed class OpeningData
 {
+    public string TypeKey { get; init; } = "";
     public string Key { get; init; } = "";
     public string IdText { get; init; } = "";
     public string HostKey { get; init; } = "";
@@ -87,9 +93,12 @@ public sealed class OpeningData
     public double[] Tangent { get; init; } = [];
     public double Width { get; init; }
     public double Height { get; init; }
-    public double Area => Width * Height;
+    public double? MeasuredArea { get; set; }
+    public double Area => MeasuredArea ?? Width * Height;
     public string GeometrySource { get; init; } = "family-parameters";
     public bool IsExterior { get; init; }
+    public bool IsEmpty { get; init; }
+    public string ClassificationSource { get; init; } = "category";
     public Dictionary<string, string> SurfaceKeys { get; init; } = [];
 }
 

@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from hatch_patterns import vector_pattern,portable_pattern
 
 
 def rgb(pen):
@@ -13,7 +14,7 @@ def rgb(pen):
     return [int(v*255+0.5) for v in values]
 
 
-def prepare(manifest, source, target, rules, allow_unmapped=False):
+def prepare(manifest, source, target, rules, allow_unmapped=False, portable=None, reference_scale=100):
     if source['projectId']!=manifest['source']['projectId'] or source['materialDifferences']:
         raise ValueError('Different source material snapshot')
     if target['projectId']!=source['projectId']:raise ValueError('Different Revit project')
@@ -38,12 +39,28 @@ def prepare(manifest, source, target, rules, allow_unmapped=False):
         base=re.sub(r'\s*\(\d+\)$','',fill['name']).strip();name=rules.get(base);mode='analogue';reason='Явный аналог образца шаблона; геометрия/масштаб рисунка и ориентация слоя могут отличаться.'
         if fill['subType']=='Empty':mode='empty';name='';reason='Исходный тип Empty: штриховка отсутствует.'
         elif fill['subType']=='Solid' and fill.get('percent')==1:mode='solid';name=solids[0]['name'];reason='Исходная сплошная заливка 100%; сохранён цвет пера.'
+        geometry=None
+        if mode=='analogue' and name not in patterns and portable is not None:
+            policy=portable.get(base,{})
+            available=[n for n in policy.get('native',[]) if n in patterns and not patterns[n]['geometry']['solid']]
+            if available:
+                name=available[0];reason='Явный нативный аналог из текущего шаблона. Рисунок и масштаб могут отличаться.'
+            elif fill['subType']=='Vector':
+                try:
+                    name,geometry=vector_pattern(fill,reference_scale);mode='sourceVector'
+                    reason='Нативный векторный образец из исходных линий, шага, углов и штрихов; привязка к слою отдельно не воспроизводится.'
+                    if fill.get('scaleWithPlan'):reason+=f' Зависимый от модели масштаб зафиксирован для 1:{reference_scale:g}.'
+                except ValueError as error:
+                    name=None;reason=str(error)
+            elif policy.get('fallback'):
+                name,geometry=portable_pattern(policy['fallback']);mode='portableAnalogue'
+                reason='Условный нативный аналог '+policy['fallback']+'; исходные дуги/детали символа и привязка к слою не воспроизводятся.'
         used=revit['elementId'] in compound_ids
         summary={'materialGuid':guid,'materialName':material['name'],'sourceFillIndex':fill['index'],'sourceFillName':fill['name'],'usedInCompoundType':used,'targetName':name or '',
-                 'status':'mapped' if name or mode=='empty' else 'unmapped'}
+                 'status':'mapped' if name or mode=='empty' else 'unmapped','reason':reason}
         inventory.append(summary)
         if summary['status']=='unmapped':continue
-        if mode!='empty' and name not in patterns:
+        if mode!='empty' and name not in patterns and geometry is None:
             if not allow_unmapped:raise ValueError('Explicit target pattern absent: '+name)
             summary.update(status='unmapped', reason='Explicit target pattern absent in this Revit template')
             continue
@@ -56,7 +73,8 @@ def prepare(manifest, source, target, rules, allow_unmapped=False):
         elif bp==-1:reason+=' Фон окна Archicad сопоставлен прозрачному фону листа Revit.'
         elif bp!=0:raise ValueError('Unknown background pen semantics')
         rows.append({'materialGuid':guid,'sourceFillIndex':fill['index'],'sourceFillGuid':fill['attributeId']['guid'],'sourceFillName':fill['name'],
-            'match':mode,'reason':reason,'targetName':name or '', 'targetFingerprint':patterns[name]['fingerprint'] if name else '',
+            'match':mode,'reason':reason,'targetName':name or '', 'targetFingerprint':patterns[name]['fingerprint'] if name and geometry is None else '',
+            'targetGeometry':geometry,
             'foregroundRgb':rgb(fg),'background':background,'backgroundRgb':brgb,'backgroundFingerprint':solids[0]['fingerprint'] if background=='solid' else '',
             'sourceForegroundPen':material['cutFillPen'],'sourceBackgroundPen':bp,'sourceCutFillOrientation':material['cutFillOrientation']})
     missing=[r for r in inventory if r['usedInCompoundType'] and r['status']=='unmapped']
@@ -67,14 +85,14 @@ def prepare(manifest, source, target, rules, allow_unmapped=False):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--manifest',type=Path,required=True);p.add_argument('--source',type=Path);p.add_argument('--target',type=Path,required=True);p.add_argument('--rules',type=Path,required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--allow-unmapped',action='store_true');a=p.parse_args()
     def read(p):return json.loads(p.read_text(encoding='utf-8-sig'))
-    manifest,target=map(read,(a.manifest,a.target));rules=read(a.rules)['rules']
+    manifest,target=map(read,(a.manifest,a.target));config=read(a.rules);rules=config['rules']
     digest=hashlib.file_digest(a.manifest.open('rb'),'sha256').hexdigest()
     if a.source:source=read(a.source)
     else:
         if not manifest.get('fills') or not manifest.get('penTables'):raise ValueError('Manifest has no fill/pen definitions; provide --source catalog')
         source={'projectId':manifest['source']['projectId'],'materialDifferences':[],'sourceManifestSha256':digest,'fills':manifest['fills'],'penTables':manifest['penTables']}
     if digest!=source['sourceManifestSha256']:raise ValueError('Manifest bytes differ')
-    rows,inventory=prepare(manifest,source,target,rules,a.allow_unmapped);a.out.mkdir(parents=True,exist_ok=True)
+    rows,inventory=prepare(manifest,source,target,rules,a.allow_unmapped,config.get('portable'),config.get('referenceScale',100));a.out.mkdir(parents=True,exist_ok=True)
     catalog_path=a.source or a.manifest
     plan={'format':'ac2r.hatch-mapping/1','projectId':source['projectId'],'sourceManifestSha256':digest,'sourceCatalog':str(catalog_path.resolve()),
           'sourceCatalogSha256':hashlib.file_digest(catalog_path.open('rb'),'sha256').hexdigest(),'penTable':next(r['attributeId']['guid'] for r in source['penTables'] if r.get('isActiveForModel')),
@@ -83,5 +101,5 @@ if __name__=='__main__':
     with (a.out/'mapping-inventory.csv').open('w',encoding='utf-8-sig',newline='') as f:
         w=csv.DictWriter(f,fieldnames=['materialGuid','materialName','sourceFillIndex','sourceFillName','usedInCompoundType','targetName','status','reason']);w.writeheader();w.writerows(inventory)
     summary={'sourceMaterials':len(inventory),'mapped':len(rows),'unmapped':len(inventory)-len(rows),'usedCompoundMaterials':sum(r['usedInCompoundType'] for r in inventory),'usedCompoundUnmapped':sum(r['usedInCompoundType'] and r['status']=='unmapped' for r in inventory),
-             'mappingKinds':{k:sum(r['match']==k for r in rows) for k in ('analogue','empty','solid')}}
+             'mappingKinds':{k:sum(r['match']==k for r in rows) for k in ('analogue','empty','solid','sourceVector','portableAnalogue')}}
     (a.out/'summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8');print(json.dumps(summary))

@@ -8,6 +8,7 @@ import uuid
 from .client import TapirClient, ApiError, chunks, aligned
 from .normalize import normalize, guid
 from .zone_constraints import capture as capture_zone_constraints
+from .mesh_capture import capture as capture_mesh_geometry
 from .jsonio import write_json, archive_reference
 
 
@@ -75,6 +76,7 @@ def export(args):
         capture_zone_constraints(api, snapshot, args.batch)
     except (ApiError, KeyError, TypeError, ValueError) as exc:
         snapshot['warnings'].append('Zone vertical constraints unavailable: '+str(exc))
+    capture_mesh_geometry(api, snapshot, target, args.batch)
     # Make a usable geometry checkpoint even if an expensive calculated property times out.
     write_json(target/'snapshot.json', snapshot)
     write_json(target/'manifest.json', normalize(snapshot, args.project_id))
@@ -168,6 +170,7 @@ def export(args):
               'gdlStorage': 'archivedResponsesWithSha256References',
               'snapshotConsistency': 'document/story checked; element edits are not locked'}
     report['relationCoverage'] = {}
+    report['meshGeometryCoverage'] = snapshot['meshGeometryCoverage']
     for kind in ('Wall', 'Zone', 'Beam', 'Door', 'Window', 'Roof', 'Shell', 'Skylight'):
         rows = [e for e in snapshot['elements'] if e.get('type') == kind]
         retrieved = sum(isinstance(e.get('relations'), dict) and 'error' not in e['relations'] for e in rows)

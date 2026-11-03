@@ -54,7 +54,7 @@ public static class SpatialStage
                 source.Elements=original.Where(e=>e.Kind!="Zone" || batch.Contains(e)).ToList();
                 var result=new Importer(doc,source,config){Progress=(_,n,_)=>progress?.Invoke("zoneAreas",start+n,ordered.Length)}
                     .Run(new HashSet<string>{"Zone"},false,false);
-                state.Report.Items.AddRange(result.Items);state.Report.ZoneAreas.AddRange(result.ZoneAreas);state.Next+=batch.Count;
+                state.Report.Items.AddRange(result.Items);state.Report.ZoneAreas.AddRange(result.ZoneAreas);state.Report.ZoneVerticals.AddRange(result.ZoneVerticals);state.Next+=batch.Count;
                 using(var transaction=new Transaction(doc,"Record spatial checkpoint"))
                 {transaction.Start();Storage.Tag(storage,project,key,signature,JsonSerializer.Serialize(state,Json.Options));transaction.Commit();}
                 if(!string.IsNullOrEmpty(doc.PathName))doc.Save();

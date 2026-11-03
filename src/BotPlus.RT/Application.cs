@@ -31,7 +31,9 @@ public sealed class Application : IExternalApplication
             }
             var service = application.CreateRibbonPanel("BotPlus RT", "Сервис");
             service.AddItem(new PushButtonData("BotPlusRTService", "Сервис", typeof(Application).Assembly.Location,
-                typeof(ServiceCommand).FullName!));
+                typeof(ServiceCommand).FullName!){AvailabilityClassName=typeof(HostAvailable).FullName!});
+            service.AddItem(new PushButtonData("BotPlusRTUpdates","Обновления",typeof(Application).Assembly.Location,typeof(UpdateCommand).FullName!){AvailabilityClassName=typeof(HostAvailable).FullName!});
+            RibbonStyle.Apply(application);
             return Result.Succeeded;
         }
         catch (Exception error)

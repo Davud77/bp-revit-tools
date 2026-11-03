@@ -14,6 +14,7 @@ try {
 $stage = Join-Path $PSScriptRoot ('artifacts\setup-' + [guid]::NewGuid().ToString('N'))
 $payload = Join-Path $stage 'payload'
 New-Item -ItemType Directory -Force $stage,$OutputDirectory | Out-Null
+& (Join-Path $PSScriptRoot 'installer\prepare-tapir.ps1')
 node (Join-Path $PSScriptRoot 'scripts\package.mjs') $PSScriptRoot $payload $BuildPython
 if ($LASTEXITCODE -ne 0) { throw 'Packaging failed.' }
 # Include the complete corresponding source for AGPL distribution.
@@ -28,7 +29,7 @@ foreach ($relative in $files) {
     New-Item -ItemType Directory -Force (Split-Path $destination) | Out-Null
     Copy-Item -LiteralPath $inputFile -Destination $destination
 }
-$sourceZip = Join-Path $OutputDirectory 'BotPlus.RT-1.2.0-source.zip'
+$sourceZip = Join-Path $OutputDirectory 'BotPlus.RT-1.6-source.zip'
 Compress-Archive -Path (Join-Path $source '*') -DestinationPath $sourceZip -Force
 New-Item -ItemType Directory -Force (Join-Path $payload 'source') | Out-Null
 Copy-Item -LiteralPath $sourceZip -Destination (Join-Path $payload 'source')
@@ -36,7 +37,7 @@ $zip = Join-Path $stage 'payload.zip'
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $zip -CompressionLevel Optimal
 dotnet publish (Join-Path $PSScriptRoot 'installer\BotPlus.RT.Setup.csproj') -c Release -o (Join-Path $stage 'publish') "-p:PayloadPath=$zip" -v minimal
 if ($LASTEXITCODE -ne 0) { throw 'Installer publish failed.' }
-$setup = Join-Path $OutputDirectory 'BotPlus.RT-1.2.0-Setup.exe'
+$setup = Join-Path $OutputDirectory 'BotPlus.RT-1.6-Setup.exe'
 Copy-Item -LiteralPath (Join-Path $stage 'publish\BotPlus.RT.Setup.exe') -Destination $setup -Force
 $hashes = foreach ($file in $setup,$sourceZip) { '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(),(Split-Path $file -Leaf) }
 [IO.File]::WriteAllLines((Join-Path $OutputDirectory 'SHA256SUMS.txt'), $hashes)

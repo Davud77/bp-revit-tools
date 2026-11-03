@@ -7,6 +7,10 @@ const window={key:'w1',kind:'window',hostKey:'wall1',roomKeys:['r1'],width:2,hei
 const products=[.9,1,1.5,1.8].map((length,i)=>({id:'p'+i,model:'Test '+length,series:'X2 Profil',panelType:'22',mounts:['wall','floor'],lengthMm:length*1000,heightMm:600,depthMm:100,qNominal:length*1000,n:1.3,referenceSupply:75,referenceReturn:65,referenceRoom:20,referenceDelta:e.logMean(75,65,20),source:'test'}));
 const settings={...e.defaults,supply:75,return:65},heat={total:400,status:'demo'},thermal={indoor:20};
 let plan=e.select(room,heat,[window],products,settings,thermal);
+const warmer=e.select({...room,levelKey:'L'},heat,[window],products,settings,{...thermal,floorOverrides:{L:{indoor:25}}});
+assert.ok(warmer.devices[0].power<plan.devices[0].power,'floor ambient temperature affects actual radiator output');
+const explicit=e.select({...room,levelKey:'L'},heat,[window],products,settings,{...thermal,floorOverrides:{L:{indoor:25}},roomOverrides:{r1:{indoor:20}}});
+assert.equal(explicit.devices[0].power,plan.devices[0].power,'room ambient override has precedence over the floor');
 assert.equal(plan.status,'selected');assert.equal(plan.devices[0].product.lengthMm,1000);assert.equal(plan.devices[0].coverage,.5);
 plan=e.select(room,heat,[window],products,{...settings,buildingType:'school'},thermal);
 assert.equal(plan.coverageRule,'maximum-feasible');assert.equal(plan.devices.length,2);assert.ok(plan.devices[0].groupCoverage>.94);

@@ -75,6 +75,7 @@ public sealed class RevitEnvelopeExtractor : IDisposable
         {
             Key = room.Key + "/face/" + room.Surfaces.Count,
             HostKey = hostKey ?? "", ElementId = host?.Id.Value.ToString() ?? "",
+            TypeKey = RevitOvLibrary.TypeKey(host, hostKey ?? ""),
             TypeName = host is null ? subfaceType : doc.Equals(host.Document) ? doc.GetElement(host.GetTypeId())?.Name ?? host.Name : host.Name,
             Kind = kind, Exposure = exposure, ClassificationSource = classification,
             GrossArea = area, Normal = [normal.X, normal.Y, normal.Z], Point = [M(point.X),M(point.Y),M(point.Z)],
@@ -122,15 +123,33 @@ public sealed class RevitEnvelopeExtractor : IDisposable
             s.Exposure = neighbor ? "inside" : "outside";
             s.ClassificationSource = "demo-room-adjacency";
         }
-        var phases = rooms.Select(r => r.CreatedPhaseId).DistinctBy(id => id.Value)
+        var phases = rooms.Select(r => r.get_Parameter(BuiltInParameter.ROOM_PHASE)?.AsElementId() ?? r.CreatedPhaseId).DistinctBy(id => id.Value)
             .Select(id => doc.GetElement(id)).OfType<Phase>().ToList();
         var filter = new ElementMulticategoryFilter(new[] { BuiltInCategory.OST_Windows, BuiltInCategory.OST_Doors });
-        foreach (var item in new FilteredElementCollector(doc).WherePasses(filter).WhereElementIsNotElementType())
+        var tagged=(Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(SourceOpeningMetadata.SchemaId)==null?Enumerable.Empty<Element>():new FilteredElementCollector(doc).WherePasses(new Autodesk.Revit.DB.ExtensibleStorage.ExtensibleStorageFilter(SourceOpeningMetadata.SchemaId)))
+            .Select(e=>new{Element=e,Metadata=SourceOpeningMetadata.Read(e)}).Where(e=>e.Metadata!=null).ToList();
+        var metadata=tagged.ToDictionary(e=>e.Element.Id.Value,e=>e.Metadata!);
+        string SourceKey(SourceOpeningMetadata m,string key)=>m.Project.ToUpperInvariant()+":"+key.ToUpperInvariant();
+        var bySource=tagged.GroupBy(e=>SourceKey(e.Metadata!,e.Metadata!.Key)).Where(g=>g.Count()==1).ToDictionary(g=>g.Key,g=>g.Single().Element);
+        var fillings=tagged.Where(e=>e.Metadata!.Kind is "Door" or "Window" && e.Metadata.Key.Equals(e.Metadata.Guid,StringComparison.OrdinalIgnoreCase))
+            .Select(e=>SourceKey(e.Metadata!,e.Metadata!.Guid)).ToHashSet();
+        var categoryElements=new FilteredElementCollector(doc).WherePasses(filter).WhereElementIsNotElementType().ToList();
+        var nativeOpenings=new FilteredElementCollector(doc).OfClass(typeof(Opening)).Cast<Opening>().Where(o=>o.Host is Wall).Cast<Element>();
+        var sourceOpenings=tagged.Where(e=>e.Metadata!.Kind is "Door" or "Window" or "Opening").Select(e=>e.Element);
+        var candidates=categoryElements.Concat(nativeOpenings).Concat(sourceOpenings).DistinctBy(e=>e.Id.Value)
+            .Where(e=>!metadata.TryGetValue(e.Id.Value,out var m) || !m.Key.StartsWith("opening:",StringComparison.OrdinalIgnoreCase) || !fillings.Contains(SourceKey(m,m.Guid)))
+            .OrderBy(e=>e is Opening?1:0).ToList();
+        data.OpeningCoverage[source+"/categoryElements"]=categoryElements.Count;data.OpeningCoverage[source+"/candidates"]=candidates.Count;
+        int exportedBefore=data.Openings.Count;
+        foreach (var item in candidates)
         {
             try
             {
                 var family = item as FamilyInstance;
-                var wall = family?.Host as Wall;
+                metadata.TryGetValue(item.Id.Value,out var sourceMetadata);
+                Element? host=family?.Host ?? (item as Opening)?.Host;
+                if(host==null && sourceMetadata?.HostGuid.Length>0)host=bySource.GetValueOrDefault(SourceKey(sourceMetadata,sourceMetadata.HostGuid));
+                var wall=host as Wall;
                 var associated = new HashSet<string>();
                 foreach (var phase in phases.Where(_ => family is not null))
                 {
@@ -141,11 +160,14 @@ public sealed class RevitEnvelopeExtractor : IDisposable
                     }
                     catch (Autodesk.Revit.Exceptions.InvalidOperationException) { /* Imported non-room-aware family. */ }
                 }
-                string hostKey = wall is null ? "" : source + "/" + wall.UniqueId;
-                var bbox = item.get_BoundingBox(null);
-                if (bbox is null) continue;
+                string hostKey = host is null ? "" : source + "/" + host.UniqueId;
+                var bbox = item.get_BoundingBox(null) ?? sourceMetadata?.VoidBounds();
+                if (bbox is null){data.Warnings.Add($"Проём {item.Id.Value}: геометрия отсутствует; элемент не экспортирован.");continue;}
                 double minZ=M(transform.OfPoint(bbox.Min).Z),maxZ=M(transform.OfPoint(bbox.Max).Z);
-                bool window = item.Category.Id.Value == (long)BuiltInCategory.OST_Windows;
+                bool empty=item is Opening || sourceMetadata?.Empty==true || sourceMetadata?.Key.StartsWith("opening:",StringComparison.OrdinalIgnoreCase)==true;
+                bool window = sourceMetadata?.Kind=="Window" || item.Category?.Id.Value == (long)BuiltInCategory.OST_Windows;
+                bool inferred=empty && sourceMetadata?.Kind is not ("Door" or "Window");
+                if(inferred)window=!exported.Values.Any(r=>maxZ>r.BaseElevation && minZ<r.BaseElevation+r.Height && minZ<=r.BaseElevation+.15);
                 double width = Length(item, window ? BuiltInParameter.WINDOW_WIDTH : BuiltInParameter.DOOR_WIDTH);
                 double height = Length(item, window ? BuiltInParameter.WINDOW_HEIGHT : BuiltInParameter.DOOR_HEIGHT);
                 var location = (item.Location as LocationPoint)?.Point ?? (bbox.Min + bbox.Max) * .5;
@@ -163,7 +185,7 @@ public sealed class RevitEnvelopeExtractor : IDisposable
                     width = corners.Max(p => p.DotProduct(tangent)) - corners.Min(p => p.DotProduct(tangent));
                 }
                 if (height <= 0) height = bbox.Max.Z - bbox.Min.Z;
-                if (width <= 0 || height <= 0) continue;
+                if (width <= 0 || height <= 0){data.Warnings.Add($"Проём {item.Id.Value}: ширина/высота не определена.");continue;}
                 // Prefer explicit phase associations. Geometric fallback is restricted to the actual host wall.
                 if (associated.Count == 0 && wall is not null)
                     foreach (var dto in exported.Values.Where(r => r.Surfaces.Any(s => s.HostKey == hostKey)))
@@ -189,15 +211,20 @@ public sealed class RevitEnvelopeExtractor : IDisposable
                 }
                 if (associated.Count == 0)
                     foreach (var pair in surfaceKeys.OrderBy(p=>DistanceToContour(exported.Values.First(r=>r.Key==p.Key),M(position.X),M(position.Y))).Take(2)) associated.Add(pair.Key);
+                if(inferred && associated.Count>0)window=!exported.Values.Where(r=>associated.Contains(r.Key)).Any(r=>minZ<=r.BaseElevation+.15);
                 surfaceKeys = surfaceKeys.Where(p=>associated.Contains(p.Key)).ToDictionary(p=>p.Key,p=>p.Value);
                 var direction = transform.OfVector(tangent);
+                if(empty && data.Openings.Any(o=>o.HostKey==hostKey && hostKey.Length>0 && Math.Abs(o.Width-M(width))<.03 && Math.Abs(o.Height-M(height))<.03 &&
+                    Math.Abs(o.Position[0]-M(position.X))+Math.Abs(o.Position[1]-M(position.Y))<.3 && Math.Abs(o.Position[2]-M(position.Z))<.05))continue;
                 data.Openings.Add(new OpeningData
                 {
                     Key = source + "/" + item.UniqueId, IdText = item.Id.Value.ToString(), HostKey = hostKey,
+                    TypeKey = RevitOvLibrary.TypeKey(item, source + "/" + item.UniqueId),
                     Kind = window ? "window" : "door", Name = family is not null ? family.Symbol.FamilyName + " · " + family.Symbol.Name : item.Name,
                     RoomKeys = associated.ToList(), Position = [M(position.X), M(position.Y), M(position.Z)],
                     Tangent = [direction.X,direction.Y,direction.Z], Width = M(width), Height = M(height),
                     GeometrySource = fallback ? "bounding-box-beta" : "family-parameters-beta",
+                    IsEmpty=empty,ClassificationSource=inferred?"sill-height-beta":sourceMetadata?.Kind is "Door" or "Window"?"archicad-source-kind":"revit-category",
                     IsExterior = (wall?.WallType.Function == WallFunction.Exterior || surfaceKeys.Any(p=>exported.Values.First(r=>r.Key==p.Key).Surfaces.Any(s=>s.Key==p.Value && s.Exposure=="outside"))) && associated.Count <= 1,
                     SurfaceKeys = surfaceKeys
                 });
@@ -213,7 +240,32 @@ public sealed class RevitEnvelopeExtractor : IDisposable
                 .Select(o=>new {Opening=o,Distance=Math.Sqrt(Math.Pow(o.Position[0]-cut.Center[0],2)+Math.Pow(o.Position[1]-cut.Center[1],2)+Math.Pow(o.Position[2]-cut.Center[2],2))})
                 .Where(o=>o.Distance < Math.Max(o.Opening.Width,o.Opening.Height)*.75+.15).OrderBy(o=>o.Distance).FirstOrDefault();
             if(candidate is not null){cut.OpeningKey=candidate.Opening.Key;cut.Kind=candidate.Opening.Kind;}
+            else
+            {
+                // A wall void can have no family at all. Retain the actual cut area and classify its sill explicitly.
+                if(cut.BoundsMax[2]>=dto.BaseElevation+dto.Height-.01 && cut.BoundsMin[2]>dto.BaseElevation+.15)
+                {data.Warnings.Add($"Вырез {cut.Key} до верха помещения: требуется классификация границы.");continue;}
+                string kind=cut.BoundsMin[2]<=dto.BaseElevation+.15?"door":"window";
+                var normal=surface.Normal;double tx=-normal[1],ty=normal[0],length=Math.Sqrt(tx*tx+ty*ty);if(length<1e-9)continue;tx/=length;ty/=length;
+                var corners=new[]{new[]{cut.BoundsMin[0],cut.BoundsMin[1]},new[]{cut.BoundsMin[0],cut.BoundsMax[1]},new[]{cut.BoundsMax[0],cut.BoundsMin[1]},new[]{cut.BoundsMax[0],cut.BoundsMax[1]}};
+                double width=corners.Max(p=>p[0]*tx+p[1]*ty)-corners.Min(p=>p[0]*tx+p[1]*ty),height=cut.BoundsMax[2]-cut.BoundsMin[2];
+                if(width<=0 || height<=0)continue;
+                var existing=data.Openings.FirstOrDefault(o=>o.IsEmpty && o.HostKey==surface.HostKey && Math.Abs(o.Position[2]-cut.Center[2])<.02 &&
+                    Math.Abs((o.Position[0]-cut.Center[0])*tx+(o.Position[1]-cut.Center[1])*ty)<.02 && Math.Abs(o.Width-width)<.02 && Math.Abs(o.Height-height)<.02);
+                if(existing==null)
+                {
+                    existing=new OpeningData{Key=source+"/void/"+cut.Key,IdText=surface.ElementId+" · проём",HostKey=surface.HostKey,Kind=kind,Name="Пустой проём",
+                        RoomKeys=[dto.Key],Position=cut.Center,Tangent=[tx,ty,0],Width=width,Height=height,MeasuredArea=cut.Area,GeometrySource="revit-wall-void",IsEmpty=true,
+                        ClassificationSource="sill-height-beta",IsExterior=surface.Exposure=="outside",SurfaceKeys=new(){[dto.Key]=surface.Key}};
+                    data.Openings.Add(existing);
+                }
+                else {if(!existing.RoomKeys.Contains(dto.Key))existing.RoomKeys.Add(dto.Key);existing.SurfaceKeys[dto.Key]=surface.Key;}
+                cut.OpeningKey=existing.Key;cut.Kind=existing.Kind;
+            }
         }
+        data.OpeningCoverage[source+"/exported"]=data.Openings.Count-exportedBefore;
+        data.OpeningCoverage[source+"/unassociated"]=data.Openings.Skip(exportedBefore).Count(o=>o.RoomKeys.Count==0);
+        if(data.Openings.Skip(exportedBefore).Any(o=>o.RoomKeys.Count==0))data.Warnings.Add("Часть проёмов сохранена без связи с помещением; они не включены в его тепловой баланс.");
     }
 
     private static double Length(Element item, BuiltInParameter parameter)

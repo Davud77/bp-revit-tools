@@ -28,7 +28,22 @@ await cp(path.join(repo, 'modules/ac2revit/revit/assets'), path.join(ac, 'dist/R
 await writeFile(path.join(ac, 'config/exchange-settings.json'), '{"projectTemplate":""}\n');
 run(python, [path.join(repo, 'scripts/package-python.py'), path.join(ac, 'runtime/python')]);
 await cp(path.join(repo, 'README.md'), path.join(stage, 'README.md'));
+const tapir = JSON.parse(await readFile(path.join(repo, 'installer/tapir/releases.json'), 'utf8'));
+await mkdir(path.join(stage, 'tapir'), { recursive: true });
+for (const asset of tapir.assets) {
+  const file = path.join(repo, 'artifacts/tapir', tapir.release, asset.file);
+  if (createHash('sha256').update(await readFile(file)).digest('hex') !== asset.sha256) throw new Error('Tapir checksum: ' + asset.file);
+  await cp(file, path.join(stage, 'tapir', asset.file));
+}
+await cp(path.join(repo, 'installer/tapir/releases.json'), path.join(stage, 'tapir/releases.json'));
+await cp(path.join(repo, 'installer/tapir/LICENSE'), path.join(stage, 'tapir/LICENSE'));
 await cp(path.join(repo, 'USAGE.md'), path.join(stage, 'USAGE.md'));
+await cp(path.join(repo, 'ROADMAP.md'), path.join(stage, 'ROADMAP.md'));
+await mkdir(path.join(stage, 'docs'), { recursive: true });
+for (const name of await readdir(path.join(repo, 'docs')))
+  if (name.endsWith('.md')) await cp(path.join(repo, 'docs', name), path.join(stage, 'docs', name));
+await mkdir(path.join(stage, 'modules/ov/docs'), { recursive: true });
+await cp(path.join(repo, 'modules/ov/docs/POTERI.md'), path.join(stage, 'modules/ov/docs/POTERI.md'));
 await cp(path.join(repo, 'docs/UPSTREAM-MCP.md'), path.join(stage, 'UPSTREAM-MCP.md'));
 const hashes = {};
 async function walk(dir) {
@@ -43,5 +58,5 @@ async function walk(dir) {
 await rm(path.join(stage, 'release.json'));
 // The four distributable Ac2Revit families/templates are intentionally allowed.
 await walk(stage);
-await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: '1.2.0', target: 'Revit 2026 / Windows x64', modules: ['MCP', 'Ac2Revit', 'ОВ'], node: process.version, files: hashes }, null, 2));
+await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: '1.6', target: 'Revit 2026 / Windows x64', modules: ['MCP', 'Ac2Revit', 'ОВ'], node: process.version, files: hashes }, null, 2));
 console.log(`BotPlus RT payload: ${Object.keys(hashes).length} files`);

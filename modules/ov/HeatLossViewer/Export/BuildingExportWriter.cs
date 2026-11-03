@@ -15,6 +15,7 @@ public sealed class BuildingExportWriter
 
     public (string Json, string Html) Write(BuildingData building, string directory)
     {
+        OvExportScope.ExcludeUnboundOpenings(building);
         Directory.CreateDirectory(directory);
         string json = JsonSerializer.Serialize(building, JsonOptions);
         string html = HtmlTemplate.GetHtml(json);

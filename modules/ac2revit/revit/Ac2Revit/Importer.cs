@@ -45,13 +45,12 @@ public sealed class Importer
     string ElementHash(ElementRecord e) => Json.Hash(new { e.ContentHash, e.Kind, e.LevelKey, e.Mark, e.Dependencies,
         e.Status, e.Payload, e.Raw, manifest.Coordinates.Transform, Config = config });
     HashSet<string>? occupiedNames;
-    string Name(string value, string key)
+    string Name(string value)
     {
-        var clean = new string(value.Select(c => "\\:{}[]|;<>?`~".Contains(c) || char.IsControl(c) ? '_' : c).ToArray());
         occupiedNames ??= new FilteredElementCollector(doc).WhereElementIsNotElementType().OfClass(typeof(Level)).Cast<Level>()
             .Select(e=>e.Name).Concat(new FilteredElementCollector(doc).WhereElementIsElementType().Select(e=>e.Name))
             .Concat(new FilteredElementCollector(doc).OfClass(typeof(Material)).Select(e=>e.Name)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return GridLabels.Unique("АС \"" + clean.Trim() + "\"", occupiedNames);
+        return GridLabels.Unique(SourceLabel.Format(value), occupiedNames);
     }
     bool Existing(string key, string hash, string kind, out Element? element)
     {
@@ -69,6 +68,8 @@ public sealed class Importer
     }
     Element? Commit(string key, string kind, string hash, Func<Element> action, string raw = "")
     {
+        using var elementGroup=kind=="Mesh"?new TransactionGroup(doc,"Verified source Mesh"):null;
+        elementGroup?.Start();
         using var transaction = new Transaction(doc, "AC " + kind + " " + key);
         try
         {
@@ -80,6 +81,8 @@ public sealed class Importer
             Storage.Tag(element, project, key, hash, raw);
             doc.Regenerate();
             if (transaction.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Transaction rolled back by Revit failure processing");
+            if(kind=="Mesh")NativeTerrain.Verify(doc,manifest,manifest.Elements.Single(e=>e.SourceGuid==key),element,geometry);
+            elementGroup?.Assimilate();
             existing[key] = element;
             Report.Add(key, kind, "created", "", element.UniqueId);
             return element;
@@ -87,6 +90,7 @@ public sealed class Importer
         catch (Exception ex)
         {
             if (transaction.GetStatus() == TransactionStatus.Started) transaction.RollBack();
+            if(elementGroup?.GetStatus()==TransactionStatus.Started)elementGroup.RollBack();
             Report.Add(key, kind, "failed", ex.Message);
             if (!config.AllowPartial) throw;
             return null;
@@ -173,7 +177,32 @@ public sealed class Importer
                 if (Report.Items[i].Status == "created") Report.Items[i] = Report.Items[i] with { Status = "rolledBack", RevitUniqueId = "" };
             throw;
         }
+        if(kinds==null || kinds.Contains("Zone"))AuditZoneVolumes();
         return Report;
+    }
+    void AuditZoneVolumes()
+    {
+        using var calculator=new SpatialElementGeometryCalculator(doc);
+        foreach(var source in manifest.Elements.Where(e=>e.Kind=="Zone" && e.Payload.TryGetProperty("height",out _)))
+        {
+            if(!existing.TryGetValue(source.SourceGuid,out var element) || element is not SpatialElement spatial)continue;
+            try
+            {
+                double M(double feet)=>UnitUtils.ConvertFromInternalUnits(feet,UnitTypeId.Meters);
+                double V(double feet)=>UnitUtils.ConvertFromInternalUnits(feet,UnitTypeId.CubicMeters);
+                var p=source.Payload;double height=M(spatial.get_Parameter(BuiltInParameter.ROOM_HEIGHT).AsDouble());
+                double lower=M(spatial.get_Parameter(BuiltInParameter.ROOM_LOWER_OFFSET).AsDouble());
+                double upper=M(spatial.get_Parameter(BuiltInParameter.ROOM_UPPER_OFFSET).AsDouble());
+                double volume=V(spatial.get_Parameter(BuiltInParameter.ROOM_VOLUME).AsDouble());
+                double solid=V(calculator.CalculateSpatialElementGeometry(spatial).GetGeometry().Volume);
+                bool accepted=spatial.LevelId==levels[source.LevelKey].Id && spatial.get_Parameter(BuiltInParameter.ROOM_UPPER_LEVEL).AsElementId()==levels[p.S("upperLevelKey")].Id &&
+                    Math.Abs(height-p.D("height"))<1e-6 && Math.Abs(lower-p.D("baseOffset"))<1e-6 && Math.Abs(upper-p.D("upperOffset"))<1e-6 &&
+                    volume>0 && solid>0 && Math.Abs(volume-solid)<=Math.Max(.001,solid*1e-6);
+                Report.ZoneVerticals.Add(new(source.SourceGuid,source.LevelKey,p.S("upperLevelKey"),lower,upper,p.D("height"),height,volume,solid,accepted));
+                if(!accepted)Report.Add(source.SourceGuid,"Zone","verticalMismatch","Native room constraints/volume differ from source or spatial solid; see ZoneVerticals",spatial.UniqueId);
+            }
+            catch(Exception error){Report.Add(source.SourceGuid,"Zone","volumeUnverified",error.Message,spatial.UniqueId);}
+        }
     }
     public Report JoinSourceWalls()
     {
@@ -309,7 +338,7 @@ public sealed class Importer
             }
             var created = Commit(l.Key, "Level", hash, () => {
                 var level = Level.Create(doc, Geometry.Feet(l.Elevation + manifest.Coordinates.Transform.Translation.Z));
-                level.Name = Name(l.Name, project + l.Key); return level;
+                level.Name = Name(l.Name); return level;
             });
             if (created is Level result) levels[l.Key] = result;
         }
@@ -330,7 +359,7 @@ public sealed class Importer
                 continue;
             }
             var created = Commit(key, "Material", Json.Hash(m), () => {
-                var mat = (Material)doc.GetElement(Material.Create(doc, Name(m.S("name"), project + key)));
+                var mat = (Material)doc.GetElement(Material.Create(doc, Name(m.S("name"))));
                 mat.MaterialClass = "Archicad Building Material";
                 return mat;
             }, m.GetRawText());
@@ -394,7 +423,7 @@ public sealed class Importer
                     }
                 }
                 if(!structure.IsValid(doc,out var errors,out _))throw new InvalidDataException("Invalid compound structure: "+string.Join(", ",errors.Select(p=>p.Key+":"+p.Value)));
-                var duplicate = (HostObjAttributes)baseType.Duplicate(Name(t.Name, project + t.Key));
+                var duplicate = (HostObjAttributes)baseType.Duplicate(Name(t.Name));
                 duplicate.SetCompoundStructure(structure);
                 using var actual=duplicate.GetCompoundStructure();
                 if(actual.LayerCount!=layers.Count || Enumerable.Range(0,layers.Count).Any(i=>Math.Abs(actual.GetLayerWidth(i)-layers[i].Width)>1e-9 || actual.GetLayerFunction(i)!=layers[i].Function))
@@ -499,6 +528,10 @@ public sealed class Importer
                     throw new InvalidDataException("Reflected object requires calibrated mirror permission");
             }
         }
+        else if (e.Kind == "Mesh")
+        {
+            if(p.S("format")!="ac2r.terrain/1" || p.GetProperty("parts").GetArrayLength()==0)throw new InvalidDataException("Native source Mesh terrain payload required");
+        }
         else if (e.Kind == "Morph") ValidateMesh(p.GetProperty("mesh").Read<MeshRecord>());
         else throw new InvalidDataException("Native family/solid adapter not implemented for " + e.Kind + "; raw preserved");
     }
@@ -565,7 +598,9 @@ public sealed class Importer
             case "Column": result=config.AutomaticSimpleColumns?basicColumns.Create(e,level,materials):MappedFamily(e,level);break;
             case "Beam": case "Object": case "Lamp": result = MappedFamily(e, level); break;
             case "Morph": result = Morph(e); break;
+            case "Mesh": result = NativeTerrain.Create(doc,manifest,e,level,geometry); break;
             case "Zone":
+                AreaVolumeSettings.GetAreaVolumeSettings(doc).ComputeVolumes=true;
                 var point = geometry.Xyz(p.GetProperty("point").Read<Point>());
                 var uv = new UV(point.X, point.Y);
                 SpatialElement zone;

@@ -9,7 +9,12 @@ public sealed class RevitRoomExtractor
 
     public BuildingData Extract(Document host)
     {
-        var data = new BuildingData { ProjectName = host.Title };
+        var conditions = ProjectConditionsStore.Read(host);
+        var data = new BuildingData
+        {
+            ProjectName = string.IsNullOrWhiteSpace(conditions.Name) ? host.Title : conditions.Name,
+            ProjectConditions = conditions, OvLibrary = RevitOvLibrary.Read(host)
+        };
         using var options = new SpatialElementBoundaryOptions { SpatialElementBoundaryLocation = SpatialElementBoundaryLocation.Finish };
         var rooms = Rooms(host);
         if (rooms.Count > 0) AddRooms(rooms, Transform.Identity, "host", host.Title, options, data);
@@ -19,6 +24,7 @@ public sealed class RevitRoomExtractor
             int c = a.Elevation.CompareTo(b.Elevation);
             return c == 0 ? string.Compare(a.Number, b.Number, StringComparison.Ordinal) : c;
         });
+        OvExportScope.ExcludeUnboundOpenings(data);
         int noVolume = data.Rooms.Count(r => r.Volume <= 0);
         if (noVolume > 0) data.Warnings.Add($"У {noVolume} помещений объём не рассчитан Revit. Высота — UnboundedHeight, объём для расчёта — площадь × высота (демо).");
         return data;

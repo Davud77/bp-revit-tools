@@ -16,6 +16,45 @@ static void Check(bool condition, string name)
     Console.WriteLine("PASS " + name);
 }
 static List<double[]> Rect(double x, double y, double w, double h) => [[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
+var scope = new BuildingData { Rooms = [new() {Key="room"}], Openings = [
+    new(){Key="keep",Kind="window",RoomKeys=["room","not-exported"]},
+    new(){Key="empty",Kind="window",RoomKeys=[]},
+    new(){Key="outside",Kind="door",RoomKeys=["not-exported"]}
+] };
+Check(OvExportScope.ExcludeUnboundOpenings(scope)==2 && scope.Openings.Single().Key=="keep","OV excludes only windows/doors without exported calculation rooms");
+Check(OvExportScope.ExcludeUnboundOpenings(scope)==0 && scope.Warnings.Count==1,"OV opening exclusion is idempotent and retains its audit warning");
+var library = new OvLibraryData {
+    Materials = [new() {Key="host/material",Lambda=.5,Density=1200,SpecificHeat=950}],
+    Constructions = [new() {Key="host/type",UseInCalculation=true,UseLayers=true,Homogeneity=.8,Layers=[new(){MaterialKey="host/material",Thickness=.2}]}],
+    Radiators = new() { Settings=JsonSerializer.Deserialize<Dictionary<string,JsonElement>>("{\"supply\":68,\"roomOverrides\":{\"host/room\":{\"targetWatts\":1200}}}")! }
+};
+library.Validate();
+var libraryCopy=JsonSerializer.Deserialize<OvLibraryData>(JsonSerializer.Serialize(library))!;
+Check(Math.Abs(libraryCopy.Resistance(libraryCopy.Constructions[0])!.Value-.8*(.115+.4+.043))<1e-10 && libraryCopy.Radiators.Settings["supply"].GetInt32()==68,"OV library SI resistance and radiator model state round-trip");
+libraryCopy.Materials[0].Lambda=null;
+Check(libraryCopy.Resistance(libraryCopy.Constructions[0]) is null,"missing material lambda does not invent construction resistance");
+libraryCopy.Materials[0].Lambda=-1;
+bool invalidLibrary=false;try{libraryCopy.Validate();}catch(ArgumentException){invalidLibrary=true;}
+Check(invalidLibrary,"invalid library material properties rejected");
+var normalHtml=HtmlTemplate.GetHtml(JsonSerializer.Serialize(new BuildingData {OvLibrary=library},BuildingExportWriter.JsonOptions));
+var nativeHtml=HtmlTemplate.GetHtml(JsonSerializer.Serialize(new BuildingData {OvLibrary=library,NativeRadiators=true},BuildingExportWriter.JsonOptions));
+Check(!normalHtml.Contains("id=\"radiator-form\"") && normalHtml.Contains("id=\"radiator-room-preview\"") && nativeHtml.Contains("id=\"radiator-form\""),"radiator editing moves to native Revit mode; exported HTML keeps result preview");
+new ProjectConditions().Validate();
+new ProjectConditions { OutdoorTemperature = -23.5, WindSpeed = 0, HeatingPeriodDays = 366 }.Validate();
+foreach (var bad in new[] { new ProjectConditions { WindSpeed = -1 }, new ProjectConditions { OutdoorTemperature = double.NaN }, new ProjectConditions { HeatingPeriodDays = 367 }, new ProjectConditions { IndoorTemperature = -274 } })
+{
+    bool rejected = false;
+    try { bad.Validate(); } catch (ArgumentException) { rejected = true; }
+    Check(rejected, "invalid project climate rejected");
+}
+var projectConditions = new ProjectConditions { Name = "ОВ тест", OutdoorTemperature = -23.5, WindSpeed = 0, Notes = "</script><script>window.injected=true</script>" };
+projectConditions.Calculation.Building["wall"] = .34;
+projectConditions.Calculation.FloorOverrides["level"] = new() { ["indoor"] = 22 };
+var climateJson = JsonSerializer.Serialize(new BuildingData { ProjectConditions = projectConditions }, BuildingExportWriter.JsonOptions);
+var climateRoundtrip = JsonSerializer.Deserialize<BuildingData>(climateJson, BuildingExportWriter.JsonOptions)!;
+Check(climateRoundtrip.ProjectConditions!.OutdoorTemperature == -23.5 && climateRoundtrip.ProjectConditions.WindSpeed == 0 && climateRoundtrip.ProjectConditions.IndoorTemperature is null, "project climate round-trip keeps zero and unspecified values");
+Check(climateRoundtrip.ProjectConditions.Calculation.Building["wall"] == .34 && climateRoundtrip.ProjectConditions.Calculation.FloorOverrides["level"]["indoor"] == 22, "project calculation inputs round-trip");
+Check(!HtmlTemplate.GetHtml(climateJson).Contains("<script>window.injected"), "project climate text cannot escape HTML data");
 var outer = Rect(0,0,10,10); var hole = Rect(2,2,6,6); var island = Rect(3,3,1,1); var separate = Rect(20,0,2,2);
 hole.Reverse(); outer.Reverse();
 var polygons = ContourTopology.Build([hole, separate, island, outer]);

@@ -78,6 +78,10 @@ if(limited.Includes("Door") || limited.Includes("Window"))throw new Exception("E
 try{new ImportSelection(new[]{"Door"}).RestrictTo(new[]{"Wall"});throw new Exception("Empty export intersection accepted");}
 catch(InvalidDataException){ }
 Console.WriteLine("PASS: export category limits override automatic dependencies");
+if(SourceLabel.Format("1-й этаж")!="АС «1-й этаж»" || SourceLabel.Format(" Кирпич 250 ")!="АС «Кирпич 250»" || SourceLabel.Format("")!="АС «Без названия»")
+    throw new Exception("Source label formatting changed source text or appended an identity");
+if(SourceLabel.Format("Стена: [250]")!="АС «Стена_ _250_»")throw new Exception("Invalid Revit name characters were retained");
+Console.WriteLine("PASS: readable source labels preserve floor numbers/dimensions and contain no generated suffix");
 if(args.Length==0)return;
 
 var manifest = Manifest.Load(args[0]);
@@ -104,3 +108,7 @@ if (ordered.Count > 1)
     try { manifest.Validate(); throw new Exception("Duplicate GUID accepted"); }
     catch (InvalidDataException) { Console.WriteLine("PASS: duplicate GUID rejected"); }
 }
+
+var meshScope=new ImportSelection(["Mesh"]);
+if(!meshScope.AllowsStage("nativeTerrain") || new ImportSelection(["Wall"]).AllowsStage("nativeTerrain"))throw new Exception("Mesh checkbox does not control native terrain stage");
+Console.WriteLine("PASS Mesh checkbox enables only the selected native terrain stage");

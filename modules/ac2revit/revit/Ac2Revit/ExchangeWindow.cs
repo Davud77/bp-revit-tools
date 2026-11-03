@@ -40,12 +40,15 @@ internal sealed class ExchangeWindow : Window
     string Mode=>exportMode.SelectedIndex switch{1=>"json",2=>"ifc",_=>"combined"};
     public bool CreateNewProject=>newProject.IsChecked==true;
     public string TemplatePath=>template.Text.Trim();
+    readonly TextBox outputPath=new(){Margin=new Thickness(0,0,8,0),VerticalContentAlignment=VerticalAlignment.Center};
+    readonly Button outputBrowse=new(){Content="Обзор…",Padding=new Thickness(12,4,12,4)};
+    public string OutputPath=>outputPath.Text.Trim();
 
     public ExchangeWindow(IntPtr owner,bool buildAfter,bool hasProject,string defaultTemplate,string resumeSession="")
     {
         build=buildAfter;this.hasProject=hasProject;this.resumeSession=resumeSession;
         Title="BotPlus Ac2Revit — "+(resumeSession.Length>0?"Продолжить сеанс":build?"Перенос модели":"Экспорт из Archicad");
-        Width=850;Height=920;MinWidth=720;MinHeight=720;WindowStartupLocation=WindowStartupLocation.CenterOwner;
+        Width=850;Height=Math.Min(920,SystemParameters.WorkArea.Height-24);MinWidth=720;MinHeight=Math.Min(720,Height);WindowStartupLocation=WindowStartupLocation.CenterOwner;
         new WindowInteropHelper(this){Owner=owner};
         var root=new DockPanel{Margin=new Thickness(20)};Content=root;
         var bottom=new StackPanel();DockPanel.SetDock(bottom,Dock.Bottom);root.Children.Add(bottom);
@@ -53,7 +56,7 @@ internal sealed class ExchangeWindow : Window
         var buttons=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right};
         bottom.Children.Add(buttons);buttons.Children.Add(run);buttons.Children.Add(cancel);
         run.Content=resumeSession.Length>0?"Подготовить и собрать":build?"Экспортировать и собрать":"Экспортировать";
-        var top=new StackPanel();DockPanel.SetDock(top,Dock.Top);root.Children.Add(top);
+        var top=new StackPanel();var scroll=new ScrollViewer{Content=top,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,MaxHeight=Math.Max(350,Height-230)};DockPanel.SetDock(scroll,Dock.Top);root.Children.Add(scroll);
         top.Children.Add(new TextBlock{Text=resumeSession.Length>0?"Сохранённые JSON + IFC → модель Revit":"Открытый Archicad → JSON + IFC → модель Revit",FontSize=20,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,12)});
         var ports=new StackPanel{Orientation=Orientation.Horizontal,Margin=new Thickness(0,0,0,12)};top.Children.Add(ports);
         ports.Children.Add(new TextBlock{Text="Tapir · 127.0.0.1 : ",VerticalAlignment=VerticalAlignment.Center});ports.Children.Add(port);
@@ -61,8 +64,8 @@ internal sealed class ExchangeWindow : Window
         top.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(235,244,252)),Padding=new Thickness(12),Child=source,Margin=new Thickness(0,0,0,12)});
         exportMode.Items.Add("JSON + IFC — комбинированный перенос");exportMode.Items.Add("Только JSON — параметры и нативные адаптеры");exportMode.Items.Add("Только IFC — сохранить файл для обмена");exportMode.SelectedIndex=0;
         top.Children.Add(exportMode);
-        var scope=new Expander{Header="Элементы экспорта — по умолчанию все",Content=categories,Margin=new Thickness(0,8,0,4)};top.Children.Add(scope);
-        foreach(var (kind,label) in new[]{("Wall","Стены"),("Slab","Перекрытия"),("Door","Двери"),("Window","Окна"),("Zone","Помещения"),("Column","Колонны"),("Beam","Балки"),("Roof","Кровли"),("Mesh","3D-сетки"),("Morph","Морфы"),("Stair","Лестницы"),("Railing","Ограждения"),("CurtainWall","Витражи"),("Object","Объекты"),("Shell","Оболочки"),("Skylight","Световые люки"),("Lamp","Светильники"),("Opening","Проёмы"),("Grid","Оси IFC")})
+        var scope=new Expander{Header="Элементы экспорта — по умолчанию все",Content=categories,IsExpanded=true,Margin=new Thickness(0,8,0,4)};top.Children.Add(scope);
+        foreach(var (kind,label) in new[]{("Wall","Стены"),("Slab","Перекрытия"),("Door","Двери"),("Window","Окна"),("Zone","Помещения"),("Column","Колонны"),("Beam","Балки"),("Roof","Кровли"),("Mesh","Рельеф Mesh → Топотело"),("Morph","Морфы"),("Stair","Лестницы"),("Railing","Ограждения"),("CurtainWall","Витражи"),("Object","Объекты"),("Shell","Оболочки"),("Skylight","Световые люки"),("Lamp","Светильники"),("Opening","Проёмы"),("Grid","Оси IFC")})
         {var box=new CheckBox{Content=label,IsChecked=true,Margin=new Thickness(0,3,16,3),MinWidth=130};exportKinds[kind]=box;categories.Children.Add(box);}
         if(resumeSession.Length>0){exportMode.IsEnabled=false;scope.IsEnabled=false;using var saved=JsonDocument.Parse(File.ReadAllText(resumeSession));exportMode.SelectedIndex=saved.RootElement.S("exportMode") switch{"json"=>1,"ifc"=>2,_=>0};}
         top.Children.Add(new TextBlock{Text=resumeSession.Length>0?"Подготовка сохранённых JSON и IFC":"IFC-транслятор Archicad",Margin=new Thickness(0,0,0,5)});top.Children.Add(translators);
@@ -73,6 +76,10 @@ internal sealed class ExchangeWindow : Window
         if(resumeSession.Length>0){properties.Visibility=Visibility.Collapsed;gdl.Visibility=Visibility.Collapsed;}
         if(build)
         {
+            top.Children.Add(new TextBlock{Text="Файл импортируемой модели RVT",Margin=new Thickness(0,4,0,4)});
+            outputPath.Text=Path.Combine(ExchangeServices.Outputs,"Archicad-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".rvt");
+            var destination=new DockPanel{Margin=new Thickness(0,0,0,8)};DockPanel.SetDock(outputBrowse,Dock.Right);destination.Children.Add(outputBrowse);destination.Children.Add(outputPath);top.Children.Add(destination);
+            outputBrowse.Click+=(_,_)=>{var dialog=new SaveFileDialog{Filter="Модель Revit|*.rvt",FileName=OutputPath,OverwritePrompt=false};if(dialog.ShowDialog(this)==true)outputPath.Text=dialog.FileName;};
             newProject.IsEnabled=hasProject;top.Children.Add(newProject);
             string preferred=ExchangeServices.ProjectTemplate(defaultTemplate);
             if(resumeSession.Length>0 && File.Exists(resumeSession))
@@ -82,6 +89,7 @@ internal sealed class ExchangeWindow : Window
                 // and let Export explain a missing template instead of silently
                 // substituting a different one after the memory handoff.
                 if(saved.RootElement.TryGetProperty("templatePath",out var selected))preferred=selected.GetString()??"";
+                if(saved.RootElement.TryGetProperty("outputRvt",out var savedOutput))outputPath.Text=savedOutput.GetString()??outputPath.Text;
             }
             template.Text=preferred;
             var target=new DockPanel{Margin=new Thickness(0,0,0,8)};DockPanel.SetDock(browse,Dock.Right);target.Children.Add(browse);target.Children.Add(template);top.Children.Add(target);
@@ -93,8 +101,8 @@ internal sealed class ExchangeWindow : Window
         run.Click+=async(_,_)=>await Export();
         cancel.Click+=(_,_)=>{if(busy){cancellation?.Cancel();cancel.IsEnabled=false;}else Close();};
         browse.Click+=(_,_)=>{var d=new OpenFileDialog{Filter="Шаблон Revit|*.rte",Title="Шаблон нового проекта"};if(d.ShowDialog(this)==true)template.Text=d.FileName;};
-        newProject.Checked+=(_,_)=>{template.IsEnabled=true;browse.IsEnabled=true;};
-        newProject.Unchecked+=(_,_)=>{template.IsEnabled=false;browse.IsEnabled=false;};
+        newProject.Checked+=(_,_)=>{template.IsEnabled=true;browse.IsEnabled=true;outputPath.IsEnabled=true;outputBrowse.IsEnabled=true;};
+        newProject.Unchecked+=(_,_)=>{template.IsEnabled=false;browse.IsEnabled=false;outputPath.IsEnabled=false;outputBrowse.IsEnabled=false;};
         port.TextChanged+=(_,_)=>{connection=null;run.IsEnabled=false;};
         Closing+=OnClosing;
         Loaded+=async(_,_)=>await Connect();
@@ -108,6 +116,7 @@ internal sealed class ExchangeWindow : Window
         translators.IsEnabled=translators.IsEnabled && Mode!="json";properties.IsEnabled=properties.IsEnabled && Mode!="ifc";gdl.IsEnabled=properties.IsEnabled;
         run.IsEnabled=!value && connection!=null;newProject.IsEnabled=!value && hasProject;
         template.IsEnabled=!value && newProject.IsChecked==true;browse.IsEnabled=template.IsEnabled;
+        outputPath.IsEnabled=!value && newProject.IsChecked==true;outputBrowse.IsEnabled=outputPath.IsEnabled;
         cancel.IsEnabled=true;cancel.Content=value?"Остановить":"Закрыть";progress.IsIndeterminate=value;
     }
     async Task Connect()
@@ -146,9 +155,17 @@ internal sealed class ExchangeWindow : Window
         if(busy || connection==null)return;
         if(resumeSession.Length==0 && Mode!="json" && translators.SelectedItem is not string){Log("Выберите IFC-транслятор.");return;}
         var selected=exportKinds.Where(p=>p.Value.IsChecked==true).Select(p=>p.Key).ToList();
+        if(resumeSession.Length==0 && Mode!="ifc" && selected.Contains("Mesh") && connection.Value.TryGetProperty("tapir",out var tapir)
+            && Version.TryParse(tapir.S("version"),out var tapirVersion) && tapirVersion<new Version(1,8,0))
+        {Log("Mesh → Топотело требует Tapir 1.8 или новее. Закройте Archicad, обновите Tapir установщиком BotPlus RT и откройте проект снова. Для переноса без рельефа можно снять флажок Mesh.");return;}
         if(resumeSession.Length==0 && selected.Count==0){Log("Выберите хотя бы одну категорию.");return;}
         string translator=translators.SelectedItem as string??"";
         if(build && Mode!="ifc" && CreateNewProject && TemplatePath.Length>0 && !File.Exists(TemplatePath)){Log("Шаблон Revit не найден.");return;}
+        if(build && CreateNewProject && Mode!="ifc")
+        {
+            try{if(string.IsNullOrWhiteSpace(OutputPath)||!Path.GetFullPath(OutputPath).EndsWith(".rvt",StringComparison.OrdinalIgnoreCase)||File.Exists(OutputPath))throw new IOException("Укажите новое имя RVT; существующий файл не перезаписывается.");}
+            catch(Exception error){Log(error.Message);return;}
+        }
         var info=connection.Value;
         string name=info.GetProperty("project").S("projectName","Archicad");
         name=new string(name.Select(c=>Path.GetInvalidFileNameChars().Contains(c)?'_':c).ToArray());
@@ -173,7 +190,7 @@ internal sealed class ExchangeWindow : Window
             if(build && CreateNewProject)
             {
                 var saved=System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(Path.Combine(session,"session.json")))!;
-                saved["templatePath"]=TemplatePath;File.WriteAllText(Path.Combine(session,"session.json"),saved.ToJsonString(Json.Options));
+                saved["templatePath"]=TemplatePath;saved["outputRvt"]=OutputPath;File.WriteAllText(Path.Combine(session,"session.json"),saved.ToJsonString(Json.Options));
             }
             if(state.RootElement.S("status")=="captured")
             {

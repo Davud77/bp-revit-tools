@@ -96,7 +96,7 @@ public static class WallCompletion
                     continue;
                 }
                 if(index.GetValueOrDefault(record.SourceGuid) is not DirectShape shape || shape.ApplicationId is "Ac2Revit.NominalWallFallback" or ZeroThicknessWallStage.ApplicationId)continue;
-                shape.Name=Incomplete+" — геометрия IFC";
+                shape.Name=SourceLabel.Format(record.Mark)+" — "+Incomplete+" — геометрия IFC";
                 Annotate(shape.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS),Incomplete+": геометрия IFC; не нативная стена Revit. Нет редактируемых слоёв/привязок и гарантии Room Bounding. GUID "+record.SourceGuid+". Причина: "+record.Reason);
                 report.Add(record.SourceGuid,"WallGeometry","incomplete",Incomplete+": IFC tessellation retained; native wall functionality unavailable",shape.UniqueId);
             }

@@ -122,7 +122,7 @@ globalThis.RadiatorSelection = (() => {
   return best;
  }
  function select(room,heat,openings,catalog,settings,thermalSettings,surfaceOverrides={}){
-  const s=effective(room,settings),indoor=thermalSettings.roomOverrides?.[room.key]?.indoor ?? thermalSettings.indoor;
+  const s=effective(room,settings),indoor=thermalSettings.roomOverrides?.[room.key]?.indoor ?? thermalSettings.floorOverrides?.[room.levelKey]?.indoor ?? thermalSettings.indoor;
   const requiredRaw=s.targetWatts!==undefined?s.targetWatts:heat?.total;
   const special=!['residential','public'].includes(s.buildingType);
   const result={roomKey:room.key,requiredRaw,required:null,devices:[],warnings:[],status:'demo',reason:'Нужна тепловая нагрузка',coverageRule:s.policyMode==='current'&&special?'maximum-feasible':'project-percent'};

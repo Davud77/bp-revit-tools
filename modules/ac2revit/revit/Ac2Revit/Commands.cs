@@ -30,9 +30,10 @@ public sealed class App : IExternalApplication
         Add(files,"AcImport","Импорт\nJSON",typeof(ImportCommand),"import","Выбрать подготовленный JSON и выполнить импорт в открытый проект Revit.");
         Add(files,"AcExchangeFolder","Папка\nобмена",typeof(ExchangeFolderCommand),"folder","Открыть сеансы экспорта, промежуточные данные, модели и отчёты.",true);
         RuntimeJobs.Start(app, assembly);
+        app.ControlledApplication.DocumentSaved+=ImportJournal.Saved;app.ControlledApplication.DocumentSavedAs+=ImportJournal.SavedAs;
         return Result.Succeeded;
     }
-    public Result OnShutdown(UIControlledApplication app) { RuntimeJobs.Stop(app); return Result.Succeeded; }
+    public Result OnShutdown(UIControlledApplication app) { app.ControlledApplication.DocumentSaved-=ImportJournal.Saved;app.ControlledApplication.DocumentSavedAs-=ImportJournal.SavedAs;RuntimeJobs.Stop(app); return Result.Succeeded; }
 }
 [Transaction(TransactionMode.Manual)]
 public sealed class PreviewCommand : IExternalCommand
@@ -84,8 +85,10 @@ public static class Command
             if(selection!=null)manifest.Types=manifest.Types.Where(t=>selection.IncludesType(t.Kind)).ToList();
             var config = ImportConfig.Load(Path.Combine(folder, "mapping.json"));
             importer = new Importer(ui.ActiveUIDocument.Document, manifest, config);
+            if(!preview)ImportJournal.Register(ui.ActiveUIDocument.Document,manifest,selection);
             var report = preview ? importer.Preview() : importer.Run(selection?.Included);
             report.Save(reportPath);
+            if(!preview && !string.IsNullOrEmpty(ui.ActiveUIDocument.Document.PathName)){ui.ActiveUIDocument.Document.Save();ImportJournal.Write(ui.ActiveUIDocument.Document,report);}
             string summary = string.Join("\n", report.Items.GroupBy(x => x.Status).Select(g => g.Key + ": " + g.Count()));
             TaskDialog.Show("Archicad JSON", summary + "\n\nОтчёт: " + reportPath);
             return Result.Succeeded;

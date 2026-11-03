@@ -21,6 +21,7 @@ public sealed class Manifest
     public CoordinateInfo Coordinates { get; set; } = new();
     public List<LevelRecord> Levels { get; set; } = [];
     public List<JsonElement> Materials { get; set; } = [];
+    public List<JsonElement> Fills { get; set; } = [];
     public List<JsonElement> Surfaces { get; set; } = [];
     public List<TypeRecord> Types { get; set; } = [];
     public List<ElementRecord> Elements { get; set; } = [];
@@ -156,6 +157,7 @@ public sealed class Report
     public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
     public List<Outcome> Items { get; set; } = [];
     public List<ZoneAreaComparison> ZoneAreas { get; set; } = [];
+    public List<ZoneVerticalComparison> ZoneVerticals { get; set; } = [];
     public List<WallEndJoinCheck> WallJoins { get; set; } = [];
     public List<WallOffsetPlacement> WallOffsets { get; set; } = [];
     public void Add(string key, string kind, string status, string message = "", string revitId = "") => Items.Add(new(key, kind, status, message, revitId));
@@ -164,6 +166,8 @@ public sealed class Report
 public sealed record Outcome(string SourceKey, string Kind, string Status, string Message, string RevitUniqueId);
 public sealed record ZoneAreaComparison(string SourceGuid, double SourceAreaSquareMeters, double RevitAreaSquareMeters,
     double AbsoluteDifferenceSquareMeters, double ToleranceSquareMeters, bool Accepted, string Status);
+public sealed record ZoneVerticalComparison(string SourceGuid,string BaseLevel,string UpperLevel,double BaseOffsetMeters,
+    double UpperOffsetMeters,double SourceHeightMeters,double NativeHeightMeters,double VolumeCubicMeters,double GeometryVolumeCubicMeters,bool Accepted);
 public sealed record WallEndJoinCheck(string SourceGuid,int End,bool SourceBacked,List<string> NativeNeighbors,string Status);
 public sealed record WallOffsetPlacement(string SourceGuid,string ReferenceLine,double ReferenceOffsetMeters,
     Point SourceStart,Point NativeStart,Point BodyMinimum,Point BodyMaximum);

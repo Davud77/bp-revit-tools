@@ -1,0 +1,41 @@
+{
+  "assets": [
+    {
+      "file": "TapirAddOn_AC25_Win.apx",
+      "url": "https://github.com/ENZYME-APD/tapir-archicad-automation/releases/download/1.8.0/TapirAddOn_AC25_Win.apx",
+      "sha256": "3e3a72cb7b98fae2ea40d0337e935702518019a567fbfc895e45b24e8a357ab0",
+      "version": 25
+    },
+    {
+      "file": "TapirAddOn_AC26_Win.apx",
+      "url": "https://github.com/ENZYME-APD/tapir-archicad-automation/releases/download/1.8.0/TapirAddOn_AC26_Win.apx",
+      "sha256": "028b5a6e374dbf4b0b97f280e1dc0062ae1bc7a04361126392d381bb6863e819",
+      "version": 26
+    },
+    {
+      "file": "TapirAddOn_AC27_Win.apx",
+      "url": "https://github.com/ENZYME-APD/tapir-archicad-automation/releases/download/1.8.0/TapirAddOn_AC27_Win.apx",
+      "sha256": "c3b0cbbb5d0aa3daaf1dbf87c659ae5c5a4e562a454a7f2d5021ecddddedb247",
+      "version": 27
+    },
+    {
+      "file": "TapirAddOn_AC28_Win.apx",
+      "url": "https://github.com/ENZYME-APD/tapir-archicad-automation/releases/download/1.8.0/TapirAddOn_AC28_Win.apx",
+      "sha256": "2207af5bed5f5ce8d4130088403192df8635ad963b3a5359371f5aea8c987f8e",
+      "version": 28
+    },
+    {
+      "file": "TapirAddOn_AC29_Win.apx",
+      "url": "https://github.com/ENZYME-APD/tapir-archicad-automation/releases/download/1.8.0/TapirAddOn_AC29_Win.apx",
+      "sha256": "6e22aea730dc2c2e6f47fb2b7d12780e6626599241d81507514e4367c9fe31d2",
+      "version": 29
+    },
+    {
+      "file": "TapirAddOn_AC30_Win.apx",
+      "url": "https://github.com/ENZYME-APD/tapir-archicad-automation/releases/download/1.8.0/TapirAddOn_AC30_Win.apx",
+      "sha256": "4cd4feb5b37944f45f69f6ed0d89259cb705987738372d87d7fa94a71d5de031",
+      "version": 30
+    }
+  ],
+  "release": "1.8.0"
+}

@@ -9,13 +9,27 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="RevitIntegration\**\*.cs" />
+    <Compile Remove="ScopeEditorChecks\**\*.cs" />
     <Compile Include="..\HeatLossViewer\Export\BuildingData.cs" Link="BuildingData.cs" />
+    <Compile Include="..\HeatLossViewer\Export\OvExportScope.cs" Link="OvExportScope.cs" />
+    <Compile Include="..\HeatLossViewer\Export\OvLibraryData.cs" Link="OvLibraryData.cs" />
+    <Compile Include="..\HeatLossViewer\Export\ProjectConditions.cs" Link="ProjectConditions.cs" />
+    <Compile Include="..\HeatLossViewer\Export\ProjectCalculationInputs.cs" Link="ProjectCalculationInputs.cs" />
     <Compile Include="..\HeatLossViewer\Export\ContourTopology.cs" Link="ContourTopology.cs" />
     <Compile Include="..\HeatLossViewer\Export\BuildingExportWriter.cs" Link="BuildingExportWriter.cs" />
     <Compile Include="..\HeatLossViewer\HtmlTemplate.cs" Link="HtmlTemplate.cs" />
     <EmbeddedResource Include="..\HeatLossViewer\Viewer\Viewer.html" LogicalName="HeatLossViewer.Viewer.Viewer.html" />
     <EmbeddedResource Include="..\HeatLossViewer\Viewer\Viewer.js" LogicalName="HeatLossViewer.Viewer.Viewer.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\LibraryInputs.js" LogicalName="HeatLossViewer.Viewer.LibraryInputs.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\RadiatorPreview.js" LogicalName="HeatLossViewer.Viewer.RadiatorPreview.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\NativeRadiatorBridge.js" LogicalName="HeatLossViewer.Viewer.NativeRadiatorBridge.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\Report.js" LogicalName="HeatLossViewer.Viewer.Report.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\Layout.js" LogicalName="HeatLossViewer.Viewer.Layout.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\TableSorting.js" LogicalName="HeatLossViewer.Viewer.TableSorting.js" />
     <EmbeddedResource Include="..\HeatLossViewer\Viewer\Calculation.js" LogicalName="HeatLossViewer.Viewer.Calculation.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\Poteri.js" LogicalName="HeatLossViewer.Viewer.Poteri.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\ThermalInputs.js" LogicalName="HeatLossViewer.Viewer.ThermalInputs.js" />
+    <EmbeddedResource Include="..\HeatLossViewer\Viewer\Selection.js" LogicalName="HeatLossViewer.Viewer.Selection.js" />
     <EmbeddedResource Include="..\HeatLossViewer\Viewer\RadiatorSelection.js" LogicalName="HeatLossViewer.Viewer.RadiatorSelection.js" />
     <EmbeddedResource Include="..\HeatLossViewer\Viewer\RadiatorUI.js" LogicalName="HeatLossViewer.Viewer.RadiatorUI.js" />
     <EmbeddedResource Include="..\HeatLossViewer\Viewer\RadiatorCatalog.json" LogicalName="HeatLossViewer.Viewer.RadiatorCatalog.json" />

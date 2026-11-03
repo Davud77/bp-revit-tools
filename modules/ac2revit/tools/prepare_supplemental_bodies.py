@@ -28,7 +28,8 @@ def prepare(args,ifc_model=None):
     ifc_sha=file_sha256(args.ifc)
     settings=ifcopenshell.geom.settings();settings.set('use-world-coords',True);settings.set('mesher-linear-deflection',.00025)
     for kind in ('Roof','Mesh','Stair','Railing','CurtainWall','Object','Shell','Skylight','Lamp'):
-        keys=[e['sourceGuid'] for e in m['elements'] if e['kind']==kind]
+        keys=[e['sourceGuid'] for e in m['elements'] if e['kind']==kind and not
+              (kind=='Mesh' and e.get('status')=='ready' and e.get('payload',{}).get('format')=='ac2r.terrain/1')]
         for n in range(0,len(keys),100):
             folder=args.out/(kind.lower()+'-'+str(n//100).zfill(4))
             source_keys={k.upper() for k in keys[n:n+100]};body_file=folder/(kind.lower()+'-bodies.json')

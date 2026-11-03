@@ -80,7 +80,7 @@ public static class PipelineRunner
         Dictionary<string,long> WallIdentities()=>Storage.Index(doc,project).Where(p=>wallKeys.Contains(p.Key) && (p.Value is Wall or DirectShape)).ToDictionary(p=>p.Key,p=>p.Value.Id.Value,StringComparer.OrdinalIgnoreCase);
         var wallsBefore=WallIdentities();
         var config=ImportConfig.Load(Resolve(plan.Mapping));var report=new Report{ProjectId=project,Mode=preview?"pipelinePreview":"pipeline"};
-        string[] order=["resources","prepareHatchMapping","hatchMapping","grids","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","supplementalBodies","roomSeparators","wallJoinsAndRooms","roomBoundaryAudit","views","separatorAudit","hatchAudit","sourceCoverage"];
+        string[] order=["resources","prepareHatchMapping","hatchMapping","grids","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","roomSeparators","wallJoinsAndRooms","roomBoundaryAudit","views","separatorAudit","hatchAudit","sourceCoverage"];
         if(preview){foreach(var stage in order)report.Add(stage,"PipelineStage","planned");return report;}
         if(plan.EnforceSourceSnapshot)
         {
@@ -120,6 +120,7 @@ public static class PipelineRunner
             report.Add(key,"SourceSnapshot","verified","Exact JSON/IFC snapshot guard; changed source requires a new project.");
         }
         Directory.CreateDirectory(output);int stageNumber=0;
+        if(!preview)ImportJournal.Register(doc,manifest,selection);
         if(selection!=null)File.WriteAllText(Path.Combine(output,"import-selection.json"),JsonSerializer.Serialize(new{requested=selection.Requested.Order(),included=selection.Included.Order(),dependencies=selection.Included.Except(selection.Requested).Order()},Json.Options));
         void Stage(string name,Func<Report> action)
         {
@@ -147,9 +148,9 @@ public static class PipelineRunner
                     var state=saved??DataStorage.Create(doc);Storage.Tag(state,project,key,executionId,JsonSerializer.Serialize(result,Json.Options));t.Commit();
                 }
             }
-            result.Save(Path.Combine(output,name+".json"));report.Items.AddRange(result.Items);report.ZoneAreas.AddRange(result.ZoneAreas);report.WallJoins.AddRange(result.WallJoins);
+            result.Save(Path.Combine(output,name+".json"));report.Items.AddRange(result.Items);report.ZoneAreas.AddRange(result.ZoneAreas);report.ZoneVerticals.AddRange(result.ZoneVerticals);report.WallJoins.AddRange(result.WallJoins);
             report.Save(Path.Combine(output,"pipeline-report.json"));
-            if(!reused && !string.IsNullOrEmpty(doc.PathName))doc.Save();
+            if(!reused && !string.IsNullOrEmpty(doc.PathName)){doc.Save();ImportJournal.Write(doc,report);}
         }
         Report ImportMissing(string file,ISet<string> kinds,ImportConfig options,bool resources=false)
         {
@@ -278,6 +279,7 @@ public static class PipelineRunner
         if(plan.NativeCutBeams)Stage("nativeCutBeams",()=>CutBeamReplacer.Run(doc,Resolve(plan.BeamBodies),Resolve(plan.BeamFamily),Resolve(plan.VoidTemplate),Path.Combine(output,"beam-void-families"),trialLimit,(n,total)=>
         {progress?.Invoke("nativeCutBeams",n,total);if(n%20==0 && !string.IsNullOrEmpty(doc.PathName))doc.Save();}));
         Stage("openingsAndFillings",()=>OpeningStage.Run(doc,Resolve(plan.OpeningsPlan),Resolve(plan.VoidTemplate),Path.Combine(output,"opening-families"),trialLimit,progress,selection?.Included));
+        Stage("nativeTerrain",()=>ImportMissing(Resolve(plan.SourceManifest),new HashSet<string>{"Mesh"},config));
         if(plan.SupplementalBodiesPlan.Length>0)Stage("supplementalBodies",()=>SupplementalBodiesStage.Run(doc,Resolve(plan.SupplementalBodiesPlan),Path.Combine(output,"supplemental-inputs"),progress,selection?.Included));
         if(plan.RoomSeparators.Length>0)Stage("roomSeparators",()=>RoomSeparatorStage.Run(doc,manifest,Resolve(plan.SourceManifest),Resolve(plan.RoomSeparators),Path.Combine(output,"room-separators"),progress));
         // Spatial elements are deliberately rebuilt only after every physical
@@ -326,7 +328,7 @@ public static class PipelineRunner
                     if(selection==null || selection.Includes("Zone"))
                     {
                         var rooms=SpatialStage.Run(doc,manifest,config,Path.Combine(Path.GetDirectoryName(doc.PathName)!,"spatial-checkpoints"),progress);
-                        result.Items.AddRange(rooms.Items);result.ZoneAreas.AddRange(rooms.ZoneAreas);
+                        result.Items.AddRange(rooms.Items);result.ZoneAreas.AddRange(rooms.ZoneAreas);result.ZoneVerticals.AddRange(rooms.ZoneVerticals);
                     }
                     return spatial=result;
                 }

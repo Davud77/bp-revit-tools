@@ -146,7 +146,7 @@ public static class RoomSeparatorStage
                 using var t=new Transaction(doc,"Source separators "+level.Name);t.Start();NativeGeometry.Configure(t,report,levelKey,"RoomSeparator");
                 var view=new FilteredElementCollector(doc).OfClass(typeof(ViewPlan)).Cast<ViewPlan>().Where(v=>!v.IsTemplate && v.ViewType==ViewType.FloorPlan && v.GenLevel?.Id==level.Id)
                     .OrderByDescending(v=>v.Name.StartsWith("AC Plan ",StringComparison.Ordinal)).FirstOrDefault();
-                if(view==null){view=ViewPlan.Create(doc,viewType.Id,level.Id);view.Name="AC Separators "+level.Id.Value;}
+                if(view==null){view=ViewPlan.Create(doc,viewType.Id,level.Id);view.Name="АС Разделители — "+level.Name;}
                 string viewKey="separator-source-view:"+levelKey;
                 ViewPlan sourceView;
                 if(index.GetValueOrDefault(viewKey) is ViewPlan storedView)sourceView=storedView;

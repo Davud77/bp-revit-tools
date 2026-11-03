@@ -11,7 +11,7 @@ namespace BotPlus.RT.Setup;
 
 static partial class Deployment
 {
-    public const string Version = "1.2.0";
+    public const string Version = "1.6";
     const string AddinId = "DE07865F-0FBF-4CC3-B71E-AC2B149113E6";
     const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BotPlus.RT";
     static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotPlus.RT");
@@ -19,11 +19,15 @@ static partial class Deployment
     static readonly string Release = Path.Combine(App, "versions", Version);
     static readonly string Manifest = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Autodesk", "Revit", "Addins", "2026", "BotPlus.RT.addin");
     static readonly Encoding Utf8 = new UTF8Encoding(false);
+    public static string LogPath => Path.Combine(Data, "setup.log");
+    public static event Action<string>? Logged;
 
     public static void Log(string message)
     {
         Directory.CreateDirectory(Data);
-        File.AppendAllText(Path.Combine(Data, "setup.log"), DateTimeOffset.Now.ToString("O") + " " + message + Environment.NewLine, Utf8);
+        string line = DateTimeOffset.Now.ToString("O") + " " + message;
+        File.AppendAllText(LogPath, line + Environment.NewLine, Utf8);
+        Logged?.Invoke(line);
     }
 
     public static string? FindRevit()
@@ -50,23 +54,30 @@ static partial class Deployment
         return reader.ReadToEnd();
     }
 
-    public static void Install(bool codex, bool claude, bool auto, string? revitDir)
+    public static void Install(string? revitDir, IProgress<SetupProgress>? progress = null, int? archicadVersion = 28, string? archicadDir = null)
     {
+        void Step(int percent, string text) { Log(text); progress?.Report(new(percent, text)); }
+        Step(0, "Начало установки BotPlus RT " + Version);
+        Step(2, "Проверка открытых экземпляров Revit");
         CheckRevitClosed();
+        Step(5, "Проверка папки и версии Revit 2026");
         revitDir ??= FindRevit();
         if (revitDir is null || !File.Exists(Path.Combine(revitDir, "Revit.exe")) || !File.Exists(Path.Combine(revitDir, "RevitAPI.dll")))
             throw new InvalidOperationException("Не найден Revit 2026. Укажите его папку установки.");
         if (FileVersionInfo.GetVersionInfo(Path.Combine(revitDir, "RevitAPI.dll")).FileMajorPart != 26)
             throw new InvalidOperationException("Этот установщик поддерживает Revit 2026. Выбрана другая версия.");
         CheckLegacyManifests();
+        if (archicadVersion is int ac) TapirTarget(ac, archicadDir);
 
+        Step(10, "Распаковка файлов приложения в " + Release);
         Directory.CreateDirectory(Release);
         using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!)
         using (var archive = new ZipArchive(stream))
         {
-            foreach (var entry in archive.Entries)
+            var files = archive.Entries.Where(e => !e.FullName.EndsWith('/')).ToList();
+            int completed = 0;
+            foreach (var entry in files)
             {
-                if (entry.FullName.EndsWith('/')) continue;
                 var destination = Path.GetFullPath(Path.Combine(Release, entry.FullName));
                 RequireChild(destination, Release);
                 Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
@@ -74,27 +85,23 @@ static partial class Deployment
                 using var memory = new MemoryStream(); input.CopyTo(memory);
                 var bytes = memory.ToArray();
                 // Same-version repair works even when a client still holds the identical node.exe.
-                if (File.Exists(destination) && SHA256.HashData(File.ReadAllBytes(destination)).SequenceEqual(SHA256.HashData(bytes))) continue;
-                File.WriteAllBytes(destination, bytes);
+                if (!File.Exists(destination) || !SHA256.HashData(File.ReadAllBytes(destination)).SequenceEqual(SHA256.HashData(bytes))) File.WriteAllBytes(destination, bytes);
+                completed++;
+                if (completed % 100 == 0 || completed == files.Count) Step(10 + (int)(65L * completed / files.Count), $"Файлы: {completed} / {files.Count} — {entry.FullName}");
             }
         }
+        if (archicadVersion is int version)
+        { Step(76, $"Установка Tapir для Archicad {version}"); InstallTapir(version, archicadDir); }
+        else Log("Установка Tapir пропущена по выбору пользователя.");
+        Step(78, "Подготовка примеров MCP-конфигураций");
         RunNode(Release, "--examples");
-        var clients = new List<string>();
-        if (codex) clients.Add("--codex"); if (claude) clients.Add("--claude");
-        if (clients.Count != 0) RunNode(Release, clients.ToArray());
+        Step(84, "Регистрация единственной надстройки BotPlus RT для Revit");
 
         var assembly = SecurityElement.Escape(Path.Combine(Release, "BotPlus.RT.dll"));
         var xml = $"<?xml version=\"1.0\" encoding=\"utf-8\"?><RevitAddIns><AddIn Type=\"Application\"><Name>BotPlus RT</Name><Assembly>{assembly}</Assembly><AddInId>{AddinId}</AddInId><FullClassName>BotPlus.RT.Application</FullClassName><VendorId>BTPL</VendorId><VendorDescription>BotPlus RT: MCP, Ac2Revit, ОВ</VendorDescription></AddIn></RevitAddIns>";
         DisableLegacyManifests();
         AtomicWithBackup(Manifest, xml);
-        if (auto)
-        {
-            var settings = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WEAM.Revit.AI", "settings.json");
-            var json = File.Exists(settings) ? JsonNode.Parse(File.ReadAllText(settings)) as JsonObject : new JsonObject();
-            if (json is null) throw new InvalidOperationException("Некорректный settings.json. Данные не будут перезаписаны.");
-            json["autoConfirm"] = true;
-            AtomicWithBackup(settings, json.ToJsonString());
-        }
+        Step(92, "Регистрация версии и удаления в Windows");
         var setupCopy = Path.Combine(App, "BotPlus.RT.Setup.exe");
         if (!string.Equals(Environment.ProcessPath, setupCopy, StringComparison.OrdinalIgnoreCase)) File.Copy(Environment.ProcessPath!, setupCopy, true);
         using var uninstall = Registry.CurrentUser.CreateSubKey(RegistryKey);
@@ -106,11 +113,12 @@ static partial class Deployment
         uninstall.SetValue("NoModify", 1); uninstall.SetValue("NoRepair", 1);
         var state = new JsonObject { ["version"] = Version, ["release"] = Release, ["installedUtc"] = DateTimeOffset.UtcNow.ToString("O") };
         File.WriteAllText(Path.Combine(App, "installation.json"), state.ToJsonString(), Utf8);
-        Log("Installed " + Version + "; MCP client configuration updated: " + string.Join(",", clients));
+        Step(100, "Установка завершена. Подключение AI-клиента и автоподтверждение выбираются на ленте Revit.");
     }
 
-    public static void Uninstall()
+    public static void Uninstall(IProgress<SetupProgress>? progress = null)
     {
+        Log("Начало удаления BotPlus RT"); progress?.Report(new(0, "Проверка открытых приложений"));
         CheckRevitClosed();
         if (!File.Exists(Path.Combine(App, "installation.json"))) throw new InvalidOperationException("Не найдена установка WEAM.Revit.AI, управляемая установщиком.");
         foreach (var process in Process.GetProcessesByName("node"))
@@ -124,6 +132,7 @@ static partial class Deployment
         }
         var state = JsonNode.Parse(File.ReadAllText(Path.Combine(App, "installation.json")))!;
         var release = state["release"]!.GetValue<string>(); RequireChild(release, App);
+        progress?.Report(new(20, "Удаление MCP-подключений")); Log("Удаление MCP-подключений");
         RunNode(release, "--remove", "--codex", "--claude");
         if (File.Exists(Manifest))
         {
@@ -133,11 +142,13 @@ static partial class Deployment
             if (owns) { Backup(Manifest); File.Delete(Manifest); }
         }
         RestoreLegacyManifests();
+        progress?.Report(new(55, "Архивирование сеансов Ac2Revit")); Log("Архивирование сеансов Ac2Revit");
         PreserveSessions();
         Registry.CurrentUser.DeleteSubKeyTree(RegistryKey, false);
         RequireChild(App, Data);
         Directory.Delete(App, true);
         Log("Uninstalled; settings, snapshots, models and configuration backups preserved.");
+        progress?.Report(new(100, "Надстройка удалена, данные сохранены"));
     }
 
     static void RunNode(string release, params string[] args)
