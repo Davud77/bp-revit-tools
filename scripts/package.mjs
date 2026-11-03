@@ -40,6 +40,8 @@ await cp(path.join(repo, 'installer/tapir/LICENSE'), path.join(stage, 'tapir/LIC
 await cp(path.join(repo, 'USAGE.md'), path.join(stage, 'USAGE.md'));
 await cp(path.join(repo, 'ROADMAP.md'), path.join(stage, 'ROADMAP.md'));
 await mkdir(path.join(stage, 'docs'), { recursive: true });
+await mkdir(path.join(stage, 'docs/assets'), { recursive: true });
+await cp(path.join(repo, 'docs/assets/botplus-rt-ribbon.png'), path.join(stage, 'docs/assets/botplus-rt-ribbon.png'));
 for (const name of await readdir(path.join(repo, 'docs')))
   if (name.endsWith('.md')) await cp(path.join(repo, 'docs', name), path.join(stage, 'docs', name));
 await mkdir(path.join(stage, 'modules/ov/docs'), { recursive: true });
