@@ -80,7 +80,7 @@ public static class PipelineRunner
         Dictionary<string,long> WallIdentities()=>Storage.Index(doc,project).Where(p=>wallKeys.Contains(p.Key) && (p.Value is Wall or DirectShape)).ToDictionary(p=>p.Key,p=>p.Value.Id.Value,StringComparer.OrdinalIgnoreCase);
         var wallsBefore=WallIdentities();
         var config=ImportConfig.Load(Resolve(plan.Mapping));var report=new Report{ProjectId=project,Mode=preview?"pipelinePreview":"pipeline"};
-        string[] order=["resources","prepareHatchMapping","hatchMapping","grids","gridLabels","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","roomSeparators","wallJoinsAndRooms","roomBoundaryAudit","views","serviceCuts","elementHatches","nativeDimensions","roomSeparatorRecheck","separatorAudit","hatchAudit","sourceCoverage"];
+        string[] order=["resources","site","prepareHatchMapping","hatchMapping","grids","gridLabels","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","roomSeparators","wallJoinsAndRooms","roomBoundaryAudit","views","serviceCuts","elementHatches","nativeDimensions","roomSeparatorRecheck","separatorAudit","hatchAudit","sourceCoverage"];
         if(preview){foreach(var stage in order)report.Add(stage,"PipelineStage","planned");return report;}
         if(plan.EnforceSourceSnapshot)
         {
@@ -135,6 +135,11 @@ public static class PipelineRunner
             var saved=cache?Storage.Index(doc,project).GetValueOrDefault(key) as DataStorage:null;
             bool reused=saved!=null && Storage.Read(saved)?.Hash==executionId;
             Report result;
+            var clock=System.Diagnostics.Stopwatch.StartNew();int saves=0,families=0;
+            void Saved(object? sender,Autodesk.Revit.DB.Events.DocumentSavedEventArgs e){if(e.Document.Equals(doc))saves++;}
+            void Loaded(object? sender,Autodesk.Revit.DB.Events.FamilyLoadedIntoDocumentEventArgs e){if(e.Document.Equals(doc))families++;}
+            doc.Application.DocumentSaved+=Saved;doc.Application.FamilyLoadedIntoDocument+=Loaded;
+            try{
             if(reused)
             {
                 var schema=Storage.Schema();result=JsonSerializer.Deserialize<Report>(saved!.GetEntity(schema).Get<string>(schema.GetField("RawJson")),Json.Options)
@@ -151,7 +156,12 @@ public static class PipelineRunner
             }
             result.Save(Path.Combine(output,name+".json"));report.Items.AddRange(result.Items);report.ZoneAreas.AddRange(result.ZoneAreas);report.ZoneVerticals.AddRange(result.ZoneVerticals);report.WallJoins.AddRange(result.WallJoins);
             report.Save(Path.Combine(output,"pipeline-report.json"));
-            if(!reused && !string.IsNullOrEmpty(doc.PathName)){doc.Save();ImportJournal.Write(doc,report);}
+            if(!reused && !string.IsNullOrEmpty(doc.PathName))doc.Save();
+            }
+            finally{doc.Application.DocumentSaved-=Saved;doc.Application.FamilyLoadedIntoDocument-=Loaded;}
+            report.Timings.Add(new(name,Math.Round(clock.Elapsed.TotalSeconds,3),saves,families,reused));
+            report.Save(Path.Combine(output,"pipeline-report.json"));
+            if(!reused && !string.IsNullOrEmpty(doc.PathName))ImportJournal.Write(doc,report);
             progress?.Invoke("pipeline:end:"+name,stageIndex+1,order.Length);
         }
         Report ImportMissing(string file,ISet<string> kinds,ImportConfig options,bool resources=false)
@@ -200,6 +210,7 @@ public static class PipelineRunner
             finally{manifest.Types=originalTypes;}
             var visual=Manifest.Load(Resolve(plan.GridsManifest));if(visual.Surfaces.Count>0)MaterialGraphics.Apply(doc,visual,r);return r;
         });
+        Stage("site",()=>SiteStage.Run(doc,manifest));
         if(plan.HatchRules.Length>0)Stage("prepareHatchMapping",()=>
         {
             var result=new Report{ProjectId=project,Mode="dynamicHatchMapping"};

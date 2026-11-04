@@ -1,5 +1,38 @@
 using Ac2Revit;
 
+// Site: Archicad north / survey point -> Revit shared coordinates and true north.
+{
+    System.Text.Json.JsonElement SiteJson(string text)=>System.Text.Json.JsonDocument.Parse(text).RootElement;
+    bool SiteNear(double a,double b,double tol=1e-9)=>Math.Abs(a-b)<=tol;
+    // Real Kaspiysk / Kizlyar capture: Archicad defaults, north along project +Y, no georeferencing.
+    var kaspiysk=SiteGeometry.Plan(SiteJson("""{"request":{},"response":{"succeeded":true,"result":{"addOnCommandResponse":{"projectLocation":{"longitude":37.583333333,"latitude":55.75,"altitude":0,"north":1.570796327},"surveyPoint":{"position":{"eastings":0,"northings":0,"elevation":0},"positionInProject":{"x":0,"y":0,"z":0},"geoReferencingParameters":{"crsName":"","xAxisAbscissa":1,"xAxisOrdinate":0,"scale":1},"isVisible":false,"isLocked":false}}}}}"""))!;
+    if(kaspiysk.Mode!="trueNorth" || !SiteNear(kaspiysk.AngleRadians,0,1e-8) || kaspiysk.EastWest!=0 || kaspiysk.NorthSouth!=0 || kaspiysk.LatitudeDegrees!=55.75)throw new Exception("Default Archicad site must keep the project axes");
+    if(!kaspiysk.Notes.Any(n=>n.Contains("по умолчанию")))throw new Exception("Archicad default location must be reported");
+    // North rotated 30° clockwise from project +Y: Archicad north = 60°; the Archicad north vector must become shared +Y.
+    var rotated=SiteGeometry.Plan(SiteJson("""{"projectLocation":{"latitude":43.0,"longitude":47.5,"altitude":-25,"north":1.0471975511965976},"surveyPoint":{"position":{"eastings":0,"northings":0,"elevation":0},"positionInProject":{"x":0,"y":0,"z":0},"geoReferencingParameters":{"xAxisAbscissa":1,"xAxisOrdinate":0,"scale":1}}}"""))!;
+    var north=rotated.ToShared(Math.Cos(Math.PI/3),Math.Sin(Math.PI/3),0);
+    if(rotated.Mode!="trueNorth" || !SiteNear(north.E,0,1e-12) || !SiteNear(north.N,1,1e-12) || rotated.Elevation!=-25 || rotated.Notes.Count!=0)throw new Exception("Archicad north must map to Revit true north");
+    // Georeferenced: survey point at project (12, -4, 1.5) has E/N/H; the grid x axis is turned 10°.
+    double g=10*Math.PI/180;
+    string SiteF(double v)=>v.ToString("R",System.Globalization.CultureInfo.InvariantCulture);
+    var survey=SiteGeometry.Plan(SiteJson("{\"projectLocation\":{\"latitude\":44.04,\"longitude\":43.06,\"altitude\":0,\"north\":"+SiteF(Math.PI/2-g+0.002)+"},\"surveyPoint\":{\"position\":{\"eastings\":512345.25,\"northings\":4876543.5,\"elevation\":318.2},\"positionInProject\":{\"x\":12,\"y\":-4,\"z\":1.5},\"geoReferencingParameters\":{\"crsName\":\"МСК-26\",\"xAxisAbscissa\":"+SiteF(Math.Cos(g))+",\"xAxisOrdinate\":"+SiteF(Math.Sin(g))+",\"scale\":1}}}"))!;
+    var point=survey.ToShared(12,-4,1.5);
+    if(survey.Mode!="survey" || !SiteNear(point.E,512345.25,1e-6) || !SiteNear(point.N,4876543.5,1e-6) || !SiteNear(point.Z,318.2,1e-9) || !SiteNear(survey.AngleRadians,g,1e-12))throw new Exception("Survey point must keep its eastings/northings/elevation");
+    var along=survey.ToShared(13,-4,1.5);
+    if(!SiteNear(along.E-point.E,Math.Cos(g),1e-9) || !SiteNear(along.N-point.N,Math.Sin(g),1e-9))throw new Exception("Project X must follow the grid rotation");
+    if(!survey.Notes.Any(n=>n.Contains("МСК-26")) || !survey.Notes.Any(n=>n.Contains("отличается")))throw new Exception("CRS and grid / true north difference must be reported");
+    if(SiteGeometry.Plan(SiteJson("{}"))!=null || SiteGeometry.Plan(null)!=null)throw new Exception("Missing geolocation must not invent a site");
+    bool rejected=false;try{SiteGeometry.Plan(SiteJson("""{"projectLocation":{"latitude":95,"longitude":0,"north":1.5707963}}"""));}catch(InvalidDataException){rejected=true;}
+    if(!rejected)throw new Exception("Invalid latitude accepted");
+    // Units: Russian practice (mm / m² / m³ / degrees) and an unsupported angle unit.
+    var units=SiteGeometry.Units(SiteJson("""{"length":{"unit":"Millimeter","accuracy":"Off","decimals":0},"area":{"unit":"SquareMeter","accuracy":"Off","decimals":2},"volume":{"unit":"CubicMeter","accuracy":"Off","decimals":3},"angle":{"unit":"DecimalDegree","decimals":2,"accuracy":0}}"""))!;
+    if(units.Length!="Millimeters" || units.LengthDecimals!=0 || units.Area!="SquareMeters" || units.VolumeDecimals!=3 || units.Angle!="Degrees" || units.Notes.Count!=0)throw new Exception("Archicad units mapped incorrectly");
+    var feet=SiteGeometry.Units(SiteJson("""{"length":{"unit":"FootFracInch","accuracy":"Off","decimals":0},"angle":{"unit":"Surveyors","decimals":0,"accuracy":0}}"""))!;
+    if(feet.Length!="FeetFractionalInches" || feet.Area!="SquareMeters" || feet.Angle!="Degrees")throw new Exception("Imperial / surveyor units mapped incorrectly");
+    if(SiteGeometry.Units(SiteJson("{}"))!=null)throw new Exception("Missing units must keep the template");
+    Console.WriteLine("PASS site: Archicad north, survey point, grid rotation and units map to Revit shared coordinates");
+}
+
 // Session folders: the 1.6.3 failure on «МКД_8 эт_Кизляр_Общая модель_» crossed MAX_PATH in a deep stage file.
 {
     var when=new DateTime(2026,11,4,22,4,5);

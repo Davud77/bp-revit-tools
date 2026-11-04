@@ -218,6 +218,7 @@ def normalize(snapshot, project_id):
               'units': {'length': 'm', 'angle': 'rad'},
               'coordinates': {'system': 'ArchicadProject', 'transform': {'translation': {'x': 0, 'y': 0, 'z': 0}, 'rotationRadians': 0},
                               'geolocation': snapshot.get('geolocation', {})},
+              'projectUnits': snapshot.get('calculationUnits', {}),
               'levels': levels, 'materials': materials,
               'dimensionAnchors': snapshot.get('dimensionAnchors', []),
               'surfaces': snapshot.get('attributes', {}).get('Surface', {}).get('details', []),

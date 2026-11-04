@@ -123,7 +123,7 @@ internal sealed class ImportProgress : IDisposable
         State.Update(phase,done,total);
         string Title(string name)=>name.StartsWith("supplemental:",StringComparison.Ordinal)?"Дополнительная IFC-геометрия: "+name[13..]:name switch
         {
-            "resources"=>"Ресурсы проекта", "levels"=>"Уровни", "materials"=>"Материалы", "types"=>"Типы конструкций",
+            "resources"=>"Ресурсы проекта", "site"=>"Расположение, север и единицы", "levels"=>"Уровни", "materials"=>"Материалы", "types"=>"Типы конструкций",
             "prepareHatchMapping"=>"Подбор штриховок шаблона", "hatchMapping"=>"Штриховки материалов", "elementHatches"=>"Штриховки элементов на видах", "grids"=>"Оси",
             "simpleColumns"=>"Простые колонны", "columnBodies"=>"Геометрия сложных колонн", "profileColumns"=>"Профили колонн",
             "columnBehavior"=>"Конструктивное поведение колонн", "wallsSlabsMorphs"=>"Стены и перекрытия", "wallCompletion" or "missingWalls" or "wallGeometry" or "wallGeometryPreparation"=>"Дополнение стен",

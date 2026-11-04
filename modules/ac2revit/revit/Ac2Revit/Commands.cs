@@ -99,6 +99,7 @@ public static class Command
             };
             if(!preview)ImportJournal.Register(ui.ActiveUIDocument.Document,manifest,selection);
             var report = preview ? importer.Preview() : importer.Run(selection?.Included);
+            if(!preview)report.Items.AddRange(SiteStage.Run(ui.ActiveUIDocument.Document,manifest).Items);
             simpleProgress?.Update("pipeline:complete",5,5);
             report.Save(reportPath);
             if(!preview && !string.IsNullOrEmpty(ui.ActiveUIDocument.Document.PathName)){ui.ActiveUIDocument.Document.Save();ImportJournal.Write(ui.ActiveUIDocument.Document,report);}

@@ -46,8 +46,19 @@ internal static class ImportJournal
             try{using var previous=JsonDocument.Parse(File.ReadAllText(previousJournal));if(previous.RootElement.TryGetProperty("outcomes",out var saved)&&saved.ValueKind==JsonValueKind.Array)outcomes=saved.Read<List<Outcome>>();}
             catch(JsonException){text.AppendLine("Предыдущий файл журнала повреждён; сохранена текущая инвентаризация модели.");}
         }
+        var timings=report?.Timings??[];
+        if(report==null && File.Exists(previousJournal))
+        {
+            try{using var previous=JsonDocument.Parse(File.ReadAllText(previousJournal));if(previous.RootElement.TryGetProperty("timings",out var saved)&&saved.ValueKind==JsonValueKind.Array)timings=saved.Read<List<StageTiming>>();}
+            catch(JsonException){}
+        }
+        if(timings.Count>0)
+        {
+            text.AppendLine($"Время этапов: всего {timings.Sum(t=>t.Seconds):0.0} с, сохранений RVT {timings.Sum(t=>t.Saves)}, загружено семейств {timings.Sum(t=>t.FamiliesLoaded)}");
+            foreach(var t in timings)text.AppendLine($"Этап\t{t.Stage}\t{t.Seconds:0.0} с\tсохранений {t.Saves}\tсемейств {t.FamiliesLoaded}{(t.Reused?"\tиз контрольной точки":"")}");
+        }
         foreach(var item in outcomes)text.AppendLine($"{item.Kind}\t{item.SourceKey}\t{item.Status}\t{item.Message}");
         File.WriteAllText(prefix+".log",text.ToString(),Encoding.UTF8);
-        File.WriteAllText(prefix+".json",JsonSerializer.Serialize(new{saved=DateTimeOffset.Now,document=doc.PathName,elements=all,outcomes},Json.Options),Encoding.UTF8);
+        File.WriteAllText(prefix+".json",JsonSerializer.Serialize(new{saved=DateTimeOffset.Now,document=doc.PathName,timings,elements=all,outcomes},Json.Options),Encoding.UTF8);
     }
 }

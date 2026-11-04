@@ -26,6 +26,8 @@ public sealed class Manifest
     public List<TypeRecord> Types { get; set; } = [];
     public List<ElementRecord> Elements { get; set; } = [];
     public List<DimensionGridAnchor> DimensionAnchors {get;set;}=[];
+    /// <summary>Archicad calculation units (Tapir GetCalculationUnits); optional, absent in older exports.</summary>
+    public JsonElement? ProjectUnits { get; set; }
     public string ManifestHash { get; set; } = "";
 
     public static Manifest Load(string path)
@@ -90,7 +92,7 @@ public sealed class Manifest
 public sealed class DimensionGridAnchor {public string SourceGuid {get;set;}="";public Point Start {get;set;}=new();public Point End {get;set;}=new();public string Label {get;set;}="";}
 public sealed class SourceInfo { public string ProjectId { get; set; } = ""; }
 public sealed class UnitInfo { public string Length { get; set; } = ""; public string Angle { get; set; } = ""; }
-public sealed class CoordinateInfo { public RigidTransform Transform { get; set; } = new(); }
+public sealed class CoordinateInfo { public RigidTransform Transform { get; set; } = new(); public JsonElement? Geolocation { get; set; } }
 public sealed class RigidTransform { public Point Translation { get; set; } = new(); public double RotationRadians { get; set; } }
 public sealed class Point
 {
@@ -166,9 +168,12 @@ public sealed class Report
     public List<ZoneVerticalComparison> ZoneVerticals { get; set; } = [];
     public List<WallEndJoinCheck> WallJoins { get; set; } = [];
     public List<WallOffsetPlacement> WallOffsets { get; set; } = [];
+    /// <summary>Measured duration and side effects of each pipeline stage (speed-up baseline).</summary>
+    public List<StageTiming> Timings { get; set; } = [];
     public void Add(string key, string kind, string status, string message = "", string revitId = "") => Items.Add(new(key, kind, status, message, revitId));
     public void Save(string path) => File.WriteAllText(path, JsonSerializer.Serialize(this, Json.Options));
 }
+public sealed record StageTiming(string Stage, double Seconds, int Saves, int FamiliesLoaded, bool Reused);
 public sealed record Outcome(string SourceKey, string Kind, string Status, string Message, string RevitUniqueId);
 public sealed record ZoneAreaComparison(string SourceGuid, double SourceAreaSquareMeters, double RevitAreaSquareMeters,
     double AbsoluteDifferenceSquareMeters, double ToleranceSquareMeters, bool Accepted, string Status);

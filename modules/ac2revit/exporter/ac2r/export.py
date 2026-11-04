@@ -29,6 +29,8 @@ def export(args):
             return {}
 
     snapshot['geolocation'] = optional('GetGeoLocation')
+    # Project display units; Tapir builds without the command leave them empty and Revit keeps its template units.
+    snapshot['calculationUnits'] = optional('GetCalculationUnits')
     snapshot['propertyDefinitions'] = optional('GetAllProperties')
     snapshot['classificationSystems'] = optional('GetAllClassificationSystems', tapir=False)
     snapshot['classificationSystems']['trees'] = {

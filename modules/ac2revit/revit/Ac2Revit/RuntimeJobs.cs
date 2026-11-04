@@ -71,6 +71,11 @@ public static class RuntimeJobs
                 }
                 File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",output,sourceDimensions=dimensionManifest.Elements.Count(e=>e.Kind=="Dimension"),created=dimensionReport.Items.Count(i=>i.Status=="created"),unchanged=dimensionReport.Items.Count(i=>i.Status=="unchanged"),unsupported=dimensionReport.Items.Count(i=>i.Status=="unsupported"),repeatWithoutDuplicates=true},Json.Options));return;
             }
+            if(job.Operation=="siteValidation")
+            {
+                string folder=Path.GetDirectoryName(WorkspacePath(job.ReportPath))!;
+                var result=SiteValidation.Run(ui,folder,WorkspacePath(job.TemplatePath));File.WriteAllText(resultPath,JsonSerializer.Serialize(result,Json.Options));return;
+            }
             if(job.Operation=="annotation163Validation")
             {
                 string folder=Path.GetDirectoryName(WorkspacePath(job.ReportPath))!;

@@ -92,6 +92,12 @@ static partial class Deployment
             var name = Path.GetFileName(version);
             if (string.Equals(name, Version, StringComparison.OrdinalIgnoreCase)) continue;
             RequireChild(version, root);
+            // A running MCP client keeps node.exe open; deleting would stop halfway and leave a broken folder.
+            if (ProcessUses(version) is string running)
+            {
+                Log("Предыдущая версия " + name + " используется (" + running + ") и будет удалена при следующей установке.");
+                continue;
+            }
             try
             {
                 var sessions = Path.Combine(version, "modules", "ac2revit", "artifacts", "sessions");
@@ -111,6 +117,22 @@ static partial class Deployment
                 Log("Предыдущая версия " + name + " занята и будет удалена при следующей установке: " + error.Message);
             }
         }
+    }
+
+    static string? ProcessUses(string folder)
+    {
+        string prefix = Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var process in System.Diagnostics.Process.GetProcesses())
+        {
+            try
+            {
+                if (process.MainModule?.FileName is string file && file.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return process.ProcessName + " " + process.Id;
+            }
+            catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
+            finally { process.Dispose(); }
+        }
+        return null;
     }
 
     public static void VerifyPayload(string destination)
