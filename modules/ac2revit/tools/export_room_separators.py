@@ -11,10 +11,15 @@ sys.path.insert(0, str(ROOT / 'exporter'))
 from ac2r.client import TapirClient, aligned, chunks
 
 
+# Fields Tapir reports relative to the window's current story, not to the element: switching windows during
+# export (3D mesh capture) changes them without any model change. They are not used by the transfer.
+VIEW_RELATIVE = frozenset({'homeStoryDifference'})
+
+
 def same_source(expected, actual):
-    """Compare existing fields, allowing only API numeric serialization noise."""
+    """Compare existing fields, allowing only API numeric serialization noise and view-relative fields."""
     if isinstance(expected, dict):
-        return isinstance(actual, dict) and all(k in actual and same_source(v, actual[k]) for k, v in expected.items())
+        return isinstance(actual, dict) and all(k in VIEW_RELATIVE or (k in actual and same_source(v, actual[k])) for k, v in expected.items())
     if isinstance(expected, list):
         return isinstance(actual, list) and len(expected) == len(actual) and all(same_source(a, b) for a, b in zip(expected, actual))
     if isinstance(expected, bool):

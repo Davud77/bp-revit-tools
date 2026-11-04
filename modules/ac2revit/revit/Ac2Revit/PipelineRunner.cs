@@ -409,6 +409,9 @@ public static class PipelineRunner
             report.Add("coverage:"+rows.Key,"SourceCoverage",rows.All(e=>e.represented)?"verified":"partial",
                 $"{rows.Key}: source {rows.Count()}, represented {rows.Count(e=>e.represented)}, missing {rows.Count(e=>!e.represented)}; see source-coverage.json. Geometry and native functionality require separate acceptance.");
         report.Add("pipeline","Pipeline","complete",trialLimit>0?"Control subset; room rebuilding deliberately deferred to complete physical import":"Physical stages completed before spatial evaluation; inspect per-element blocked/retained outcomes.");
-        report.Save(Path.Combine(output,"pipeline-report.json"));progress?.Invoke("pipeline:complete",order.Length,order.Length);return report;
+        report.Save(Path.Combine(output,"pipeline-report.json"));
+        // Final checkpoint with the complete report, so the journal next to the RVT lists every stage.
+        if(Checkpoints.Save(doc,force:true))ImportJournal.Write(doc,report);
+        progress?.Invoke("pipeline:complete",order.Length,order.Length);return report;
     }
 }

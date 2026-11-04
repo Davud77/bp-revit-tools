@@ -120,8 +120,10 @@ public static class SiteStage
         return string.Join(", ", changed);
     }
 
+    static double Degrees(double radians) { double d = Math.Round(radians * 180 / Math.PI, 6); return d == 0 ? 0 : d; } // no "-0°"
+
     static string Describe(SitePlan s) =>
         (s.Mode == "survey" ? "Геопривязка Archicad: " : "Без геопривязки, север Archicad: ") +
-        $"поворот к общим координатам {s.AngleRadians * 180 / Math.PI:0.######}°, начало проекта в общих координатах E={s.EastWest:0.###} N={s.NorthSouth:0.###} H={s.Elevation:0.###} м" +
+        $"поворот к общим координатам {Degrees(s.AngleRadians):0.######}°, начало проекта в общих координатах E={s.EastWest:0.###} N={s.NorthSouth:0.###} H={s.Elevation:0.###} м" +
         (s.LatitudeDegrees is double la && s.LongitudeDegrees is double lo ? $", широта {la:0.######}°, долгота {lo:0.######}°" : "");
 }

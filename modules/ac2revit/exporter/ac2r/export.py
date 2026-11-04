@@ -161,7 +161,8 @@ def export(args):
             response = None
         print('GDL:', len(gdl_ids), flush=True)
     # Detect accidental change of active document/story structure during long serial export.
-    if api.call('GetProjectInfo') != snapshot['project'] or api.call('GetStories') != snapshot['stories']:
+    # The current story of the window (actStory) is UI state: capturing meshes switches windows.
+    if api.call('GetProjectInfo') != snapshot['project'] or story_structure(api.call('GetStories')) != story_structure(snapshot['stories']):
         raise ApiError('Active project/story structure changed during export. Retry with a stable model.')
     write_json(target/'snapshot.json', snapshot)
     manifest = normalize(snapshot, args.project_id)
@@ -193,6 +194,11 @@ def export(args):
                                       'sourceGuid': e['sourceGuid'], 'count': 0})['count'] += 1
     write_json(target/'mapping-inventory.json', inventory)
     print(json.dumps({'counts': dict(counts), 'statuses': dict(statuses), 'output': str(target)}, ensure_ascii=True), flush=True)
+
+
+def story_structure(stories):
+    """Stories without the window's current story, which Archicad changes when windows switch."""
+    return {k: v for k, v in (stories or {}).items() if k != 'actStory'}
 
 
 def main():
