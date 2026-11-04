@@ -1,13 +1,13 @@
 # HeatLossViewer — Revit 2026
 
-Реализованы лента Revit, извлечение помещений и ограждений, окна/двери, геометрические вырезы в стенах и интерактивный HTML с бета-расчётом теплопотерь. Светлая/тёмная темы, компоновка расчётного листа, таблица, карточка и итоги ориентированы на `reference.html` и [референс](https://dunaevai.ru/materials/heat-loss).
+Реализованы лента Revit, извлечение помещений и ограждений, окна/двери, геометрические вырезы в стенах и интерактивный HTML с бета-расчётом теплопотерь. Светлая/тёмная темы, компоновка расчётного листа, таблица, карточка и итоги ориентированы на локальный `Входные данные/Референсы ОВ/reference.html` и [референс](https://dunaevai.ru/materials/heat-loss).
 
 ## Сборка и установка
 
 Требуются Revit 2026 x64 и .NET SDK 8.0. NuGet-пакетов нет. `global.json` выбирает SDK 8.0; проект — `net8.0-windows`.
 
 ```powershell
-cd C:\Users\davud\Documents\HeatLossViewer
+cd modules\ov   # из корня репозитория
 dotnet build .\HeatLossViewer\HeatLossViewer.csproj -c Release
 .\Install.ps1 -SkipBuild
 ```

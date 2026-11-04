@@ -1,6 +1,6 @@
 const fs=require('node:fs');const path=require('node:path');const assert=require('node:assert/strict');
 require('node:vm').runInThisContext(fs.readFileSync('HeatLossViewer/Viewer/Calculation.js','utf8'));
-const directory=process.argv[2] || 'artifacts/revit-final/Блок 5 от 13.07.26';
+const directory=process.argv[2] || '../../Выходные данные/Проверки ОВ/revit-final/Блок 5 от 13.07.26';
 const data=JSON.parse(fs.readFileSync(path.join(directory,'building.json'),'utf8'));
 assert.equal(data.rooms.length,142);assert.equal(data.openings.length,1006);
 assert.ok(Math.abs(data.rooms.reduce((sum,r)=>sum+r.area,0)-2058.4251797707484)<1e-6);
@@ -23,5 +23,5 @@ for(const room of data.rooms){
 assert.ok(measured>=1443);assert.ok(cuts>=370);assert.ok(complete>0);
 const report={project:data.projectName,rooms:data.rooms.length,openings:data.openings.length,measuredWallFaces:measured,cuts,filledCuts:filled,
  grossWallArea:gross,netWallArea:net,voidArea,calculatedDemoRooms:complete,unresolvedRooms:incomplete.length,demoHeatLossWatts:total,status:'demo',incomplete};
-fs.writeFileSync('artifacts/geometry-and-calculation-report.json',JSON.stringify(report,null,2));
+fs.writeFileSync('../../Выходные данные/Проверки ОВ/geometry-and-calculation-report.json',JSON.stringify(report,null,2));
 console.log(JSON.stringify({...report,incomplete:undefined},null,2));

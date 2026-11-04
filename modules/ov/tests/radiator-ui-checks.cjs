@@ -1,7 +1,7 @@
 const {chromium}=require('playwright'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {pathToFileURL}=require('node:url');
 (async()=>{
- const file=path.resolve(process.argv[2] || 'C:/Users/davud/Documents/RevitHeatLossExport/heat_loss_viewer.html');
+ const file=path.resolve(process.argv[2] || path.join(require('node:os').homedir(),'Documents','RevitHeatLossExport','heat_loss_viewer.html'));
  const browser=await chromium.launch({headless:true,channel:'msedge'}),page=await browser.newPage({viewport:{width:1600,height:1000}});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(pathToFileURL(file).href);await page.waitForFunction(()=>document.getElementById('load-state').hidden);
@@ -15,8 +15,8 @@ const {pathToFileURL}=require('node:url');
  assert.ok(baseline.rooms.some(r=>r.devices.some(d=>d.coverage==null)),'rooms without windows receive external-wall devices');
  for(const r of baseline.rooms)for(const d of r.devices){assert.ok(d.position.length===3&&d.position.every(Number.isFinite));if(d.coverage!=null)assert.ok(d.groupCoverage>=.5-1e-8);}
  downloadEvent=page.waitForEvent('download');await page.locator('#rad-schedule').click();download=await downloadEvent;await download.saveAs(path.join(path.dirname(file),'radiator_schedule.csv'));
- await page.screenshot({path:'artifacts/radiators-light.png',fullPage:true});
- await page.locator('#btn-theme').click();await page.screenshot({path:'artifacts/radiators-dark.png',fullPage:true});
+ await page.screenshot({path:'../../Выходные данные/Проверки ОВ/radiators-light.png',fullPage:true});
+ await page.locator('#btn-theme').click();await page.screenshot({path:'../../Выходные данные/Проверки ОВ/radiators-dark.png',fullPage:true});
  await page.locator('#rad-buildingType').selectOption('school');await page.locator('#rad-run').click();
  assert.match(await page.locator('#rad-rule').textContent(),/максимально/);
  downloadEvent=page.waitForEvent('download');await page.locator('#rad-export').click();download=await downloadEvent;
@@ -43,12 +43,12 @@ const {pathToFileURL}=require('node:url');
  assert.doesNotMatch(await page.locator('#rad-summary').textContent(),/0 приборов/);
  await page.locator('#rad-reset').click();
  await page.locator('.tabs [data-view=model]').click();await page.locator('#show-radiators').uncheck();await page.locator('#show-radiators').check();
- await page.screenshot({path:'artifacts/radiator-model-dark.png',fullPage:true});
+ await page.screenshot({path:'../../Выходные данные/Проверки ОВ/radiator-model-dark.png',fullPage:true});
  await page.setViewportSize({width:390,height:844});await page.locator('.tabs [data-view=radiators]').click();
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
- await page.screenshot({path:'artifacts/radiators-mobile.png',fullPage:true});
+ await page.screenshot({path:'../../Выходные данные/Проверки ОВ/radiators-mobile.png',fullPage:true});
  assert.deepEqual(errors,[]);
- fs.writeFileSync('artifacts/radiator-browser-report.json',JSON.stringify({passed:true,rooms:142,devices:115,sourceCatalogPositions:2550,browserErrors:errors},null,2));
+ fs.writeFileSync('../../Выходные данные/Проверки ОВ/radiator-browser-report.json',JSON.stringify({passed:true,rooms:142,devices:115,sourceCatalogPositions:2550,browserErrors:errors},null,2));
  console.log('PASS 3D radiator layer, real model sizing, school current and archive rules, floor/trench, custom catalog, PDF load mapping, JSON/CSV exports, themes and mobile');
  await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});

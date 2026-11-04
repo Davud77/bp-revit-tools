@@ -56,7 +56,7 @@ public static class HatchMappingStage
                     && Near(a.Origin.U,b.Origin[0])&&Near(a.Origin.V,b.Origin[1])
                     && a.GetSegments().Count==b.Segments.Length&&a.GetSegments().Zip(b.Segments).All(v=>Near(v.First,v.Second));});
     }
-    static void EnsurePatterns(Document doc,Plan plan)
+    internal static void EnsurePatterns(Document doc,Plan plan)
     {
         foreach(var row in plan.Materials.Where(r=>r.TargetGeometry!=null))
         {
@@ -115,7 +115,7 @@ public static class HatchMappingStage
             || !Convert.ToHexString(SHA256.HashData(stream)).Equals(plan.SourceManifestSha256,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Different hatch source snapshot/project");
         return plan;
     }
-    static ElementId BackgroundId(Document doc,Row row)
+    internal static ElementId BackgroundId(Document doc,Row row)
     {
         if(row.Background=="transparent")return ElementId.InvalidElementId;
         var candidates=new FilteredElementCollector(doc).OfClass(typeof(FillPatternElement)).Cast<FillPatternElement>().Where(e=>{

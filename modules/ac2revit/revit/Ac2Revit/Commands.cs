@@ -74,7 +74,7 @@ public static class Command
                 string output=Path.Combine(folder,"revit-run-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff"));
                 using var display=preview?null:new ImportProgress(ui.MainWindowHandle);
                 var pipelineReport=PipelineExecution.Run(ui,path,output,
-                    progress:(phase,done,total)=>{File.WriteAllText(Path.Combine(output,"progress.json"),System.Text.Json.JsonSerializer.Serialize(new{phase,done,total,updatedUtc=DateTime.UtcNow},Json.Options));display?.Update(phase,done,total);},preview:preview,selection:selection);
+                    progress:(phase,done,total)=>{display?.Update(phase,done,total);File.WriteAllText(Path.Combine(output,"progress.json"),System.Text.Json.JsonSerializer.Serialize(new{phase,done,total,overallPercent=display?.State.Percent,stage=display?.State.Stage,stages=display?.State.Stages,updatedUtc=DateTime.UtcNow},Json.Options));},preview:preview,selection:selection);
                 if(preview)Directory.CreateDirectory(output);
                 pipelineReport.Save(Path.Combine(output,"pipeline-report.json"));
                 string counts=string.Join("\n",pipelineReport.Items.GroupBy(x=>x.Status).Select(g=>g.Key+": "+g.Count()));
@@ -85,8 +85,19 @@ public static class Command
             if(selection!=null)manifest.Types=manifest.Types.Where(t=>selection.IncludesType(t.Kind)).ToList();
             var config = ImportConfig.Load(Path.Combine(folder, "mapping.json"));
             importer = new Importer(ui.ActiveUIDocument.Document, manifest, config);
+            importer.AnnotationUi=ui;
+            using var simpleProgress=preview?null:new ImportProgress(ui.MainWindowHandle);
+            simpleProgress?.Update("pipeline:start",0,5);
+            int current=-1;
+            importer.Progress=(phase,done,total)=>
+            {
+                int next=phase switch{"levels"=>0,"materials"=>1,"types"=>2,"elements"=>3,_=>4};
+                if(next>current){current=next;simpleProgress?.Update("pipeline:stage:"+phase,next,5);}
+                simpleProgress?.Update(phase,done,total);
+            };
             if(!preview)ImportJournal.Register(ui.ActiveUIDocument.Document,manifest,selection);
             var report = preview ? importer.Preview() : importer.Run(selection?.Included);
+            simpleProgress?.Update("pipeline:complete",5,5);
             report.Save(reportPath);
             if(!preview && !string.IsNullOrEmpty(ui.ActiveUIDocument.Document.PathName)){ui.ActiveUIDocument.Document.Save();ImportJournal.Write(ui.ActiveUIDocument.Document,report);}
             string summary = string.Join("\n", report.Items.GroupBy(x => x.Status).Select(g => g.Key + ": " + g.Count()));

@@ -1,7 +1,7 @@
 const {chromium}=require('playwright'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{execFileSync}=require('node:child_process');
 (async()=>{
- const output=path.resolve('artifacts/project-conditions-ui');fs.mkdirSync(output,{recursive:true});
- const data=JSON.parse(fs.readFileSync(path.resolve('artifacts/demo/building.json'),'utf8'));
+ const output=path.resolve('../../Выходные данные/Проверки ОВ/project-conditions-ui');fs.mkdirSync(output,{recursive:true});
+ const data=JSON.parse(fs.readFileSync(path.resolve('../../Выходные данные/Проверки ОВ/demo/building.json'),'utf8'));
  data.rooms.forEach((room,i)=>{room.id=1000+i;room.idText=String(room.id);});
  const room=data.rooms[0];
  data.projectConditions={name:data.projectName,climateRegion:'II',climateSubregion:'IIБ',outdoorTemperature:-23.5,indoorTemperature:21,windSpeed:0,buildingHeight:12,firstFloorHeight:.6,notes:'</script><script>window.injected=true</script>',calculation:{building:{wall:.31},floorOverrides:{[room.levelKey]:{indoor:24}},roomOverrides:{[room.key]:{indoor:26}},orientationAdditions:true,reviewed:true}};

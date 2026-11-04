@@ -82,6 +82,18 @@ if(SourceLabel.Format("1-й этаж")!="АС «1-й этаж»" || SourceLabel.
     throw new Exception("Source label formatting changed source text or appended an identity");
 if(SourceLabel.Format("Стена: [250]")!="АС «Стена_ _250_»")throw new Exception("Invalid Revit name characters were retained");
 Console.WriteLine("PASS: readable source labels preserve floor numbers/dimensions and contain no generated suffix");
+var meshScope=new ImportSelection(["Mesh"]);
+if(!meshScope.AllowsStage("nativeTerrain") || new ImportSelection(["Wall"]).AllowsStage("nativeTerrain"))throw new Exception("Mesh checkbox does not control native terrain stage");
+Console.WriteLine("PASS Mesh checkbox enables only the selected native terrain stage");
+var progress=new Ac2Revit.ImportProgressState();
+progress.Update("pipeline:start",0,5);progress.Update("pipeline:stage:walls",2,5);progress.Update("elements",80,100);var high=progress.Percent;
+progress.Update("openingCuts",1,100);if(progress.Percent<high)throw new Exception("Global progress moved backwards between subphases");
+progress.Update("memoryCheckpoint",1,128);progress.Update("pipeline:start",0,5);progress.Update("pipeline:stage:resources",0,5);if(progress.Percent<high)throw new Exception("Checkpoint reopen reset global progress");
+progress.Update("pipeline:end:sourceCoverage",5,5);if(progress.Complete||progress.Percent>=100)throw new Exception("Progress completed before final report");progress.Update("pipeline:complete",5,5);if(!progress.Complete||progress.Percent!=100)throw new Exception("Missing final 100 percent");
+var dim=new Ac2Revit.SourceDimension{Direction=new(){X=1},LinePosition=new(){Y=1},Witnesses=[new(){SourceGuid=Guid.NewGuid().ToString(),Coordinate=new(){X=0}},new(){SourceGuid=Guid.NewGuid().ToString(),Coordinate=new(){X=3}}]};dim.Validate();
+bool failed=false;try{dim.Witnesses[1].Coordinate.X=0;dim.Validate();}catch(InvalidDataException){failed=true;}if(!failed)throw new Exception("Coincident native dimension witnesses accepted");
+Console.WriteLine("PASS monotonic stage progress, checkpoint reopen, explicit completion and dimension witness validation");
+
 if(args.Length==0)return;
 
 var manifest = Manifest.Load(args[0]);
@@ -109,6 +121,3 @@ if (ordered.Count > 1)
     catch (InvalidDataException) { Console.WriteLine("PASS: duplicate GUID rejected"); }
 }
 
-var meshScope=new ImportSelection(["Mesh"]);
-if(!meshScope.AllowsStage("nativeTerrain") || new ImportSelection(["Wall"]).AllowsStage("nativeTerrain"))throw new Exception("Mesh checkbox does not control native terrain stage");
-Console.WriteLine("PASS Mesh checkbox enables only the selected native terrain stage");

@@ -9,7 +9,7 @@ internal sealed class ImportSelectionWindow:Window
 {
     public static string Label(string kind)=>kind switch
     {
-        "Grid"=>"Оси","Wall"=>"Стены","Slab"=>"Перекрытия","Column"=>"Колонны","Beam"=>"Балки и ригели",
+        "Dimension"=>"Нативные размеры","Grid"=>"Оси","Wall"=>"Стены","Slab"=>"Перекрытия","Column"=>"Колонны","Beam"=>"Балки и ригели",
         "Door"=>"Двери","Window"=>"Окна","Opening"=>"Самостоятельные проёмы","Zone"=>"Помещения",
         "Roof"=>"Крыши","Mesh"=>"Рельеф Mesh → Топотело","Morph"=>"Morph","Stair"=>"Лестницы","Railing"=>"Ограждения",
         "CurtainWall"=>"Навесные стены","Object"=>"Объекты","Shell"=>"Оболочки","Skylight"=>"Световые люки","Lamp"=>"Светильники",_=>kind

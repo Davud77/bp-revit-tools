@@ -56,6 +56,34 @@ public static class RuntimeJobs
             var job = JsonSerializer.Deserialize<Job>(File.ReadAllText(sourceInbox), Json.Options) ?? throw new InvalidDataException("Empty runtime job");
             File.Move(sourceInbox, Path.Combine(Path.GetDirectoryName(sourceInbox)!, "job-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+".json"));
             resultPath = WorkspacePath(job.ResultPath);
+            if(job.Operation=="dimension163SourceValidation")
+            {
+                var output=WorkspacePath(job.OutputRvt);File.Copy(WorkspacePath(job.SourceRvt),output,false);
+                var active=ui.OpenAndActivateDocument(output);var document=active.Document;var dimensionManifest=Manifest.Load(WorkspacePath(job.ManifestPath));
+                var dimensionReport=NativeDimensionStage.Run(document,dimensionManifest,ui:ui);dimensionReport.Save(WorkspacePath(job.ReportPath));
+                var repeat=NativeDimensionStage.Run(document,dimensionManifest,ui:ui);repeat.Save(Path.ChangeExtension(WorkspacePath(job.ReportPath),"repeat.json"));
+                if(repeat.Items.Count(i=>i.Status=="unchanged")!=dimensionReport.Items.Count(i=>i.Status is "created" or "unchanged"))throw new InvalidDataException("Повтор изменил размеры исходного проекта.");
+                document.Save();
+                var dimensionViews=Storage.Index(document,dimensionManifest.Source.ProjectId).Values.OfType<Dimension>().Select(d=>d.OwnerViewId).Distinct().ToList();
+                if(dimensionViews.Count>0)
+                {
+                    var image=new ImageExportOptions{ExportRange=ExportRange.SetOfViews,FilePath=Path.Combine(Path.GetDirectoryName(output)!,"Размеры"),HLRandWFViewsFileType=ImageFileType.PNG,ShadowViewsFileType=ImageFileType.PNG,ZoomType=ZoomFitType.FitToPage,PixelSize=2200};image.SetViewsAndSheets(dimensionViews);document.ExportImage(image);
+                }
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",output,sourceDimensions=dimensionManifest.Elements.Count(e=>e.Kind=="Dimension"),created=dimensionReport.Items.Count(i=>i.Status=="created"),unchanged=dimensionReport.Items.Count(i=>i.Status=="unchanged"),unsupported=dimensionReport.Items.Count(i=>i.Status=="unsupported"),repeatWithoutDuplicates=true},Json.Options));return;
+            }
+            if(job.Operation=="annotation163Validation")
+            {
+                string folder=Path.GetDirectoryName(WorkspacePath(job.ReportPath))!;
+                var result=AnnotationValidation.Run(ui,folder,WorkspacePath(job.TemplatePath));File.WriteAllText(resultPath,JsonSerializer.Serialize(result,Json.Options));return;
+            }
+            if(job.Operation=="openingManagerValidation")
+            {
+                string folder=Path.GetDirectoryName(WorkspacePath(job.ReportPath))!;Directory.CreateDirectory(folder);
+                var type=AppDomain.CurrentDomain.GetAssemblies().Select(a=>a.GetType("BotPlus.Openings.OpeningValidation")).FirstOrDefault(t=>t!=null)
+                    ??throw new InvalidOperationException("Модуль менеджера отверстий не загружен.");
+                var result=type.GetMethod("Run")!.Invoke(null,[ui,folder,WorkspacePath(job.TemplatePath),string.IsNullOrEmpty(job.ReferenceGeometryPath)?"":WorkspacePath(job.ReferenceGeometryPath)]);
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(result,Json.Options));return;
+            }
             if(job.Operation=="release16Check")
             {
                 string output=WorkspacePath(job.OutputRvt),folder=Path.GetDirectoryName(output)!;
@@ -84,7 +112,7 @@ public static class RuntimeJobs
             }
             if(job.Operation=="hatchValidation")
             {
-                var result=HatchValidation.Run(ui.Application,WorkspacePath(job.ManifestPath),WorkspacePath(job.TemplatePath),Path.GetDirectoryName(WorkspacePath(job.ReportPath))!);
+                var result=HatchValidation.Run(ui.Application,WorkspacePath(job.ManifestPath),WorkspacePath(job.TemplatePath),Path.GetDirectoryName(WorkspacePath(job.ReportPath))!,job.Limit);
                 File.WriteAllText(resultPath,JsonSerializer.Serialize(result,Json.Options));return;
             }
             if(job.Operation=="wallNetTrimCopy")
@@ -344,6 +372,39 @@ public static class RuntimeJobs
                 supplementReport.Save(WorkspacePath(job.ReportPath));document.Save();
                 var view=new FilteredElementCollector(document).OfClass(typeof(View3D)).Cast<View3D>().First(v=>v.Name=="AC Complete Model");ui.ActiveUIDocument.RequestViewChange(view);
                 File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",output,seconds=timer.Elapsed.TotalSeconds,outcomes=supplementReport.Items.GroupBy(i=>i.Status).ToDictionary(g=>g.Key,g=>g.Count()),coverage=coverage.GroupBy(e=>e.kind).ToDictionary(g=>g.Key,g=>new{source=g.Count(),represented=g.Count(e=>e.represented)})},Json.Options));return;
+            }
+            if(job.Operation=="elementHatchValidationCopy")
+            {
+                string output=WorkspacePath(job.OutputRvt),folder=Path.GetDirectoryName(output)!;
+                if(File.Exists(output))throw new IOException("Diagnostic output exists");Directory.CreateDirectory(folder);
+                File.Copy(WorkspacePath(job.SourceRvt),output,false);
+                var document=ui.Application.OpenDocumentFile(output);
+                try
+                {
+                    var source=WorkspacePath(job.ManifestPath);var m=Manifest.Load(source);
+                    var result=ElementHatchStage.PrepareAndRun(document,m,source,Path.Combine(root,"config","hatch-analogues.ru.json"),folder);
+                    result.Save(Path.Combine(folder,"initial-stage.json"));
+                    var repeat=ElementHatchStage.Run(document,m,source,Path.Combine(folder,"element-hatches.json"),Path.Combine(folder,"repeat-audit.json"));
+                    if(repeat.Items.Any(i=>i.Status=="updated"))throw new InvalidDataException("Element hatch repeat changed graphics");
+                    using var audit=JsonDocument.Parse(File.ReadAllText(Path.Combine(folder,"audit.json")));
+                    var first=audit.RootElement.GetProperty("assignments").EnumerateArray().First(r=>r.S("slot")=="cover");
+                    var view=(View)document.GetElement(new ElementId(first.GetProperty("viewId").GetInt64()));var id=new ElementId(first.GetProperty("elementId").GetInt64());
+                    using var original=view.GetElementOverrides(id);
+                    using(var edit=new Transaction(document,"Diagnostic local fill edit")){edit.Start();using var graphics=view.GetElementOverrides(id);graphics.SetSurfaceForegroundPatternColor(new Color(1,2,3));view.SetElementOverrides(id,graphics);edit.Commit();}
+                    var conflict=ElementHatchStage.Run(document,m,source,Path.Combine(folder,"element-hatches.json"),Path.Combine(folder,"conflict-audit.json"));
+                    using var preserved=view.GetElementOverrides(id);
+                    if(!conflict.Items.Any(i=>i.Status=="conflict")||preserved.SurfaceForegroundPatternColor.Red!=1)throw new InvalidDataException("Local hatch edit overwritten");
+                    using(var restore=new Transaction(document,"Restore diagnostic fill edit")){restore.Start();view.SetElementOverrides(id,original);restore.Commit();}
+                    var options=new ImageExportOptions{ExportRange=ExportRange.SetOfViews,FilePath=Path.Combine(folder,"plan-covers"),HLRandWFViewsFileType=ImageFileType.PNG,
+                        ShadowViewsFileType=ImageFileType.PNG,PixelSize=3000,ZoomType=ZoomFitType.FitToPage,ImageResolution=ImageResolution.DPI_150};options.SetViewsAndSheets([view.Id]);document.ExportImage(options);
+                    document.Save();document.Close(false);document=ui.Application.OpenDocumentFile(output);
+                    var reopen=ElementHatchStage.Run(document,m,source,Path.Combine(folder,"element-hatches.json"),Path.Combine(folder,"reopen-audit.json"));
+                    if(reopen.Items.Any(i=>i.Status is "updated" or "conflict"))throw new InvalidDataException("Saved element fill state did not persist");
+                    File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",output,repeatUnchanged=true,localEditPreserved=true,reopenUnchanged=true,
+                        outcomes=result.Items.GroupBy(i=>i.Status).ToDictionary(g=>g.Key,g=>g.Count())},Json.Options));
+                }
+                finally{document.Close(false);}
+                return;
             }
             if(job.Operation is "hatchInventory" or "hatchCopy" or "hatchAudit")
             {

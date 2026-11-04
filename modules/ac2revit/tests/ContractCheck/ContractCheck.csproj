@@ -7,5 +7,6 @@
   <ItemGroup><Compile Include="../../revit/Ac2Revit/GridLabels.cs" Link="GridLabels.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../../revit/Ac2Revit/SourceLabel.cs" Link="SourceLabel.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../../revit/Ac2Revit/ImportSelection.cs" Link="ImportSelection.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../revit/Ac2Revit/ImportProgressState.cs" Link="ImportProgressState.cs" /><Compile Include="../../revit/Ac2Revit/SourceDimension.cs" Link="SourceDimension.cs" /></ItemGroup>
   <ItemGroup><Compile Include="../../revit/Ac2Revit/SourceZeroThicknessWall.cs" Link="SourceZeroThicknessWall.cs" /></ItemGroup>
 </Project>

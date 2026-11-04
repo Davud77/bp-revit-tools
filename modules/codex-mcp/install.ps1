@@ -1,6 +1,6 @@
-param([switch]$EnableAutoConfirm)
+﻿param([switch]$EnableAutoConfirm)
 $ErrorActionPreference = 'Stop'
-$assembly = Join-Path $PSScriptRoot 'plugin\bin\Release\net8.0-windows\WEAM.Revit.AI.dll'
+$assembly = Join-Path $PSScriptRoot '..\..\Выходные данные\Сборочные данные\dotnet\WEAM.Revit.AI\bin\Release\net8.0-windows\WEAM.Revit.AI.dll'
 $projectFile = Join-Path $PSScriptRoot 'plugin\WEAM.Revit.AI.csproj'
 $manifestName = 'WEAM.Revit.AI.addin'
 $addinsDirectory = Join-Path $env:APPDATA 'Autodesk\Revit\Addins\2026'

@@ -1,0 +1,45 @@
+using BotPlus.Openings.Core;
+
+var project=new HoleProject();var engineer=new Actor("engineer",Role.Engineer);var architect=new Actor("architect",Role.Architect);var structural=new Actor("structural",Role.Structural);
+void Check(bool condition,string message){if(!condition)throw new Exception(message);}
+void Denied(Action action){try{action();}catch(InvalidOperationException){return;}throw new Exception("Forbidden action allowed");}
+Hole New()=>HoleWorkflow.Create(project,engineer,new HoleGeometry{X=100,Y=200,Z=1000},"ОВ","l1","Этаж 1",0);
+var hole=New();HoleWorkflow.Approve(hole,engineer,Role.Engineer);HoleWorkflow.Approve(hole,architect,Role.Architect);HoleWorkflow.Approve(hole,structural,Role.Structural);
+Check(hole.FullyApproved,"Three approvals required");Denied(()=>HoleWorkflow.Unapprove(hole,engineer,Role.Architect));
+HoleWorkflow.Comment(hole,engineer,"Keep approvals");Check(hole.FullyApproved,"Comment reset approvals");
+var tolerance=new Tolerance(X:50);HoleWorkflow.Change(hole,engineer,hole.Geometry with{X=130},tolerance,"");Check(hole.FullyApproved,"Allowed tolerance reset approvals");
+Denied(()=>HoleWorkflow.Change(hole,engineer,hole.Geometry with{X=160},tolerance,""));
+HoleWorkflow.Change(hole,engineer,hole.Geometry with{X=160},tolerance,"Cumulative movement exceeds 50 mm");Check(hole.Approvals.Count==0,"Cumulative changes escaped anchor tolerance");
+Console.WriteLine("PASS roles, independent approvals, comment, cumulative anchor tolerance and required change reason");
+var deletion=New();HoleWorkflow.Approve(deletion,architect,Role.Architect);HoleWorkflow.Approve(deletion,structural,Role.Structural);HoleWorkflow.RequestDelete(deletion,engineer);
+Check(deletion.DeletionRequested&&!deletion.Deleted,"Approved request physically deleted early");HoleWorkflow.AllowDelete(deletion,architect,Role.Architect);Check(!deletion.Deleted,"Missing second deletion approval");HoleWorkflow.AllowDelete(deletion,structural,Role.Structural);Check(deletion.Deleted,"Approved deletion not completed");
+var cancel=New();HoleWorkflow.Approve(cancel,architect,Role.Architect);HoleWorkflow.RequestDelete(cancel,engineer);HoleWorkflow.CancelDelete(cancel,engineer);Check(cancel.Approvals.Count==1&&!cancel.DeletionRequested,"Cancel deletion lost original approval");
+Denied(()=>HoleWorkflow.RequestDelete(New(),new Actor("other",Role.Engineer)));Console.WriteLine("PASS owner deletion, multi-role deletion consent and cancel preserves approvals");
+var copy=HoleWorkflow.Copy(project,hole,engineer,10,20,3000,"l2","Этаж 2",3000);Check(copy.Id!=hole.Id&&copy.Approvals.Count==0&&copy.History.All(h=>h.Action!="Комментарий"),"Copy inherited identity or history");
+var a=New();var b=New();b.Geometry=b.Geometry with{X=500};var merged=HoleWorkflow.Merge(project,[a,b],architect,true);Check(a.Deleted&&b.Deleted&&merged.MergedFrom.Count==2&&merged.Approvals.Count==0,"Merge lost histories or approval reset");
+var wrong=New();wrong.Geometry=wrong.Geometry with{Orientation=HoleOrientation.Floor};Denied(()=>HoleWorkflow.Merge(project,[merged,wrong],architect,false));Console.WriteLine("PASS copy identity, merge provenance and orientation guard");
+var approved=New();foreach(var actor in new[]{engineer,architect,structural})HoleWorkflow.Approve(approved,actor,actor.Role);
+var receiver=new HoleProject();var package=HoleExchange.Export(project,[approved,New()]);var first=HoleExchange.Import(receiver,[],package);Check(first.Holes.Count==1,"Unapproved source imported by default");
+var second=HoleExchange.Import(receiver,first.Holes,package);Check(second.Holes.Count==1&&second.Changes.Single().StartsWith("Без изменений"),"Repeat exchange duplicated or changed record");
+HoleWorkflow.Change(approved,engineer,approved.Geometry with{Y=500},new(),"Changed source");package=HoleExchange.Export(project,[approved]);var third=HoleExchange.Import(receiver,second.Holes,package);
+Check(third.Holes.Count==1&&!third.Holes[0].FullyApproved&&third.Holes[0].Geometry.Y==500,"Known unapproved update was silently skipped");
+Denied(()=>HoleWorkflow.Approve(third.Holes[0],architect,Role.Architect));
+var conflictPackage=HoleJson.Clone(package);conflictPackage.Holes[0].Geometry=conflictPackage.Holes[0].Geometry with{X=999};Check(HoleExchange.Import(receiver,third.Holes,conflictPackage).Changes.Single().StartsWith("Конфликт"),"Same-revision source conflict not caught");
+Console.WriteLine("PASS approved-only import, repeat without duplicates, known withdrawal update and source revision conflict");
+Check(HoleChecks.RoundUp(243,50)==250,"Size round up");var invalid=New();invalid.Geometry=invalid.Geometry with{Diameter=double.NaN};Denied(()=>invalid.Geometry.Validate());
+var floor1=New();floor1.Geometry=floor1.Geometry with{Orientation=HoleOrientation.Floor};var floor2=HoleWorkflow.Copy(project,floor1,engineer,0,0,3000,"l2","Этаж 2",3000);HoleChecks.SetShaft([floor1,floor2],engineer);Check(floor1.ShaftId==floor2.ShaftId,"Shaft membership");HoleChecks.RemoveFromShaft([floor1,floor2],engineer);Check(floor1.ShaftId==""&&floor2.ShaftId=="","Shaft dissolve deleted records");
+Console.WriteLine("PASS dimensions, round-up and logical shafts without deleting holes");
+var options=new CrossingOptions();
+var wallFit=CrossingGeometry.Fit(new(0,0,1500),new(0,1,0),new(1,0,0),new(0,0,1),100,100,true,20,300,HoleOrientation.Wall,0,options);
+Check(wallFit.Shape==HoleShape.Round&&wallFit.Diameter==190&&wallFit.Depth==320,"Round insulated normal crossing");
+var diagonal=CrossingGeometry.Fit(new(0,0,1500),new(1,1,0),new(1,-1,0),new(0,0,1),400,200,false,0,300,HoleOrientation.Wall,0,options);
+Check(diagonal.Shape==HoleShape.Rectangle&&diagonal.Width==920&&diagonal.Height==250,"Oblique rectangular projection omitted host thickness");
+var inclinedRound=CrossingGeometry.Fit(new(0,0,0),new(1,0,1),new(1,0,-1),new(0,1,0),100,100,true,0,300,HoleOrientation.Floor,0,options);
+Check(inclinedRound.Shape==HoleShape.Rectangle&&inclinedRound.Width==500&&inclinedRound.Height==150,"Inclined round floor penetration is not a circular hole");
+var noInsulation=CrossingGeometry.Fit(new(0,0,0),new(0,1,0),new(1,0,0),new(0,0,1),100,100,true,20,300,HoleOrientation.Wall,0,options with{IncludeInsulation=false});
+Check(noInsulation.Diameter==150,"Disable insulation ignored");
+Denied(()=>CrossingGeometry.Fit(new(0,0,0),new(1,0,0),new(0,1,0),new(0,0,1),100,100,true,0,300,HoleOrientation.Wall,0,options));
+Denied(()=>CrossingGeometry.Fit(new(0,0,0),new(0,1,0),new(1,0,0),new(1,0,0),100,100,true,0,300,HoleOrientation.Wall,0,options));
+Denied(()=>(options with{Clearance=-1}).Validate());
+Check(CrossingGeometry.Key("link1","host","mep")!=CrossingGeometry.Key("link2","host","mep"),"Two instances of a link share crossing identity");
+Console.WriteLine("PASS crossing projection, oblique thickness, insulation, floor penetration, profile guards and link instance identity");

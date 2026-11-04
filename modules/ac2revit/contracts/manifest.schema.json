@@ -22,6 +22,9 @@
     "surfaces": {"type": "array", "items": {"type": "object"}},
     "fills": {"type": "array", "items": {"type": "object"}},
     "penTables": {"type": "array", "items": {"type": "object"}},
+    "dimensionAnchors": {"type": "array", "items": {"type": "object", "required": ["sourceGuid", "start", "end", "label"], "properties": {
+      "sourceGuid": {"type": "string", "format": "uuid"}, "start": {"$ref": "#/$defs/point"}, "end": {"$ref": "#/$defs/point"}, "label": {"type": "string"}
+    }}},
     "types": {"type": "array", "items": {"type": "object", "required": ["key", "kind", "name", "layers"], "properties": {
       "key": {"type": "string", "minLength": 1}, "kind": {"enum": ["Wall", "Floor"]}, "name": {"type": "string"},
       "layers": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["width", "function", "materialKey"], "properties": {
@@ -49,6 +52,14 @@
         "raw": {"type": "object"}, "contentHash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "payload": {"type": "object"}
       },
       "allOf": [
+        {"if": {"properties": {"kind": {"const": "Dimension"}, "status": {"const": "ready"}}}, "then": {"properties": {"payload": {
+          "required": ["direction", "linePosition", "witnesses"], "properties": {
+            "direction": {"$ref": "#/$defs/point"}, "linePosition": {"$ref": "#/$defs/point"},
+            "witnesses": {"type": "array", "minItems": 2, "maxItems": 500, "items": {"type": "object", "required": ["sourceGuid", "coordinate", "dimensionValue"], "properties": {
+              "sourceGuid": {"type": "string", "format": "uuid"}, "coordinate": {"$ref": "#/$defs/point"}, "dimensionValue": {"type": "number"}
+            }}}
+          }
+        }}}},
         {"if": {"properties": {"kind": {"const": "Wall"}, "status": {"const": "ready"}}}, "then": {"properties": {"payload": {
           "required": ["curve", "typeKey", "height", "bottomOffset", "flipped", "referenceLine"], "properties": {
             "curve": {"$ref": "#/$defs/edge"}, "typeKey": {"type": "string"}, "height": {"type": "number", "exclusiveMinimum": 0},

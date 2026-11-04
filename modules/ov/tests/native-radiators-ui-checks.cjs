@@ -1,7 +1,7 @@
 const {chromium}=require('playwright'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{execFileSync}=require('node:child_process');
 (async()=>{
- const dir=path.resolve('artifacts/native-radiators');fs.mkdirSync(dir,{recursive:true});
- const data=JSON.parse(fs.readFileSync(path.resolve('artifacts/demo/building.json'),'utf8'));data.rooms.forEach((r,i)=>r.id=i+1);
+ const dir=path.resolve('../../Выходные данные/Проверки ОВ/native-radiators');fs.mkdirSync(dir,{recursive:true});
+ const data=JSON.parse(fs.readFileSync(path.resolve('../../Выходные данные/Проверки ОВ/demo/building.json'),'utf8'));data.rooms.forEach((r,i)=>r.id=i+1);
  data.nativeRadiators=true;data.ovLibrary={materials:[],constructions:[],radiators:{settings:{supply:75,return:55,roomOverrides:{}},custom:[]}};
  const source=path.join(dir,'building.json');fs.writeFileSync(source,JSON.stringify(data));
  execFileSync('dotnet',['run','--project','tests/ExportChecks.csproj','-c','Release','--','--render',source]);

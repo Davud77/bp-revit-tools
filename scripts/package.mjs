@@ -14,12 +14,14 @@ await mkdir(path.join(stage, 'modules/codex-mcp'), { recursive: true });
 await rename(path.join(stage, 'plugin'), path.join(stage, 'modules/codex-mcp/plugin'));
 await cp(path.join(repo, 'installer/configure-mcp.mjs'), path.join(stage, 'configure-mcp.mjs'));
 await cp(path.join(repo, 'docs/INSTALLATION.md'), path.join(stage, 'INSTALLATION.md'));
-await cp(path.join(repo, 'src/BotPlus.RT/bin/Release/net8.0-windows/BotPlus.RT.dll'), path.join(stage, 'BotPlus.RT.dll'));
+await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/BotPlus.RT/bin/Release/net8.0-windows/BotPlus.RT.dll'), path.join(stage, 'BotPlus.RT.dll'));
 await mkdir(path.join(stage, 'modules/ov'), { recursive: true });
-await cp(path.join(repo, 'modules/ov/HeatLossViewer/bin/Release/net8.0-windows/HeatLossViewer.dll'), path.join(stage, 'modules/ov/HeatLossViewer.dll'));
+await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/HeatLossViewer/bin/Release/net8.0-windows/HeatLossViewer.dll'), path.join(stage, 'modules/ov/HeatLossViewer.dll'));
+await mkdir(path.join(stage, 'modules/openings'), { recursive: true });
+await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/BotPlus.Openings/bin/Release/net8.0-windows/BotPlus.Openings.dll'), path.join(stage, 'modules/openings/BotPlus.Openings.dll'));
 const ac = path.join(stage, 'modules/ac2revit');
 await mkdir(path.join(ac, 'dist/Revit2026'), { recursive: true });
-await cp(path.join(repo, 'modules/ac2revit/revit/Ac2Revit/bin/Release/net8.0-windows/Ac2Revit.dll'), path.join(ac, 'dist/Revit2026/Ac2Revit.dll'));
+await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/Ac2Revit/bin/Release/net8.0-windows/Ac2Revit.dll'), path.join(ac, 'dist/Revit2026/Ac2Revit.dll'));
 const filter = file => !/[/\\](__pycache__|bin|obj)([/\\]|$)|\.pyc$/i.test(file);
 for (const dir of ['tools', 'exporter', 'contracts', 'config'])
   await cp(path.join(repo, 'modules/ac2revit', dir), path.join(ac, dir), { recursive: true, filter: file => filter(file) && !/exchange-settings\.json$|\.local\.json$/i.test(file) });
@@ -31,7 +33,7 @@ await cp(path.join(repo, 'README.md'), path.join(stage, 'README.md'));
 const tapir = JSON.parse(await readFile(path.join(repo, 'installer/tapir/releases.json'), 'utf8'));
 await mkdir(path.join(stage, 'tapir'), { recursive: true });
 for (const asset of tapir.assets) {
-  const file = path.join(repo, 'artifacts/tapir', tapir.release, asset.file);
+  const file = path.join(repo, 'Выходные данные/Сборочные данные/tapir', tapir.release, asset.file);
   if (createHash('sha256').update(await readFile(file)).digest('hex') !== asset.sha256) throw new Error('Tapir checksum: ' + asset.file);
   await cp(file, path.join(stage, 'tapir', asset.file));
 }
@@ -60,5 +62,5 @@ async function walk(dir) {
 await rm(path.join(stage, 'release.json'));
 // The four distributable Ac2Revit families/templates are intentionally allowed.
 await walk(stage);
-await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: '1.6', target: 'Revit 2026 / Windows x64', modules: ['MCP', 'Ac2Revit', 'ОВ'], node: process.version, files: hashes }, null, 2));
+await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: '1.6.3', target: 'Revit 2026 / Windows x64', modules: ['MCP', 'Ac2Revit', 'ОВ', 'Отверстия'], node: process.version, files: hashes }, null, 2));
 console.log(`BotPlus RT payload: ${Object.keys(hashes).length} files`);

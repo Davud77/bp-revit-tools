@@ -1,7 +1,7 @@
 using Autodesk.Revit.UI;
 
 var assembly = typeof(BotPlus.RT.Application).Assembly.Location;
-foreach (var file in new[] { "modules/codex-mcp/plugin/WEAM.Revit.AI.dll", "modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "modules/ov/HeatLossViewer.dll" })
+foreach (var file in new[] { "modules/codex-mcp/plugin/WEAM.Revit.AI.dll", "modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "modules/ov/HeatLossViewer.dll", "modules/openings/BotPlus.Openings.dll" })
 {
     var target = Path.Combine(Path.GetDirectoryName(assembly)!, file);
     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
@@ -11,7 +11,7 @@ var app = new UIControlledApplication();
 var host = new BotPlus.RT.Application();
 if (host.OnStartup(app) != Result.Succeeded) throw new Exception("Startup failed");
 host.OnShutdown(app);
-if (!State.Calls.SequenceEqual(new[] { "start:mcp", "start:ac2revit", "start:ov", "stop:ov", "stop:ac2revit", "stop:mcp" }))
+if (!State.Calls.SequenceEqual(new[] { "start:mcp", "start:ac2revit", "start:ov", "start:openings", "stop:openings", "stop:ov", "stop:ac2revit", "stop:mcp" }))
     throw new Exception("Incorrect module order");
 Console.WriteLine("PASS host loads modules in ribbon order and shuts down in reverse order");
 State.Calls.Clear(); State.FailAc2Revit = true;

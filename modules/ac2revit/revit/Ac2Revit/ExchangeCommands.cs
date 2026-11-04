@@ -105,33 +105,49 @@ internal sealed class ImportProgress : IDisposable
     readonly Window window;
     readonly TextBlock label=new(){Text="Подготовка импорта…",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(18)};
     readonly ProgressBar bar=new(){Height=6,Margin=new Thickness(18,0,18,18)};
+    readonly TextBlock overallLabel=new(){Margin=new Thickness(18,16,18,7),FontWeight=FontWeights.SemiBold};
+    readonly ProgressBar overallBar=new(){Height=12,Maximum=100,Margin=new Thickness(18,0,18,0)};
+    readonly System.Diagnostics.Stopwatch elapsed=System.Diagnostics.Stopwatch.StartNew();
+    internal ImportProgressState State {get;}=new();
     bool closing;
     public ImportProgress(IntPtr owner)
     {
-        var content=new StackPanel();content.Children.Add(label);content.Children.Add(bar);
-        window=new Window{Title="Сборка модели Archicad",Width=520,Height=155,ResizeMode=ResizeMode.NoResize,
-            WindowStartupLocation=WindowStartupLocation.CenterOwner,Content=content,ShowInTaskbar=false};
+        var content=new StackPanel{Background=System.Windows.Media.Brushes.White};content.Children.Add(overallLabel);content.Children.Add(overallBar);content.Children.Add(label);content.Children.Add(bar);
+        window=new Window{Title="BotPlus RT — Сборка модели Archicad",Width=580,Height=230,ResizeMode=ResizeMode.NoResize,
+            WindowStartupLocation=WindowStartupLocation.CenterOwner,Content=content,ShowInTaskbar=false,Background=System.Windows.Media.Brushes.White};
         new WindowInteropHelper(window){Owner=owner};
         window.Closing+=(_,e)=>{if(!closing)e.Cancel=true;};window.Show();
     }
     public void Update(string phase,int done,int total)
     {
-        string title=phase.StartsWith("supplemental:",StringComparison.Ordinal)?"Дополнительная IFC-геометрия: "+phase[13..]:phase switch
+        State.Update(phase,done,total);
+        string Title(string name)=>name.StartsWith("supplemental:",StringComparison.Ordinal)?"Дополнительная IFC-геометрия: "+name[13..]:name switch
         {
             "resources"=>"Ресурсы проекта", "levels"=>"Уровни", "materials"=>"Материалы", "types"=>"Типы конструкций",
-            "prepareHatchMapping"=>"Подбор штриховок шаблона", "hatchMapping"=>"Штриховки материалов", "grids"=>"Оси",
+            "prepareHatchMapping"=>"Подбор штриховок шаблона", "hatchMapping"=>"Штриховки материалов", "elementHatches"=>"Штриховки элементов на видах", "grids"=>"Оси",
             "simpleColumns"=>"Простые колонны", "columnBodies"=>"Геометрия сложных колонн", "profileColumns"=>"Профили колонн",
             "columnBehavior"=>"Конструктивное поведение колонн", "wallsSlabsMorphs"=>"Стены и перекрытия", "wallCompletion" or "missingWalls" or "wallGeometry" or "wallGeometryPreparation"=>"Дополнение стен",
             "beamBodies"=>"Геометрия балок", "rectangularBeams"=>"Прямоугольные балки", "nativeCutBeams"=>"Подрезки балок",
             "openingsAndFillings" or "openingCuts"=>"Проёмы", "fillingDoor"=>"Двери", "fillingWindow"=>"Окна",
             "roomSeparators"=>"Границы помещений", "wallJoinsAndRooms"=>"Сопряжения и помещения", "wallTopology"=>"Сопряжения стен",
             "zoneAreas"=>"Площади помещений", "roomBoundaryAudit"=>"Проверка границ помещений", "views"=>"Планы и 3D-вид",
-            "elements"=>"Построение элементов", "referencePlanes"=>"Привязки стен", _=>phase
+            "serviceCuts"=>"Служебные вырезы", "nativeDimensions"=>"Нативные размеры", "nativeTerrain"=>"Рельеф Mesh → Toposolid", "columnCompletion"=>"Дополнение колонн", "gridLabels"=>"Подписи осей",
+            "roomSeparatorRecheck"=>"Проверка границ помещений", "separatorAudit"=>"Аудит разделителей", "hatchAudit"=>"Аудит штриховок", "sourceCoverage"=>"Проверка полноты переноса",
+            "memoryCheckpoint"=>"Сохранение и повторное открытие RVT",
+            "elements"=>"Построение элементов", "referencePlanes"=>"Привязки стен", _=>name
         };
-        label.Text=$"Этап: {title}\nВыполнено: {done} / {total}. Дождитесь завершения сборки.";
-        bar.Maximum=Math.Max(total,1);bar.Value=Math.Min(done,bar.Maximum);
+        overallLabel.Text=State.Complete?"Сборка завершена · 100%":State.Stages>0?$"Общий прогресс: {Math.Floor(State.Percent):0}% · этап {State.Stage+1} из {State.Stages}":"Подготовка сборки…";
+        overallBar.IsIndeterminate=State.Stages==0&&!State.Complete;overallBar.Value=State.Percent;
+        string detail=phase.StartsWith("pipeline:end:",StringComparison.Ordinal)?"Этап завершён":State.Total>0?$"Обработано: {State.Done} / {State.Total}":"Выполняется…";
+        label.Text=$"{Title(State.StageName)}\n{Title(State.Phase)} · {detail}\nПрошло: {elapsed.Elapsed:hh\\:mm\\:ss}. Общий процент рассчитан по этапам, не по времени.";
+        bar.IsIndeterminate=State.Total==0&&!State.Complete;bar.Maximum=Math.Max(State.Total,1);bar.Value=Math.Min(State.Done,bar.Maximum);
         // Render messages only. Revit API stays on the original command thread.
         window.Dispatcher.Invoke(()=>{},DispatcherPriority.Render);
     }
     public void Dispose(){closing=true;window.Close();}
+    internal void Capture(string path)
+    {
+        var content=(FrameworkElement)window.Content;content.UpdateLayout();var bitmap=new System.Windows.Media.Imaging.RenderTargetBitmap((int)Math.Ceiling(content.ActualWidth),(int)Math.Ceiling(content.ActualHeight),96,96,System.Windows.Media.PixelFormats.Pbgra32);bitmap.Render(content);
+        var encoder=new System.Windows.Media.Imaging.PngBitmapEncoder();encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));using var stream=File.Create(path);encoder.Save(stream);
+    }
 }

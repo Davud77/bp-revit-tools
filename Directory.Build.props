@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <BotPlusBuildRoot>$(MSBuildThisFileDirectory)Выходные данные\Сборочные данные\dotnet\$(MSBuildProjectName)\</BotPlusBuildRoot>
+    <BaseOutputPath>$(BotPlusBuildRoot)bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(BotPlusBuildRoot)obj\</BaseIntermediateOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);bin\**;obj\**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

@@ -18,7 +18,7 @@ public static class PipelineExecution
         {
             string attempt=restarts==0?output:Path.Combine(output,$"resume-{restarts:00}");
             var doc=ui.ActiveUIDocument.Document;
-            try{return PipelineRunner.Run(doc,plan,attempt,limit,progress,preview,executionId,selection);}
+            try{return PipelineRunner.Run(doc,plan,attempt,limit,progress,preview,executionId,selection,ui);}
             catch(ImportCheckpointException ex)when(!preview && restarts<128)
             {
                 string model=doc.PathName;

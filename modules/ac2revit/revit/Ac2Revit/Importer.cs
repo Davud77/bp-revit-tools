@@ -23,6 +23,7 @@ public sealed class Importer
     string columnPreparationError = "";
     public Report Report { get; }
     public Action<string, int, int>? Progress { get; set; }
+    public Autodesk.Revit.UI.UIApplication? AnnotationUi {get;set;}
 
     public Importer(Document doc, Manifest manifest, ImportConfig config)
     {
@@ -135,7 +136,7 @@ public sealed class Importer
                 try { basicColumns.Prepare(manifest.Elements.Where(e=>e.Kind=="Column")); }
                 catch(Exception ex) { columnPreparationError=ex.ToString();Report.Add("column-adapter","ColumnFamily","failed",columnPreparationError);if(!config.AllowPartial)throw; }
             }
-            var ordered = manifest.OrderedElements().Where(e=>kinds==null || kinds.Contains(e.Kind)).ToList();
+            var ordered = manifest.OrderedElements().Where(e=>e.Kind!="Dimension"&&(kinds==null || kinds.Contains(e.Kind))).ToList();
             int processed = 0;
             bool wallsConnected = false;
             foreach (var e in ordered)
@@ -177,6 +178,7 @@ public sealed class Importer
                 if (Report.Items[i].Status == "created") Report.Items[i] = Report.Items[i] with { Status = "rolledBack", RevitUniqueId = "" };
             throw;
         }
+        if(kinds==null || kinds.Contains("Dimension"))Report.Items.AddRange(NativeDimensionStage.Run(doc,manifest,Progress,AnnotationUi).Items);
         if(kinds==null || kinds.Contains("Zone"))AuditZoneVolumes();
         return Report;
     }
@@ -460,6 +462,7 @@ public sealed class Importer
     void ValidateElement(ElementRecord e)
     {
         if (e.Status == "unsupported") throw new InvalidDataException(e.Reason);
+        if(e.Kind=="Dimension"){e.Payload.Read<SourceDimension>().Validate();return;}
         var p = e.Payload;
         if(e.Kind=="Grid")
         {

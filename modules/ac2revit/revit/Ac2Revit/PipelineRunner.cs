@@ -43,7 +43,7 @@ public static class PipelineRunner
     }
     public static bool IsPipeline(string path)
     {using var j=JsonDocument.Parse(File.ReadAllText(path));return j.RootElement.S("pipelineFormat")=="ac2r.pipeline/1";}
-    public static Report Run(Document doc,string path,string output,int trialLimit=0,Action<string,int,int>? progress=null,bool preview=false,string executionId="",ImportSelection? selection=null)
+    public static Report Run(Document doc,string path,string output,int trialLimit=0,Action<string,int,int>? progress=null,bool preview=false,string executionId="",ImportSelection? selection=null,Autodesk.Revit.UI.UIApplication? ui=null)
     {
         var plan=JsonSerializer.Deserialize<Plan>(File.ReadAllText(path),Json.Options)??throw new InvalidDataException("Empty pipeline");
         if(plan.PipelineFormat!="ac2r.pipeline/1")throw new InvalidDataException("Unsupported pipeline format");
@@ -80,7 +80,7 @@ public static class PipelineRunner
         Dictionary<string,long> WallIdentities()=>Storage.Index(doc,project).Where(p=>wallKeys.Contains(p.Key) && (p.Value is Wall or DirectShape)).ToDictionary(p=>p.Key,p=>p.Value.Id.Value,StringComparer.OrdinalIgnoreCase);
         var wallsBefore=WallIdentities();
         var config=ImportConfig.Load(Resolve(plan.Mapping));var report=new Report{ProjectId=project,Mode=preview?"pipelinePreview":"pipeline"};
-        string[] order=["resources","prepareHatchMapping","hatchMapping","grids","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","roomSeparators","wallJoinsAndRooms","roomBoundaryAudit","views","separatorAudit","hatchAudit","sourceCoverage"];
+        string[] order=["resources","prepareHatchMapping","hatchMapping","grids","gridLabels","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","roomSeparators","wallJoinsAndRooms","roomBoundaryAudit","views","serviceCuts","elementHatches","nativeDimensions","roomSeparatorRecheck","separatorAudit","hatchAudit","sourceCoverage"];
         if(preview){foreach(var stage in order)report.Add(stage,"PipelineStage","planned");return report;}
         if(plan.EnforceSourceSnapshot)
         {
@@ -119,13 +119,14 @@ public static class PipelineRunner
             }
             report.Add(key,"SourceSnapshot","verified","Exact JSON/IFC snapshot guard; changed source requires a new project.");
         }
-        Directory.CreateDirectory(output);int stageNumber=0;
+        Directory.CreateDirectory(output);progress?.Invoke("pipeline:start",0,order.Length);
         if(!preview)ImportJournal.Register(doc,manifest,selection);
         if(selection!=null)File.WriteAllText(Path.Combine(output,"import-selection.json"),JsonSerializer.Serialize(new{requested=selection.Requested.Order(),included=selection.Included.Order(),dependencies=selection.Included.Except(selection.Requested).Order()},Json.Options));
         void Stage(string name,Func<Report> action)
         {
-            if(selection!=null && !selection.AllowsStage(name)){report.Add(name,"PipelineStage","notSelected","Этап не выбран пользователем.");return;}
-            progress?.Invoke(name,stageNumber++,order.Length);
+            int stageIndex=Array.IndexOf(order,name);if(stageIndex<0)throw new InvalidOperationException("Не зарегистрирован этап: "+name);
+            progress?.Invoke("pipeline:stage:"+name,stageIndex,order.Length);
+            if(selection!=null && !selection.AllowsStage(name)){report.Add(name,"PipelineStage","notSelected","Этап не выбран пользователем.");progress?.Invoke("pipeline:end:"+name,stageIndex+1,order.Length);return;}
             // Cache only physical stages, and only within this execution's
             // automatic reopen cycle. A later user invocation always rechecks
             // existing elements against the full source snapshot.
@@ -151,6 +152,7 @@ public static class PipelineRunner
             result.Save(Path.Combine(output,name+".json"));report.Items.AddRange(result.Items);report.ZoneAreas.AddRange(result.ZoneAreas);report.ZoneVerticals.AddRange(result.ZoneVerticals);report.WallJoins.AddRange(result.WallJoins);
             report.Save(Path.Combine(output,"pipeline-report.json"));
             if(!reused && !string.IsNullOrEmpty(doc.PathName)){doc.Save();ImportJournal.Write(doc,report);}
+            progress?.Invoke("pipeline:end:"+name,stageIndex+1,order.Length);
         }
         Report ImportMissing(string file,ISet<string> kinds,ImportConfig options,bool resources=false)
         {
@@ -336,6 +338,7 @@ public static class PipelineRunner
             });
             if(plan.RoomAuditLimit>0 && (selection==null || selection.Includes("Zone")))RoomBoundaryAudit.Write(doc,manifest,spatial!,Path.Combine(output,"largest-room-boundaries.json"),plan.RoomAuditLimit,progress);
         }
+        progress?.Invoke("pipeline:stage:views",Array.IndexOf(order,"views"),order.Length);
         using(var t=new Transaction(doc,"Complete import diagnostic view"))
         {
             t.Start();var view=new FilteredElementCollector(doc).OfClass(typeof(View3D)).Cast<View3D>().FirstOrDefault(v=>v.Name=="AC Complete Model");
@@ -358,7 +361,10 @@ public static class PipelineRunner
                 {var planView=ViewPlan.Create(doc,planType.Id,level.Id);planView.Name="AC Plan "+level.Name;planView.DetailLevel=ViewDetailLevel.Fine;}
             t.Commit();
         }
+        progress?.Invoke("pipeline:end:views",Array.IndexOf(order,"views")+1,order.Length);
         Stage("serviceCuts",()=>ServiceCutsStage.Run(doc,project));
+        if(plan.HatchRules.Length>0)Stage("elementHatches",()=>ElementHatchStage.PrepareAndRun(doc,manifest,Resolve(plan.SourceManifest),Resolve(plan.HatchRules),Path.Combine(output,"element-hatches"),selection));
+        Stage("nativeDimensions",()=>NativeDimensionStage.Run(doc,manifest,progress,ui));
         if(plan.RoomSeparators.Length>0 && (selection==null || selection.Includes("Zone")))
         {
             // Native boundary cleanup can happen when walls join or rooms are
@@ -376,7 +382,9 @@ public static class PipelineRunner
             if(audit.GetProperty("representedSourceGuids").GetInt32()!=audit.GetProperty("sourceElements").GetInt32())
                 report.Add("separator-source-coverage","RoomSeparator","partial","Some source separator kinds remain unsupported; see source separator plan and stage report.");
         }
+        progress?.Invoke("pipeline:stage:hatchAudit",Array.IndexOf(order,"hatchAudit"),order.Length);
         if(hatchMappingPath.Length>0)HatchMappingStage.Audit(doc,manifest,Resolve(plan.SourceManifest),hatchMappingPath,Path.Combine(output,"hatch-final-audit.json"));
+        progress?.Invoke("pipeline:stage:sourceCoverage",Array.IndexOf(order,"sourceCoverage"),order.Length);
         var finalIndex=Storage.Index(doc,project);
         var sourceIssues=report.Items.Where(i=>i.Status is "blocked" or "failed" or "unsupported")
             .GroupBy(i=>i.SourceKey,StringComparer.OrdinalIgnoreCase).ToDictionary(g=>g.Key,g=>string.Join("\n",g.Select(i=>i.Message).Distinct().Take(3)),StringComparer.OrdinalIgnoreCase);
@@ -389,6 +397,6 @@ public static class PipelineRunner
             report.Add("coverage:"+rows.Key,"SourceCoverage",rows.All(e=>e.represented)?"verified":"partial",
                 $"{rows.Key}: source {rows.Count()}, represented {rows.Count(e=>e.represented)}, missing {rows.Count(e=>!e.represented)}; see source-coverage.json. Geometry and native functionality require separate acceptance.");
         report.Add("pipeline","Pipeline","complete",trialLimit>0?"Control subset; room rebuilding deliberately deferred to complete physical import":"Physical stages completed before spatial evaluation; inspect per-element blocked/retained outcomes.");
-        report.Save(Path.Combine(output,"pipeline-report.json"));return report;
+        report.Save(Path.Combine(output,"pipeline-report.json"));progress?.Invoke("pipeline:complete",order.Length,order.Length);return report;
     }
 }

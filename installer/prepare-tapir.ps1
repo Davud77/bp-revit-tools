@@ -1,7 +1,7 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $lock = Get-Content (Join-Path $PSScriptRoot 'tapir/releases.json') -Raw | ConvertFrom-Json
-$cache = Join-Path $root ('artifacts/tapir/' + $lock.release)
+$cache = Join-Path $root ('Выходные данные/Сборочные данные/tapir/' + $lock.release)
 New-Item -ItemType Directory -Force $cache | Out-Null
 foreach ($asset in $lock.assets) {
     $file = Join-Path $cache $asset.file

@@ -1,7 +1,7 @@
 const {chromium}=require('playwright'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{execFileSync}=require('node:child_process');
 (async()=>{
- const output=path.resolve('artifacts/ov-revision-ui');fs.mkdirSync(output,{recursive:true});
- const data=JSON.parse(fs.readFileSync(path.resolve(process.argv[2] || 'artifacts/demo/building.json'),'utf8'));
+ const output=path.resolve('../../Выходные данные/Проверки ОВ/ov-revision-ui');fs.mkdirSync(output,{recursive:true});
+ const data=JSON.parse(fs.readFileSync(path.resolve(process.argv[2] || '../../Выходные данные/Проверки ОВ/demo/building.json'),'utf8'));
  data.rooms.forEach((room,i)=>{room.id=1000+i;room.idText=String(room.id);});
  const room=data.rooms[0];
  if(!data.openings.some(o=>!o.roomKeys?.length))data.openings.push({key:'unbound-test',idText:'999999',kind:'window',name:'Проверка без помещения',roomKeys:[],position:[room.contour[0][0]-2,room.contour[0][1],room.baseElevation+1.5],tangent:[1,0],width:1.2,height:1.5,area:1.8});

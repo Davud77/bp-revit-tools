@@ -79,6 +79,40 @@ static partial class Deployment
         }
     }
 
+    /// <summary>
+    /// Keeps only the registered release on disk. Ac2Revit sessions of older releases are archived like on uninstall;
+    /// a release still locked by a running MCP client is left in place and removed by the next installation.
+    /// </summary>
+    static void RemoveSupersededReleases()
+    {
+        var root = Path.Combine(App, "versions");
+        if (!Directory.Exists(root)) return;
+        foreach (var version in Directory.GetDirectories(root))
+        {
+            var name = Path.GetFileName(version);
+            if (string.Equals(name, Version, StringComparison.OrdinalIgnoreCase)) continue;
+            RequireChild(version, root);
+            try
+            {
+                var sessions = Path.Combine(version, "modules", "ac2revit", "artifacts", "sessions");
+                if (Directory.Exists(sessions) && Directory.EnumerateFileSystemEntries(sessions).Any())
+                {
+                    var saved = Path.Combine(Data, "saved-sessions", name + "-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(Path.GetDirectoryName(saved)!);
+                    Directory.Move(sessions, saved);
+                    Log("Сеансы версии " + name + " сохранены в " + saved);
+                }
+                // .NET removes junctions inside the tree without following them.
+                Directory.Delete(version, true);
+                Log("Удалена предыдущая версия " + name);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                Log("Предыдущая версия " + name + " занята и будет удалена при следующей установке: " + error.Message);
+            }
+        }
+    }
+
     public static void VerifyPayload(string destination)
     {
         Directory.CreateDirectory(destination);
@@ -95,7 +129,7 @@ static partial class Deployment
             entry.ExtractToFile(target);
         }
         foreach (var file in new[] { "BotPlus.RT.dll", "modules/codex-mcp/plugin/WEAM.Revit.AI.dll",
-            "modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "modules/ov/HeatLossViewer.dll",
+            "modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "modules/ov/HeatLossViewer.dll", "modules/openings/BotPlus.Openings.dll",
             "node/node.exe", "server/src/index.js", "modules/ac2revit/runtime/python/python.exe" })
             if (!File.Exists(Path.Combine(destination, file))) throw new FileNotFoundException(file);
     }

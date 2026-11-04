@@ -21,7 +21,7 @@ sealed class SetupWindow : Form
         layout.Controls.Add(new Label { Text = "BotPlus RT " + Deployment.Version, Font = new Font(Font.FontFamily, 19, FontStyle.Bold), AutoSize = true }, 0, 0);
         layout.Controls.Add(new Label { AutoSize = true, Dock = DockStyle.Fill, Text = uninstall
             ? "Удаление надстройки. Ваши модели, снимки и настройки сохранятся. Закройте Revit и AI-клиент."
-            : "Единая вкладка BotPlus RT: MCP, Ac2Revit и ОВ. Node.js, Python и библиотеки IFC включены. Подключение AI-клиентов и автоподтверждение настраиваются на ленте Revit.", Margin = new Padding(0, 8, 0, 12) }, 0, 1);
+            : "Единая вкладка BotPlus RT: MCP, Ac2Revit, ОВ и Отверстия. Node.js, Python и библиотеки IFC включены. Подключение AI-клиентов и автоподтверждение настраиваются на ленте Revit.", Margin = new Padding(0, 8, 0, 12) }, 0, 1);
         layout.Controls.Add(new Label { Text = "Каталог Revit 2026:", AutoSize = true }, 0, 2);
         revit.Text = Deployment.FindRevit() ?? @"C:\Program Files\Autodesk\Revit 2026";
         var pathRow = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true, Margin = new Padding(0, 0, 0, 12) };

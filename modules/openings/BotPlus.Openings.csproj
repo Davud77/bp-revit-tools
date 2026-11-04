@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <Version>0.2.0</Version>
+    <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2026</RevitInstallDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="RevitAPI"><HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath><Private>false</Private><ExternallyResolved>true</ExternallyResolved></Reference>
+    <Reference Include="RevitAPIUI"><HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath><Private>false</Private><ExternallyResolved>true</ExternallyResolved></Reference>
+  </ItemGroup>
+</Project>

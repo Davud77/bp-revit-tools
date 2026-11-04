@@ -19,7 +19,8 @@ public sealed class Application : IExternalApplication
             {
                 ("modules/codex-mcp/plugin/WEAM.Revit.AI.dll", "WEAM.Revit.AI.PluginApplication"),
                 ("modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "Ac2Revit.App"),
-                ("modules/ov/HeatLossViewer.dll", "HeatLossViewer.App")
+                ("modules/ov/HeatLossViewer.dll", "HeatLossViewer.App"),
+                ("modules/openings/BotPlus.Openings.dll", "BotPlus.Openings.App")
             })
             {
                 var assembly = Assembly.LoadFrom(Path.Combine(root, file));
@@ -29,11 +30,15 @@ public sealed class Application : IExternalApplication
                 if (module.OnStartup(application) != Result.Succeeded)
                     throw new InvalidOperationException($"Не удалось загрузить модуль {type}.");
             }
+            var tags=application.CreateRibbonPanel("BotPlus RT","Марки");
+            tags.AddItem(new PushButtonData("BotPlusMatchTags","Сопоставить",typeof(Application).Assembly.Location,typeof(MatchTagCommand).FullName!){ToolTip="Выберите эталонную марку, затем остальные марки и нажмите «Готово». Переносит тип, ориентацию, выноску и положение относительно оборудования."});
+            tags.AddItem(new PushButtonData("BotPlusCopyTags","Копировать\nмарки",typeof(Application).Assembly.Location,typeof(CopyTagCommand).FullName!){ToolTip="Выберите эталонную марку и оборудование. Создаёт марки с тем же относительным положением; существующие марки этого типа пропускает."});
             var service = application.CreateRibbonPanel("BotPlus RT", "Сервис");
             service.AddItem(new PushButtonData("BotPlusRTService", "Сервис", typeof(Application).Assembly.Location,
                 typeof(ServiceCommand).FullName!){AvailabilityClassName=typeof(HostAvailable).FullName!});
             service.AddItem(new PushButtonData("BotPlusRTUpdates","Обновления",typeof(Application).Assembly.Location,typeof(UpdateCommand).FullName!){AvailabilityClassName=typeof(HostAvailable).FullName!});
             RibbonStyle.Apply(application);
+            StartupUpdates.Attach(application);
             return Result.Succeeded;
         }
         catch (Exception error)
@@ -46,6 +51,7 @@ public sealed class Application : IExternalApplication
 
     public Result OnShutdown(UIControlledApplication application)
     {
+        StartupUpdates.Detach(application);
         foreach (var module in started.AsEnumerable().Reverse())
         {
             try { module.OnShutdown(application); }

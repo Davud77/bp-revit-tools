@@ -12,7 +12,7 @@ const {chromium}=require('playwright'),{PNG}=require('pngjs'),assert=require('no
     for(let i=0;i<image.data.length;i+=4)if(image.data[i]>240 && image.data[i+1]<20 && image.data[i+2]<20)red++;
     assert.ok(red>5,`${theme}: red door pixels must be visible, got ${red}`);
   }
-  await page.screenshot({path:path.resolve(process.argv[3] || 'artifacts/openings-verified.png'),fullPage:true});
+  await page.screenshot({path:path.resolve(process.argv[3] || '../../Выходные данные/Проверки ОВ/openings-verified.png'),fullPage:true});
   assert.deepEqual(errors,[]);console.log('PASS native Revit fixture HTML: five openings, two empty voids, preserved unassociated object, visible red doors in both themes');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});

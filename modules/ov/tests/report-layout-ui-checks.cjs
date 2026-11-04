@@ -1,7 +1,7 @@
 const {chromium}=require('playwright'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{execFileSync}=require('node:child_process');
 (async()=>{
- const output=path.resolve('artifacts/report-layout');fs.mkdirSync(output,{recursive:true});
- const data=JSON.parse(fs.readFileSync(path.resolve(process.argv[2] || 'artifacts/demo/building.json'),'utf8'));
+ const output=path.resolve('../../Выходные данные/Проверки ОВ/report-layout');fs.mkdirSync(output,{recursive:true});
+ const data=JSON.parse(fs.readFileSync(path.resolve(process.argv[2] || '../../Выходные данные/Проверки ОВ/demo/building.json'),'utf8'));
  for(const [i,r] of data.rooms.entries())if(!Number.isSafeInteger(r.id))r.id=i+1;
  const source=path.join(output,'building.json');fs.writeFileSync(source,JSON.stringify(data));
  execFileSync('dotnet',['run','--project','tests/ExportChecks.csproj','-c','Release','--','--render',source]);
@@ -30,7 +30,7 @@ const {chromium}=require('playwright'),assert=require('node:assert/strict'),path
   const known=new Set(data.rooms.map(r=>r.key)),unbound=data.openings.filter(o=>!o.roomKeys?.some(k=>known.has(k))).length;
   if(unbound)assert.match(await report.locator('.appendix h2').textContent(),new RegExp(String(unbound)));
   await report.evaluate(()=>window.print=()=>{window.printRequested=true;});await report.locator('#report-print').click();assert.equal(await report.evaluate(()=>window.printRequested),true);
-  const pdf=path.resolve(process.argv[3] || '../../output/pdf/heat-loss-report.pdf');fs.mkdirSync(path.dirname(pdf),{recursive:true});
+  const pdf=path.resolve(process.argv[3] || '../../Выходные данные/Отчёты просмотрщика/pdf/heat-loss-report.pdf');fs.mkdirSync(path.dirname(pdf),{recursive:true});
   await report.pdf({path:pdf,preferCSSPageSize:true,printBackground:true});
   fs.writeFileSync(path.join(output,'report.html'),await report.content());
   await report.screenshot({path:path.join(output,'report-preview.png'),fullPage:false});

@@ -4,7 +4,7 @@ const {chromium}=require('playwright'),{PNG}=require('pngjs'),assert=require('no
  try {
   const page=await browser.newPage({viewport:{width:1600,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(pathToFileURL(path.resolve(process.argv[2])).href);await page.waitForFunction(()=>document.getElementById('load-state').hidden);
-  const canvas=page.locator('#canvas-container canvas'),out=path.resolve(process.argv[3] || 'artifacts/render-overlap');fs.mkdirSync(out,{recursive:true});
+  const canvas=page.locator('#canvas-container canvas'),out=path.resolve(process.argv[3] || '../../Выходные данные/Проверки ОВ/render-overlap');fs.mkdirSync(out,{recursive:true});
   for(const mode of ['iso','top','transparent','dark']) {
     if(mode==='iso')await page.locator('#btn-view-iso').click();
     if(mode==='top')await page.locator('#btn-view-top').click();

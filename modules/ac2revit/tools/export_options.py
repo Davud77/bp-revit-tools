@@ -7,7 +7,7 @@ from ac2r.jsonio import write_json
 from ac2r.normalize import digest
 
 KINDS = ('Wall','Slab','Door','Window','Zone','Column','Beam','Object','Lamp','Roof',
-         'Shell','Mesh','Morph','Stair','Railing','CurtainWall','Skylight','Opening','Grid')
+         'Shell','Mesh','Morph','Stair','Railing','CurtainWall','Skylight','Opening','Grid','Dimension')
 
 
 def selected_kinds(value=None):

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$RevitInstallDir = 'C:\Program Files\Autodesk\Revit 2026',
     [switch]$SkipBuild
 )
@@ -8,7 +8,7 @@ if (-not $SkipBuild) {
     & dotnet build $project -c Release --nologo "-p:RevitInstallDir=$RevitInstallDir"
     if ($LASTEXITCODE -ne 0) { throw 'Сборка не выполнена, установка отменена.' }
 }
-$source = Join-Path $PSScriptRoot 'HeatLossViewer\bin\Release\net8.0-windows'
+$source = Join-Path $PSScriptRoot '..\..\Выходные данные\Сборочные данные\dotnet\HeatLossViewer\bin\Release\net8.0-windows'
 if (-not (Test-Path -LiteralPath (Join-Path $source 'HeatLossViewer.dll'))) { throw 'Сначала соберите Release.' }
 $addins = Join-Path $env:APPDATA 'Autodesk\Revit\Addins\2026'
 $assemblyHash = (Get-FileHash -LiteralPath (Join-Path $source 'HeatLossViewer.dll') -Algorithm SHA256).Hash.Substring(0,12)

@@ -25,6 +25,7 @@ public sealed class Manifest
     public List<JsonElement> Surfaces { get; set; } = [];
     public List<TypeRecord> Types { get; set; } = [];
     public List<ElementRecord> Elements { get; set; } = [];
+    public List<DimensionGridAnchor> DimensionAnchors {get;set;}=[];
     public string ManifestHash { get; set; } = "";
 
     public static Manifest Load(string path)
@@ -42,6 +43,10 @@ public sealed class Manifest
         Unique(Levels.Select(x => x.Key), "level");
         Unique(Types.Select(x => x.Key), "type");
         Unique(Elements.Select(x => x.SourceGuid), "element");
+        Unique(DimensionAnchors.Select(x=>x.SourceGuid),"dimension anchor");
+        foreach(var anchor in DimensionAnchors)
+            if(!Guid.TryParse(anchor.SourceGuid,out _)||!anchor.Start.Finite||!anchor.End.Finite||Math.Pow(anchor.End.X-anchor.Start.X,2)+Math.Pow(anchor.End.Y-anchor.Start.Y,2)<1e-12)
+                throw new InvalidDataException("Invalid dimension grid anchor");
         if (Levels.Count == 0) throw new InvalidDataException("No levels");
         foreach (var l in Levels) if (!double.IsFinite(l.Elevation)) throw new InvalidDataException("Non-finite level");
         var ids = Elements.Select(x => x.SourceGuid).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -82,6 +87,7 @@ public sealed class Manifest
     }
     static int Stage(string k) => k switch { "Grid" => -1, "Column" => 0, "Wall" => 1, "Beam" => 2, "Slab" => 3, "Door" or "Window" => 4, "Zone" => 9, _ => 5 };
 }
+public sealed class DimensionGridAnchor {public string SourceGuid {get;set;}="";public Point Start {get;set;}=new();public Point End {get;set;}=new();public string Label {get;set;}="";}
 public sealed class SourceInfo { public string ProjectId { get; set; } = ""; }
 public sealed class UnitInfo { public string Length { get; set; } = ""; public string Angle { get; set; } = ""; }
 public sealed class CoordinateInfo { public RigidTransform Transform { get; set; } = new(); }

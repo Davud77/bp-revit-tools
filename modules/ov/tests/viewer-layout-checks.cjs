@@ -1,7 +1,7 @@
 const {chromium}=require('playwright'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{execFileSync}=require('node:child_process');
 (async()=>{
- const output=path.resolve('artifacts/viewer-layout');fs.mkdirSync(output,{recursive:true});
- const data=JSON.parse(fs.readFileSync(path.resolve(process.argv[2] || 'artifacts/demo/building.json'),'utf8'));
+ const output=path.resolve('../../Выходные данные/Проверки ОВ/viewer-layout');fs.mkdirSync(output,{recursive:true});
+ const data=JSON.parse(fs.readFileSync(path.resolve(process.argv[2] || '../../Выходные данные/Проверки ОВ/demo/building.json'),'utf8'));
  data.warnings=['Замечание для проверки логов','Второе замечание'];
  data.rooms.forEach((r,i)=>{r.id=i+1;r.sourceDocument='model-20261103-161619159';r.sourceInstance=r.sourceDocument;});
  const source=path.join(output,'building.json');fs.writeFileSync(source,JSON.stringify(data));

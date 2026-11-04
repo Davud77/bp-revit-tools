@@ -80,7 +80,20 @@ def normalize(snapshot, project_id):
                 raise ValueError('Unknown home story index')
             d = raw.get('details', {})
             level = by_index[raw['floorIndex']]['elevation']
-            if kind == 'Wall':
+            if kind == 'Dimension':
+                data = raw.get('dimensionData', {})
+                if 'error' in data or not data.get('witnessPoints'):
+                    raise ValueError('Linear dimension witness data unavailable')
+                witnesses = data['witnessPoints']
+                owners = [guid(w.get('baseElementId')) for w in witnesses]
+                if len(witnesses) < 2 or any(not owner for owner in owners):
+                    raise ValueError('Native dimensions require associative source elements for every witness')
+                e['payload'] = {'direction': point(data['direction'], 0), 'linePosition': point(data['dimensionLinePosition'], 0),
+                                'witnesses': [dict(w, sourceGuid=owner, coordinate=point(w['coordinate'], 0)) for w, owner in zip(witnesses, owners)]}
+                grid_keys={a['sourceGuid'] for a in snapshot.get('dimensionAnchors',[])}
+                e['dependencies'] = list(dict.fromkeys(owner for owner in owners if owner not in grid_keys))
+                e['status'] = 'ready'
+            elif kind == 'Wall':
                 if d.get('geometryType') not in ('Straight', None) or d.get('profileType', 'Normal') != 'Normal':
                     raise ValueError('Polygonal/trapezoid/slanted wall needs solid/profile adapter')
                 key, layers = construction(d, kind)
@@ -206,6 +219,7 @@ def normalize(snapshot, project_id):
               'coordinates': {'system': 'ArchicadProject', 'transform': {'translation': {'x': 0, 'y': 0, 'z': 0}, 'rotationRadians': 0},
                               'geolocation': snapshot.get('geolocation', {})},
               'levels': levels, 'materials': materials,
+              'dimensionAnchors': snapshot.get('dimensionAnchors', []),
               'surfaces': snapshot.get('attributes', {}).get('Surface', {}).get('details', []),
               'fills': snapshot.get('attributes', {}).get('Fill', {}).get('details', []),
               'penTables': snapshot.get('attributes', {}).get('PenTable', {}).get('details', []),

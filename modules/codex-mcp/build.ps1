@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Revit2026Dir = 'C:\Program Files\Autodesk\Revit 2026'
 )
 
@@ -43,7 +43,7 @@ if ($desktopEntry -notmatch '^Microsoft\.WindowsDesktop\.App\s+(\d+\.\d+\.\d+)\s
 $desktopDirectory = Join-Path $Matches[2] $Matches[1]
 
 $pluginDirectory = Join-Path $PSScriptRoot 'plugin'
-$outputDirectory = Join-Path $pluginDirectory 'bin\Release\net8.0-windows'
+$outputDirectory = Join-Path $PSScriptRoot '../../Выходные данные/Сборочные данные/dotnet/WEAM.Revit.AI/bin/Release/net8.0-windows'
 $outputAssembly = Join-Path $outputDirectory 'WEAM.Revit.AI.dll'
 $runtimeReferences = foreach ($file in Get-ChildItem -LiteralPath $runtimeDirectory -Filter '*.dll') {
     try {

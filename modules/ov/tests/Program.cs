@@ -80,7 +80,7 @@ for (int i = 0; i < 8; i++)
     building.Openings.Add(new OpeningData { Key = $"window-{floor}-{i}", IdText = "2200", HostKey = $"wall-{floor}-{i}", Kind = "window", Name = "Демо-окно", RoomKeys = [$"link-{floor}/room-{i}"], Position = [(i%4)*6+2.9,(i/4)*7,floor*3.4-3.4+1.6], Tangent = [1,0,0], Width = 1.2, Height = 1.5, IsExterior = true });
 }
 building.Warnings.Add("Демонстрационные данные. Для реальной модели выполните экспорт из Revit.");
-var output = Path.GetFullPath(args.FirstOrDefault() ?? "artifacts/demo");
+var output = Path.GetFullPath(args.FirstOrDefault() ?? "../../Выходные данные/Проверки ОВ/demo");
 var paths = new BuildingExportWriter().Write(building,output);
 using var doc = JsonDocument.Parse(File.ReadAllText(paths.Json));
 Check(doc.RootElement.GetProperty("rooms")[0].GetProperty("id").GetInt64() == long.MaxValue, "JSON retains 64-bit ElementId");

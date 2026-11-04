@@ -9,6 +9,7 @@ from .client import TapirClient, ApiError, chunks, aligned
 from .normalize import normalize, guid
 from .zone_constraints import capture as capture_zone_constraints
 from .mesh_capture import capture as capture_mesh_geometry
+from .dimension_capture import capture as capture_dimensions
 from .jsonio import write_json, archive_reference
 
 
@@ -57,6 +58,8 @@ def export(args):
         if i % 10 == 0:
             print('Details:', min((i+1)*args.batch, len(ids)), '/', len(ids), flush=True)
 
+    if not args.limit:
+        print('Linear dimensions:', capture_dimensions(api, snapshot, args.batch), flush=True)
     for kind, command, result_key in [('Composite', 'GetComposites', 'composites'),
                                       ('BuildingMaterial', 'GetBuildingMaterials', 'buildingMaterials'),
                                       ('Surface', 'GetSurfaces', 'surfaces'), ('Layer', 'GetLayers', 'layers'),

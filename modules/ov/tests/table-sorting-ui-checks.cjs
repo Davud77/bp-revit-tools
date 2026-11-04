@@ -1,7 +1,7 @@
 const {chromium}=require('playwright'),assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs'),{pathToFileURL}=require('node:url'),{execFileSync}=require('node:child_process');
 (async()=>{
- const dir=path.resolve('artifacts/table-sorting');fs.mkdirSync(dir,{recursive:true});
- const data=JSON.parse(fs.readFileSync('artifacts/demo/building.json','utf8'));data.rooms.forEach((r,i)=>r.id=i+1);
+ const dir=path.resolve('../../Выходные данные/Проверки ОВ/table-sorting');fs.mkdirSync(dir,{recursive:true});
+ const data=JSON.parse(fs.readFileSync('../../Выходные данные/Проверки ОВ/demo/building.json','utf8'));data.rooms.forEach((r,i)=>r.id=i+1);
  const room=data.rooms[0],surface=room.surfaces[0];
  room.surfaces=[2,10,100].map((area,i)=>({...surface,key:`sort-${i}`,elementId:String(102+i),hostKey:`sort-wall-${i}`,grossArea:area,netArea:area,cuts:[]}));
  fs.writeFileSync(path.join(dir,'building.json'),JSON.stringify(data));

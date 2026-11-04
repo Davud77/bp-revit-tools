@@ -45,16 +45,16 @@ const {pathToFileURL} = require('node:url');
   await page.locator('[data-mode="level"]').click();
   await page.locator('#btn-view-iso').click();
   await page.waitForTimeout(300);
-  await page.screenshot({path:'artifacts/model-viewer.png',fullPage:true});
+  await page.screenshot({path:'../../Выходные данные/Проверки ОВ/model-viewer.png',fullPage:true});
   await page.locator('#btn-view-top').click();
   await page.waitForTimeout(300);
-  await page.screenshot({path:'artifacts/model-top.png',fullPage:true});
+  await page.screenshot({path:'../../Выходные данные/Проверки ОВ/model-top.png',fullPage:true});
   await page.locator('#btn-view-iso').click();
   assert.deepEqual(errors,[]);
   const report = {passed:true,source:'Блок 1 от 12.07.26.rvt (неизменённая тестовая копия)',
     totalRooms:data.totalRooms,totalBoundaries:data.totalBoundaries,warnings:data.warnings,
     totalArea:data.rooms.reduce((s,r)=>s+r.area,0),slices,browserErrors:errors};
-  fs.writeFileSync('artifacts/model-checks.json',JSON.stringify(report,null,2));
+  fs.writeFileSync('../../Выходные данные/Проверки ОВ/model-checks.json',JSON.stringify(report,null,2));
   console.log(JSON.stringify(report,null,2));
   await browser.close();
 })().catch(e=>{console.error(e);process.exit(1);});
