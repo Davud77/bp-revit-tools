@@ -36,6 +36,28 @@ test('Claude preserves other connections and fields; repair is idempotent', () =
   assert.equal(removed.mcpServers.weam_revit_ai, undefined);
   assert.equal(removed.mcpServers.other.command, 'other');
 });
+test('update retargets only existing own entries to the new release', () => {
+  const old = path.resolve('C:/Users/Test User/Данные/Application/versions/0.9.7');
+  const codexOld = editCodex('[mcp_servers.other]\ncommand="keep"\n', old);
+  const codexNew = editCodex(codexOld, root, 'retarget');
+  assert.ok(codexNew.includes(JSON.stringify(path.join(root, 'node', 'node.exe'))));
+  assert.ok(!codexNew.includes('0.9.7'));
+  assert.ok(codexNew.includes('[mcp_servers.other]\ncommand="keep"'));
+  assert.equal(editCodex(codexNew, root, 'retarget'), codexNew);
+  assert.equal(editCodex('model = "x"\n', root, 'retarget'), 'model = "x"\n');
+  const external = '[mcp_servers.weam_revit_ai]\ncommand="node"\nargs=["external.js"]\n';
+  assert.equal(editCodex(external, root, 'retarget'), external);
+
+  const claudeOld = editClaude(JSON.stringify({ mcpServers: { other: { command: 'x' } } }), old);
+  const claudeNew = JSON.parse(editClaude(claudeOld, root, 'retarget'));
+  assert.equal(claudeNew.mcpServers.weam_revit_ai.command, path.join(root, 'node', 'node.exe'));
+  assert.equal(claudeNew.mcpServers.other.command, 'x');
+  assert.equal(editClaude('', root, 'retarget'), '');
+  const unconfigured = '{"mcpServers":{"other":{"command":"x"}}}';
+  assert.equal(editClaude(unconfigured, root, 'retarget'), unconfigured);
+  const foreign = '{"mcpServers":{"weam_revit_ai":{"command":"elsewhere"}}}';
+  assert.equal(editClaude(foreign, root, 'retarget'), foreign);
+});
 test('invalid client data is rejected; foreign Claude registration is preserved', () => {
   assert.throws(() => editClaude('{bad', root));
   assert.throws(() => editClaude('{"mcpServers":[]}', root));

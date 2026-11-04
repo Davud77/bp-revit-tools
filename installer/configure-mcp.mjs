@@ -37,7 +37,8 @@ function editKey(block, key, value) {
   return block.slice(0, match.index) + `${key} = ${value}` + block.slice(end);
 }
 
-export function editCodex(text, root, remove = false) {
+// mode: false — add or repair; true — remove own entry; 'retarget' — move an existing own entry to this release only.
+export function editCodex(text, root, mode = false) {
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   const normalized = text.replaceAll('\r\n', '\n');
   const table = /^\[mcp_servers\.weam_revit_ai\][^\n]*\n?/m.exec(normalized);
@@ -45,11 +46,11 @@ export function editCodex(text, root, remove = false) {
   const end = table ? (next ? table.index + table[0].length + next.index : normalized.length) : normalized.length;
   let block = table ? normalized.slice(table.index, end) : `[mcp_servers.${name}]\n`;
   const ownPrefix = path.dirname(path.dirname(root)); // Application directory, any installed version.
-  if (remove) {
+  if (mode) {
     const command = /^command\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')/m.exec(block)?.[1];
     const decoded = command?.startsWith('"') ? JSON.parse(command) : command?.slice(1, -1);
     if (!table || !decoded || !isChild(decoded, ownPrefix)) return text;
-    return (normalized.slice(0, table.index) + normalized.slice(end)).replaceAll('\n', newline);
+    if (mode === true) return (normalized.slice(0, table.index) + normalized.slice(end)).replaceAll('\n', newline);
   }
   const config = options(root);
   block = editKey(block, 'command', JSON.stringify(config.command));
@@ -65,15 +66,18 @@ function isChild(value, root) {
   return relative !== '' && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
 }
 
-export function editClaude(text, root, remove = false) {
+export function editClaude(text, root, mode = false) {
+  if (mode === 'retarget' && !text.trim()) return text;
   const value = text.trim() ? JSON.parse(text) : {};
   if (value === null || Array.isArray(value) || typeof value !== 'object') throw new Error('Некорректная конфигурация Claude; файл сохранён.');
   const servers = value.mcpServers ?? {};
   if (servers === null || Array.isArray(servers) || typeof servers !== 'object') throw new Error('Некорректный mcpServers Claude; файл сохранён.');
-  if (remove) {
-    if (!servers[name]?.command || !isChild(servers[name].command, path.dirname(path.dirname(root)))) return text;
-    delete servers[name];
-  } else servers[name] = { ...servers[name], ...options(root) };
+  const owned = typeof servers[name]?.command === 'string' && isChild(servers[name].command, path.dirname(path.dirname(root)));
+  if (mode && !owned) return text;
+  const before = JSON.stringify(servers[name]);
+  if (mode === true) delete servers[name];
+  else servers[name] = { ...servers[name], ...options(root) };
+  if (mode === 'retarget' && JSON.stringify(servers[name]) === before) return text; // already on this release
   value.mcpServers = servers;
   return JSON.stringify(value, null, 2) + '\n';
 }
@@ -95,7 +99,7 @@ async function main() {
   const args = process.argv.slice(2);
   const root = path.dirname(fileURLToPath(import.meta.url));
   const backupDir = args.find(a => a.startsWith('--backup-dir='))?.slice(13) ?? path.join(root, 'backups');
-  const remove = args.includes('--remove');
+  const remove = args.includes('--remove') ? true : args.includes('--retarget') ? 'retarget' : false;
   if (args.includes('--examples')) {
     const dir = path.join(root, 'connection'); await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, 'MCP-config.json'), JSON.stringify({ mcpServers: { [name]: options(root) } }, null, 2));
@@ -109,7 +113,7 @@ async function main() {
     const file = path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), 'Claude', 'claude_desktop_config.json');
     if (!remove || existsSync(file)) await update(file, text => editClaude(text, root, remove), backupDir);
   }
-  process.stdout.write(JSON.stringify({ configured: true, removed: remove, codex: args.includes('--codex'), claude: args.includes('--claude') }) + '\n');
+  process.stdout.write(JSON.stringify({ configured: true, removed: remove === true, retargeted: remove === 'retarget', codex: args.includes('--codex'), claude: args.includes('--claude') }) + '\n');
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => {

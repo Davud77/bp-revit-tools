@@ -95,6 +95,9 @@ static partial class Deployment
         else Log("Установка Tapir пропущена по выбору пользователя.");
         Step(78, "Подготовка примеров MCP-конфигураций");
         RunNode(Release, "--examples");
+        // Clients already connected to an older release follow the update; new connections are still made from the ribbon.
+        Step(80, "Перевод подключённых MCP-клиентов на версию " + Version);
+        RunNode(Release, "--retarget", "--codex", "--claude");
         Step(84, "Регистрация единственной надстройки BotPlus RT для Revit");
 
         var assembly = SecurityElement.Escape(Path.Combine(Release, "BotPlus.RT.dll"));
