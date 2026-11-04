@@ -77,7 +77,7 @@ class SourceCaptureTests(unittest.TestCase):
             with patch.object(revit_session,'ROOT',root),patch.object(revit_session,'write_separator_plan'),patch('source_capture.memory_budget',return_value=dict(defer=False)),patch.object(revit_session,'prepare_pipeline',side_effect=RuntimeError('test failure')):
                 with self.assertRaisesRegex(RuntimeError,'test failure'):revit_session.prepare_captured_session(session,root/'assets')
             self.assertEqual(verify(session)['hash'],capture['hash']);self.assertEqual(json.loads(pointer.read_text())['session'],'previous')
-            self.assertEqual(len(list(session.glob('prepared-offline-*/failure.txt'))),1)
+            self.assertEqual(len(list(session.glob('prep-*/failure.txt'))),1)
 
     def test_large_capture_never_publishes_a_ready_pipeline_before_preparation(self):
         with tempfile.TemporaryDirectory() as temp:

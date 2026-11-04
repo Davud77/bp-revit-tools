@@ -9,7 +9,17 @@ namespace Ac2Revit;
 internal static class ExchangeServices
 {
     public static string Root => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location)!, "..", ".."));
-    public static string Sessions => Path.Combine(Root,"artifacts","sessions");
+    /// <summary>
+    /// Installed builds keep sessions per user, outside the versioned application folder: the path is ~60 characters
+    /// shorter (MAX_PATH for long project names) and sessions are not deleted with a superseded release.
+    /// A development tree without the bundled runtime keeps its workspace folder.
+    /// </summary>
+    public static string Sessions => Environment.GetEnvironmentVariable("AC2R_SESSIONS") is { Length: > 0 } custom ? Path.GetFullPath(custom)
+        : File.Exists(Path.Combine(Root,"runtime","python","python.exe"))
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"BotPlus.RT","Ac2Revit","sessions")
+            : Path.Combine(Root,"artifacts","sessions");
+
+    public static string NewSessionFolder(string projectName)=>SessionPaths.NewFolder(Sessions,projectName,DateTime.Now);
     public static string Outputs { get {var folder=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),"BotPlus.RT","Выходные данные");Directory.CreateDirectory(folder);return folder;} }
     public static string Assets => Path.Combine(Path.GetDirectoryName(typeof(App).Assembly.Location)!,"assets");
     public static string Python => File.Exists(Path.Combine(Root,"runtime","python","python.exe"))
@@ -41,7 +51,8 @@ internal static class ExchangeServices
     public static string CheckedPath(string path)
     {
         string full=Path.GetFullPath(path);
-        if(!full.StartsWith(Root+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Путь обмена находится вне рабочей папки.");
+        bool Inside(string root)=>full.StartsWith(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar)+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);
+        if(!Inside(Root) && !Inside(Sessions))throw new InvalidDataException("Путь обмена находится вне рабочей папки.");
         return full;
     }
     public static async Task RunAsync(string script,IEnumerable<string> arguments,Action<string>? log=null,CancellationToken cancellation=default)
@@ -49,7 +60,7 @@ internal static class ExchangeServices
         if(!File.Exists(Python))throw new FileNotFoundException("Не найден локальный Python среды транслятора",Python);
         var start=new ProcessStartInfo(Python){WorkingDirectory=Root,UseShellExecute=false,CreateNoWindow=true,
             RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=Encoding.UTF8,StandardErrorEncoding=Encoding.UTF8};
-        start.Environment["PYTHONUTF8"]="1";start.Environment["PYTHONUNBUFFERED"]="1";
+        start.Environment["PYTHONUTF8"]="1";start.Environment["PYTHONUNBUFFERED"]="1";start.Environment["AC2R_SESSIONS"]=Sessions;
         start.ArgumentList.Add(CheckedPath(Path.Combine(Root,"tools",script)));
         foreach(string value in arguments)start.ArgumentList.Add(value);
         using var process=new Process{StartInfo=start};

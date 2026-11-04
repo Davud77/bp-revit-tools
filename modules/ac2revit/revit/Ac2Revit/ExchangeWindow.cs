@@ -168,9 +168,7 @@ internal sealed class ExchangeWindow : Window
         }
         var info=connection.Value;
         string name=info.GetProperty("project").S("projectName","Archicad");
-        name=new string(name.Select(c=>Path.GetInvalidFileNameChars().Contains(c)?'_':c).ToArray());
-        if(name.Length>70)name=name[..70];
-        string session=resumeSession.Length>0?Path.GetDirectoryName(resumeSession)!:Path.Combine(ExchangeServices.Sessions,name+"-"+DateTime.Now.ToString("yyyyMMdd-HHmmssfff"));
+        string session=resumeSession.Length>0?Path.GetDirectoryName(resumeSession)!:ExchangeServices.NewSessionFolder(name);
         var args=new List<string>{"export","--port",((int)info.D("port")).ToString(),"--project-id",info.S("projectId"),
             "--project-path",info.GetProperty("project").S("projectPath"),"--translator",translator,"--output",session,"--assets",ExchangeServices.Assets};
         if(properties.IsChecked==true)args.Add("--properties");

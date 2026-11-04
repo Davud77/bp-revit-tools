@@ -40,9 +40,9 @@ static partial class Deployment
         string target = TapirTarget(version, directory);
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!;
         using var archive = new ZipArchive(stream);
-        using var manifest = JsonDocument.Parse(archive.GetEntry("tapir/releases.json")!.Open());
+        using var manifest = JsonDocument.Parse(Entry(archive, "tapir/releases.json").Open());
         var asset = manifest.RootElement.GetProperty("assets").EnumerateArray().Single(a => a.GetProperty("version").GetInt32() == version);
-        using var input = archive.GetEntry("tapir/" + asset.GetProperty("file").GetString())!.Open();
+        using var input = Entry(archive, "tapir/" + asset.GetProperty("file").GetString()).Open();
         using var memory = new MemoryStream(); input.CopyTo(memory); byte[] bytes = memory.ToArray();
         if (!Convert.ToHexString(SHA256.HashData(bytes)).Equals(asset.GetProperty("sha256").GetString(), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Не совпадает SHA-256 Tapir.");

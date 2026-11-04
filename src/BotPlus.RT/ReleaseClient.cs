@@ -27,7 +27,7 @@ internal sealed class ReleaseClient(HttpClient http)
     public async Task<ReleaseInfo> Latest(CancellationToken cancellation)
     {
         using var request=new HttpRequestMessage(HttpMethod.Get,$"https://api.github.com/repos/{Repository}/releases/latest");
-        request.Headers.UserAgent.ParseAdd("BotPlusRT/1.6.3");request.Headers.Accept.ParseAdd("application/vnd.github+json");
+        request.Headers.UserAgent.ParseAdd("BotPlusRT/1.6.4");request.Headers.Accept.ParseAdd("application/vnd.github+json");
         using var response=await http.SendAsync(request,cancellation);
         if(response.StatusCode==HttpStatusCode.NotFound)throw new InvalidOperationException("На GitHub пока нет опубликованного релиза.");
         response.EnsureSuccessStatusCode();return Parse(await response.Content.ReadAsStringAsync(cancellation));
@@ -39,7 +39,7 @@ internal sealed class ReleaseClient(HttpClient http)
         Directory.CreateDirectory(folder);string file=Path.Combine(folder,Guid.NewGuid().ToString("N")+"-"+release.Name);
         try
         {
-            using var request=new HttpRequestMessage(HttpMethod.Get,release.Download);request.Headers.UserAgent.ParseAdd("BotPlusRT/1.6.3");
+            using var request=new HttpRequestMessage(HttpMethod.Get,release.Download);request.Headers.UserAgent.ParseAdd("BotPlusRT/1.6.4");
             using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancellation);response.EnsureSuccessStatusCode();
             if(response.Content.Headers.ContentLength is long size&&size!=release.Size)throw new InvalidDataException("Размер загрузки отличается от релиза.");
             await using(var output=new FileStream(file,FileMode.CreateNew,FileAccess.Write,FileShare.None))

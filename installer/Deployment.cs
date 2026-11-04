@@ -11,7 +11,7 @@ namespace BotPlus.RT.Setup;
 
 static partial class Deployment
 {
-    public const string Version = "1.6.3";
+    public const string Version = "1.6.4";
     const string AddinId = "DE07865F-0FBF-4CC3-B71E-AC2B149113E6";
     const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BotPlus.RT";
     static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotPlus.RT");
@@ -50,7 +50,7 @@ static partial class Deployment
     {
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!;
         using var archive = new ZipArchive(stream);
-        using var reader = new StreamReader(archive.GetEntry("LICENSE")!.Open());
+        using var reader = new StreamReader(Entry(archive, "LICENSE").Open());
         return reader.ReadToEnd();
     }
 
@@ -74,11 +74,11 @@ static partial class Deployment
         using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!)
         using (var archive = new ZipArchive(stream))
         {
-            var files = archive.Entries.Where(e => !e.FullName.EndsWith('/')).ToList();
+            var files = archive.Entries.Where(e => !IsDirectory(e)).ToList();
             int completed = 0;
             foreach (var entry in files)
             {
-                var destination = Path.GetFullPath(Path.Combine(Release, entry.FullName));
+                var destination = Path.GetFullPath(Path.Combine(Release, EntryPath(entry)));
                 RequireChild(destination, Release);
                 Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
                 using var input = entry.Open();
@@ -169,6 +169,12 @@ static partial class Deployment
         if (process.ExitCode != 0) throw new InvalidOperationException("Не удалось настроить MCP: " + stderr.GetAwaiter().GetResult());
         Log(stdout.GetAwaiter().GetResult().Trim());
     }
+
+    // Archives written by Windows PowerShell 5.1 use '\' in entry names; accept both separators.
+    static string EntryPath(ZipArchiveEntry entry) => entry.FullName.Replace('\\', '/');
+    static bool IsDirectory(ZipArchiveEntry entry) => EntryPath(entry).EndsWith('/');
+    static ZipArchiveEntry Entry(ZipArchive archive, string name) =>
+        archive.GetEntry(name) ?? archive.GetEntry(name.Replace('/', '\\')) ?? throw new FileNotFoundException("В поставке нет файла " + name);
 
     static void RequireChild(string path, string root)
     {

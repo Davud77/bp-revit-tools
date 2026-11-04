@@ -15,6 +15,11 @@ import traceback
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def sessions_root():
+    # Revit passes the per-user folder: outside the versioned install and short enough for MAX_PATH.
+    return Path(os.environ.get('AC2R_SESSIONS') or ROOT/'artifacts/sessions').resolve()
 sys.path.insert(0, str(ROOT/'exporter'))
 from ac2r.client import TapirClient, ApiError, aligned, chunks
 from ac2r.export import export, write_json
@@ -220,7 +225,7 @@ def prepare_pipeline(session, manifest_path, ifc_path, assets):
 
 def run(args):
     session = args.output.resolve()
-    if not session.is_relative_to(ROOT/'artifacts/sessions'):
+    if not session.is_relative_to(sessions_root()):
         raise ValueError('Session must be inside artifacts/sessions')
     if session.exists(): raise FileExistsError(session)
     mode=getattr(args,'mode','combined');selected=selected_kinds(getattr(args,'kinds',None))
@@ -262,7 +267,7 @@ def run(args):
             outputs=publish_outputs(session,manifest,selected,mode)
             state=dict(format='ac2r.session/1',status='ready',**info,**options,outputs=outputs,pipeline=outputs['json'],manifestSha256=file_sha256(Path(outputs['json'])))
             write_json(session/'session.json',state)
-            write_json(ROOT/'artifacts/sessions/last-completed.json',{'session':str(session/'session.json')})
+            write_json(sessions_root()/'last-completed.json',{'session':str(session/'session.json')})
             return state
         api = TapirClient(args.port, session/'ifc-api', timeout=3600)
         phase = 'ifc-export'
@@ -303,7 +308,7 @@ def run(args):
                          'Во время экспорта нельзя редактировать исходную модель.'])
         write_json(session/'session.json', state)
         # Sole publication point: never points to a partial export or old project.
-        write_json(ROOT/'artifacts/sessions/last-completed.json', {'session':str(session/'session.json')})
+        write_json(sessions_root()/'last-completed.json', {'session':str(session/'session.json')})
         print('Готово. План сборки: '+str(session/'pipeline.json'), flush=True)
         return state
     except BaseException as exc:
@@ -320,7 +325,7 @@ def continue_session(args):
         # Include failures before IFC/preparation folders exist, preserving old ready state.
         folder = args.session.resolve()
         if folder.name == 'session.json': folder = folder.parent
-        if folder.is_relative_to(ROOT/'artifacts/sessions') and folder.is_dir():
+        if folder.is_relative_to(sessions_root()) and folder.is_dir():
             stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S%f')
             failure = folder/('continuation-failure-'+stamp+'.txt')
             failure.write_text(type(exc).__name__+': '+error_message(exc)+'\n'+traceback.format_exc(), encoding='utf-8')
@@ -332,14 +337,14 @@ def _continue_session(args):
     """Recover JSON if possible, create only a missing IFC, then prepare anew."""
     session=args.session.resolve()
     if session.name=='session.json':session=session.parent
-    if not session.is_relative_to(ROOT/'artifacts/sessions'):raise ValueError('Session is outside the exchange folder')
+    if not session.is_relative_to(sessions_root()):raise ValueError('Session is outside the exchange folder')
     state_path=session/'session.json'
     state=json.loads(state_path.read_text(encoding='utf-8-sig'))
     if state.get('format')!='ac2r.session/1':raise ValueError('Выберите session.json сеанса транслятора')
     if state.get('exportMode')=='ifc':raise ValueError('Этот сеанс сохраняет только IFC. Для сборки выберите комбинированный экспорт или откройте IFC средствами Revit.')
     if state.get('exportMode')=='json' and state.get('status')=='ready':
         if file_sha256(Path(state['pipeline']))!=state.get('manifestSha256'):raise ValueError('JSON изменён после экспорта; создайте новый сеанс.')
-        write_json(ROOT/'artifacts/sessions/last-completed.json',{'session':str(state_path)})
+        write_json(sessions_root()/'last-completed.json',{'session':str(state_path)})
         return state
     if (session/'capture.json').is_file():return prepare_captured_session(session,args.assets.resolve())
     manifest_path=session/'source/manifest.json';ifc_path=session/'source/model.ifc'
@@ -393,7 +398,7 @@ def _continue_session(args):
         for obsolete in ('error','errorType','phase'):state.pop(obsolete,None)
         write_json(attempt/'attempt.json',{'status':'ready','sourceManifestSha256':before_manifest,'ifcSha256':before_ifc})
         write_json(state_path,state)
-        write_json(ROOT/'artifacts/sessions/last-completed.json',{'session':str(state_path)})
+        write_json(sessions_root()/'last-completed.json',{'session':str(state_path)})
         print('Подготовка завершена: '+str(attempt/'pipeline.json'),flush=True)
     except BaseException as exc:
         write_json(attempt/'attempt.json',{'status':'failed','error':error_message(exc),'errorType':type(exc).__name__,'sourceManifestSha256':before_manifest,'ifcSha256':before_ifc})
@@ -405,13 +410,16 @@ def prepare_captured_session(session,assets):
     """Offline continuation is permitted only for a sealed, unchanged capture."""
     from source_capture import verify,memory_budget
     session=Path(session).resolve()
-    if not session.is_relative_to(ROOT/'artifacts/sessions'):raise ValueError('Session is outside the exchange folder')
+    if not session.is_relative_to(sessions_root()):raise ValueError('Session is outside the exchange folder')
     capture=verify(session);state_path=session/'session.json'
     state=json.loads(state_path.read_text(encoding='utf-8-sig'))
     if state['projectId']!=capture['projectId'] or state['project']!=capture['sourceProject']:raise ValueError('Captured session project mismatch')
     budget=memory_budget(session/'source/model.ifc')
     if budget['defer']:raise MemoryError(f"Недостаточно доступной памяти для IFC: оценка {budget['requiredBytes']/1024**3:.1f} ГиБ, доступно {budget['availableCommitBytes']/1024**3:.1f} ГиБ. Закройте Archicad и другие большие модели; захват данных сохранён.")
-    attempt=session/('prepared-offline-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S%f'));attempt.mkdir()
+    # Short attempt folder keeps deep stage files of long project names within MAX_PATH.
+    stamp=datetime.datetime.now().strftime('%Y%m%d-%H%M%S');attempt=session/('prep-'+stamp);n=2
+    while attempt.exists():attempt=session/f'prep-{stamp}-{n}';n+=1
+    attempt.mkdir()
     manifest_path=session/'source/manifest.json';ifc_path=session/'source/model.ifc'
     write_json(attempt/'attempt.json',dict(status='preparing',captureHash=capture['hash']))
     try:
@@ -424,7 +432,7 @@ def prepare_captured_session(session,assets):
             counts=dict(collections.Counter(e['kind'] for e in manifest['elements'])),completedUtc=datetime.datetime.now(datetime.timezone.utc).isoformat())
         for obsolete in ('error','errorType','phase','memoryBudget'):state.pop(obsolete,None)
         write_json(attempt/'attempt.json',dict(status='ready',captureHash=capture['hash']));write_json(state_path,state)
-        write_json(ROOT/'artifacts/sessions/last-completed.json',{'session':str(state_path)})
+        write_json(sessions_root()/'last-completed.json',{'session':str(state_path)})
         print('Готово. План автономной подготовки: '+state['pipeline'],flush=True);return state
     except BaseException as exc:
         write_json(attempt/'attempt.json',dict(status='failed',error=error_message(exc),errorType=type(exc).__name__,captureHash=capture['hash']))
@@ -436,7 +444,7 @@ def capture_existing_session(args):
     from source_capture import seal,memory_budget
     session=args.session.resolve()
     if session.name=='session.json':session=session.parent
-    if not session.is_relative_to(ROOT/'artifacts/sessions'):raise ValueError('Session is outside the exchange folder')
+    if not session.is_relative_to(sessions_root()):raise ValueError('Session is outside the exchange folder')
     state=json.loads((session/'session.json').read_text(encoding='utf-8-sig'))
     if state.get('format')!='ac2r.session/1':raise ValueError('Invalid session')
     info=probe(args.port)

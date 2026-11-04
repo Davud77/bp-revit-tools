@@ -5,6 +5,25 @@
 )
 $ErrorActionPreference = 'Stop'
 if (!(Test-Path -LiteralPath $BuildPython)) { throw 'Specify -BuildPython pointing to a CPython 3.12 environment with requirements.txt installed.' }
+# One version source: the installer project. File names and the self-check below follow it.
+$version = @(([xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installer\BotPlus.RT.Setup.csproj') -Raw)).Project.PropertyGroup.Version | Where-Object { $_ })[0]
+if (!$version) { throw 'Version not found in installer\BotPlus.RT.Setup.csproj.' }
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+
+# ZIP entries always use '/': the installer and standard tools expect it, while Compress-Archive
+# in Windows PowerShell 5.1 writes '\' (the first 1.6.4 build could not be unpacked because of it).
+function New-Zip([string]$folder, [string]$zipPath) {
+    if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+    $root = [IO.Path]::GetFullPath($folder).TrimEnd('\') + '\'
+    $archive = [IO.Compression.ZipFile]::Open($zipPath, [IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in Get-ChildItem -LiteralPath $folder -Recurse -File -Force) {
+            $name = $file.FullName.Substring($root.Length).Replace('\', '/')
+            [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $file.FullName, $name, [IO.Compression.CompressionLevel]::Optimal)
+        }
+    } finally { $archive.Dispose() }
+}
+
 & (Join-Path $PSScriptRoot 'build.ps1') -RevitInstallDir $RevitInstallDir
 Push-Location (Join-Path $PSScriptRoot 'modules\codex-mcp\server')
 try {
@@ -30,16 +49,25 @@ foreach ($relative in $files) {
     New-Item -ItemType Directory -Force (Split-Path $destination) | Out-Null
     Copy-Item -LiteralPath $inputFile -Destination $destination
 }
-$sourceZip = Join-Path $OutputDirectory 'BotPlus.RT-1.6.3-source.zip'
-Compress-Archive -Path (Join-Path $source '*') -DestinationPath $sourceZip -Force
+$sourceZip = Join-Path $OutputDirectory "BotPlus.RT-$version-source.zip"
+New-Zip $source $sourceZip
 New-Item -ItemType Directory -Force (Join-Path $payload 'source') | Out-Null
 Copy-Item -LiteralPath $sourceZip -Destination (Join-Path $payload 'source')
 $zip = Join-Path $stage 'payload.zip'
-Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $zip -CompressionLevel Optimal
+New-Zip $payload $zip
 dotnet publish (Join-Path $PSScriptRoot 'installer\BotPlus.RT.Setup.csproj') -c Release -o (Join-Path $PSScriptRoot 'Выходные данные/Сборочные данные/dotnet/BotPlus.RT.Setup/publish') "-p:PayloadPath=$zip" -v minimal
 if ($LASTEXITCODE -ne 0) { throw 'Installer publish failed.' }
-$setup = Join-Path $OutputDirectory 'BotPlus.RT-1.6.3-Setup.exe'
+$setup = Join-Path $OutputDirectory "BotPlus.RT-$version-Setup.exe"
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Выходные данные/Сборочные данные/dotnet/BotPlus.RT.Setup/publish/BotPlus.RT.Setup.exe') -Destination $setup -Force
+
+# Self-check: the finished EXE must unpack its own payload with the installer code.
+$verify = Join-Path $stage 'verify'
+$check = Start-Process -FilePath $setup -ArgumentList ('"--verify-payload=' + $verify + '"') -Wait -PassThru -WindowStyle Hidden
+if ($check.ExitCode -ne 0) { throw "Installer payload verification failed: $($check.ExitCode). See %LOCALAPPDATA%\BotPlus.RT\setup.log." }
+$unpacked = Get-Content -LiteralPath (Join-Path $verify 'release.json') -Raw | ConvertFrom-Json
+if ($unpacked.version -ne $version) { throw "Payload version $($unpacked.version) does not match $version." }
+Write-Host "Payload verified: $((Get-ChildItem -LiteralPath $verify -Recurse -File).Count) files, version $version"
+
 $hashes = foreach ($file in $setup,$sourceZip) { '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(),(Split-Path $file -Leaf) }
 [IO.File]::WriteAllLines((Join-Path $OutputDirectory 'SHA256SUMS.txt'), $hashes)
 Write-Host "Installer: $setup"

@@ -1,5 +1,28 @@
 using Ac2Revit;
 
+// Session folders: the 1.6.3 failure on «МКД_8 эт_Кизляр_Общая модель_» crossed MAX_PATH in a deep stage file.
+{
+    var when=new DateTime(2026,11,4,22,4,5);
+    // Deepest file of a real offline Kizlyar run, with the shortened stage folder names.
+    string Deepest(string sessions,string name)=>Path.Combine(sessions,name,"prep-20261104-223308","run-20261104-193831","beam-void-families","AC2R_BeamCuts_A77A26224D8E445385C083CFA1056667.rfa");
+    string perUser=@"C:\Users\davud\AppData\Local\BotPlus.RT\Ac2Revit\sessions";
+    string kizlyar=SessionPaths.FolderName("МКД_8 эт_Кизляр_Общая модель_",perUser.Length,when);
+    if(kizlyar!="МКД_8 эт_Кизляр_Общая модель-20261104-220405")throw new Exception("Per-user sessions keep the readable project name: "+kizlyar);
+    if(Deepest(perUser,kizlyar).Length>SessionPaths.MaxPath)throw new Exception("Kizlyar stage file exceeds MAX_PATH");
+    // A development tree or an unusually deep profile still stays within the limit by shortening the name.
+    string installed=@"C:\Users\davud\AppData\Local\BotPlus.RT\Application\versions\1.6.3\modules\ac2revit\artifacts\sessions";
+    string shortened=SessionPaths.FolderName("МКД_8 эт_Кизляр_Общая модель_",installed.Length,when);
+    if(Deepest(installed,shortened).Length>SessionPaths.MaxPath)throw new Exception("Deep session root not compensated: "+Deepest(installed,shortened).Length);
+    if(!shortened.StartsWith("МКД_8"))throw new Exception("Shortened name must keep its beginning: "+shortened);
+    string longName=SessionPaths.FolderName(new string('Ж',90)+" ",perUser.Length,when);
+    if(longName!=new string('Ж',32)+"-20261104-220405")throw new Exception("Long project names are capped at 32 characters: "+longName);
+    string deepProfile=@"C:\Users\Очень_Длинное_Имя_Пользователя_Компании_Проектировщиков\AppData\Local\BotPlus.RT\Application\versions\10.12.300\modules\ac2revit\artifacts\sessions";
+    if(SessionPaths.FolderName("Проект ДОО Каспийск",deepProfile.Length,when)!="Проект Д-20261104-220405")throw new Exception("At least eight readable characters are kept");
+    if(SessionPaths.FolderName(" ..<>:|?* ",perUser.Length,when)!="Archicad-20261104-220405")throw new Exception("Invalid characters must not form a folder name");
+    if(SessionPaths.FolderName("Проект. ",perUser.Length,when)!="Проект-20261104-220405")throw new Exception("Trailing dot/space are invalid for Windows folders");
+    Console.WriteLine("PASS session folders keep stage files within MAX_PATH");
+}
+
 var zeroWall=new ElementRecord{Kind="Wall",Raw=System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>("""
 {"details":{"geometryType":"Straight","structureType":"Basic","profileType":"Normal","begThickness":0,"endThickness":0,"arcAngle":0,"offset":0,"zCoordinate":8.4,"height":3.3,"zoneRel":"Boundary","begCoordinate":{"x":-350,"y":-966},"endCoordinate":{"x":-350,"y":-965.8}}}
 """)};

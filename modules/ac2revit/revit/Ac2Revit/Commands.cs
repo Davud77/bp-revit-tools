@@ -71,7 +71,9 @@ public static class Command
             }
             if(PipelineRunner.IsPipeline(path))
             {
-                string output=Path.Combine(folder,"revit-run-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff"));
+                // Short stage folder: sessions of long project names stay within MAX_PATH (see ExchangeServices.SessionDepthReserve).
+                string output=Path.Combine(folder,"run-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"));
+                for(int attempt=2;Directory.Exists(output);attempt++)output=Path.Combine(folder,"run-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")+"-"+attempt);
                 using var display=preview?null:new ImportProgress(ui.MainWindowHandle);
                 var pipelineReport=PipelineExecution.Run(ui,path,output,
                     progress:(phase,done,total)=>{display?.Update(phase,done,total);File.WriteAllText(Path.Combine(output,"progress.json"),System.Text.Json.JsonSerializer.Serialize(new{phase,done,total,overallPercent=display?.State.Percent,stage=display?.State.Stage,stages=display?.State.Stages,updatedUtc=DateTime.UtcNow},Json.Options));},preview:preview,selection:selection);

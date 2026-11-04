@@ -122,9 +122,9 @@ static partial class Deployment
         using var archive = new ZipArchive(stream);
         foreach (var entry in archive.Entries)
         {
-            var target = Path.GetFullPath(Path.Combine(destination, entry.FullName));
+            var target = Path.GetFullPath(Path.Combine(destination, EntryPath(entry)));
             RequireChild(target, destination);
-            if (entry.FullName.EndsWith('/')) { Directory.CreateDirectory(target); continue; }
+            if (IsDirectory(entry)) { Directory.CreateDirectory(target); continue; }
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             entry.ExtractToFile(target);
         }

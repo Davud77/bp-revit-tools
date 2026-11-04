@@ -6,8 +6,19 @@ from pathlib import Path
 import tempfile
 
 
-def write_json(path, data, *, compact=None):
+def long_path(path):
+    """Extended-length form on Windows, so deep session files work without the LongPathsEnabled policy."""
     path = Path(path)
+    if os.name != 'nt':
+        return path
+    text = os.path.abspath(str(path))
+    if text.startswith('\\\\?\\') or len(text) < 240:
+        return path
+    return Path('\\\\?\\UNC\\' + text[2:] if text.startswith('\\\\') else '\\\\?\\' + text)
+
+
+def write_json(path, data, *, compact=None):
+    path = long_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if compact is None:
         compact = path.name in ('manifest.json', 'snapshot.json')
