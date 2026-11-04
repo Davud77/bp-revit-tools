@@ -134,7 +134,7 @@ public static class PipelineRunner
             string key="pipeline-stage:"+name;
             var saved=cache?Storage.Index(doc,project).GetValueOrDefault(key) as DataStorage:null;
             bool reused=saved!=null && Storage.Read(saved)?.Hash==executionId;
-            Report result;
+            Report result;bool checkpointSaved=false;
             var clock=System.Diagnostics.Stopwatch.StartNew();int saves=0,families=0;
             void Saved(object? sender,Autodesk.Revit.DB.Events.DocumentSavedEventArgs e){if(e.Document.Equals(doc))saves++;}
             void Loaded(object? sender,Autodesk.Revit.DB.Events.FamilyLoadedIntoDocumentEventArgs e){if(e.Document.Equals(doc))families++;}
@@ -156,12 +156,13 @@ public static class PipelineRunner
             }
             result.Save(Path.Combine(output,name+".json"));report.Items.AddRange(result.Items);report.ZoneAreas.AddRange(result.ZoneAreas);report.ZoneVerticals.AddRange(result.ZoneVerticals);report.WallJoins.AddRange(result.WallJoins);
             report.Save(Path.Combine(output,"pipeline-report.json"));
-            if(!reused && !string.IsNullOrEmpty(doc.PathName))doc.Save();
+            if(!reused)checkpointSaved=Checkpoints.Save(doc);
             }
             finally{doc.Application.DocumentSaved-=Saved;doc.Application.FamilyLoadedIntoDocument-=Loaded;}
             report.Timings.Add(new(name,Math.Round(clock.Elapsed.TotalSeconds,3),saves,families,reused));
             report.Save(Path.Combine(output,"pipeline-report.json"));
-            if(!reused && !string.IsNullOrEmpty(doc.PathName))ImportJournal.Write(doc,report);
+            // The journal next to the RVT describes the saved file, so it follows actual checkpoint saves.
+            if(checkpointSaved)ImportJournal.Write(doc,report);
             progress?.Invoke("pipeline:end:"+name,stageIndex+1,order.Length);
         }
         Report ImportMissing(string file,ISet<string> kinds,ImportConfig options,bool resources=false)
@@ -188,7 +189,7 @@ public static class PipelineRunner
                 var importer=new Importer(doc,m,options){Progress=(phase,n,total)=>progress?.Invoke(phase,offset+n,selected.Count)};
                 var result=importer.Run(kinds,resources && processed==0,false);combined.Items.AddRange(result.Items);processed+=batch.Length;
                 combined.Save(Path.Combine(output,string.Join("-",kinds.OrderBy(k=>k))+"-checkpoint.json"));
-                if(!string.IsNullOrEmpty(doc.PathName))doc.Save();
+                Checkpoints.Save(doc);
             }
             return combined;
         }
@@ -290,7 +291,7 @@ public static class PipelineRunner
             return Count(input,"beams")==0?new Report{ProjectId=project}:RectangularBeamReplacer.Run(doc,input,Resolve(plan.BeamFamily),(n,total)=>progress?.Invoke("rectangularBeams",n,total));
         });
         if(plan.NativeCutBeams)Stage("nativeCutBeams",()=>CutBeamReplacer.Run(doc,Resolve(plan.BeamBodies),Resolve(plan.BeamFamily),Resolve(plan.VoidTemplate),Path.Combine(output,"beam-void-families"),trialLimit,(n,total)=>
-        {progress?.Invoke("nativeCutBeams",n,total);if(n%20==0 && !string.IsNullOrEmpty(doc.PathName))doc.Save();}));
+        {progress?.Invoke("nativeCutBeams",n,total);if(n%20==0)Checkpoints.Save(doc);}));
         Stage("openingsAndFillings",()=>OpeningStage.Run(doc,Resolve(plan.OpeningsPlan),Resolve(plan.VoidTemplate),Path.Combine(output,"opening-families"),trialLimit,progress,selection?.Included));
         Stage("nativeTerrain",()=>ImportMissing(Resolve(plan.SourceManifest),new HashSet<string>{"Mesh"},config));
         if(plan.SupplementalBodiesPlan.Length>0)Stage("supplementalBodies",()=>SupplementalBodiesStage.Run(doc,Resolve(plan.SupplementalBodiesPlan),Path.Combine(output,"supplemental-inputs"),progress,selection?.Included));
@@ -322,7 +323,7 @@ public static class PipelineRunner
                         {
                             progress?.Invoke(phase,n,total);
                             if(phase=="wallEndJoins" && n-lastSaved>=512 && !string.IsNullOrEmpty(doc.PathName))
-                            {doc.Save();lastSaved=n;}
+                            {Checkpoints.Save(doc);lastSaved=n;}
                         }}.JoinSourceWalls();
                         joins.Save(Path.Combine(Path.GetDirectoryName(doc.PathName)!,"wall-join-checkpoint-report.json"));
                         result.Items.AddRange(joins.Items);result.WallJoins.AddRange(joins.WallJoins);

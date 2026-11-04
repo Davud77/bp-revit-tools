@@ -29,9 +29,11 @@ public static class OpeningStage
             progress?.Invoke("openingCuts",done++,records.Count);
             if(done%50==0)
             {
-                report.Save(Path.Combine(folder,"cut-report.json"));if(!string.IsNullOrEmpty(doc.PathName))doc.Save();
+                report.Save(Path.Combine(folder,"cut-report.json"));
                 process.Refresh();
-                if(mutations>0 && !string.IsNullOrEmpty(doc.PathName) && process.PrivateMemorySize64-initialMemory>1536L*1024*1024)
+                bool reopen=mutations>0 && !string.IsNullOrEmpty(doc.PathName) && process.PrivateMemorySize64-initialMemory>1536L*1024*1024;
+                Checkpoints.Save(doc,force:reopen);
+                if(reopen)
                     throw new ImportCheckpointException("Проёмы сохранены; требуется сброс истории и кэша геометрии Revit.");
             }
             if(record.S("status")=="fillingOnly")
@@ -134,7 +136,7 @@ public static class OpeningStage
                 writer.WriteEndArray();writer.WriteEndObject();
             }
             var bodyReport=ReferenceFallback.Run(doc,body,Path.GetFullPath,(n,total)=>
-            {progress?.Invoke("filling"+kind,n,total);if(n%50==0 && !string.IsNullOrEmpty(doc.PathName))doc.Save();},kind=="Door"?BuiltInCategory.OST_Doors:BuiltInCategory.OST_Windows,kind);
+            {progress?.Invoke("filling"+kind,n,total);if(n%50==0)Checkpoints.Save(doc);},kind=="Door"?BuiltInCategory.OST_Doors:BuiltInCategory.OST_Windows,kind);
             report.Items.AddRange(bodyReport.Items);
         }
         return report;

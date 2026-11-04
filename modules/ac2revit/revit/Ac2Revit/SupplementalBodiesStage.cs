@@ -61,13 +61,16 @@ public static class SupplementalBodiesStage
                     totalBodies>0?processedBodies+batchBodies-missing.Length+done:done,totalBodies>0?totalBodies:total),BuiltInCategory.OST_GenericModel,"Supplemental:"+kind,uniqueMarks:true);
                 report.Items.AddRange(stage.Items);report.Save(Path.Combine(folder,"checkpoint-report.json"));
                 committed=stage.Items.Any(i=>i.Status=="created");
-                if(!string.IsNullOrEmpty(doc.PathName))doc.Save();
+                Checkpoints.Save(doc);
             }
             processedBodies+=batchBodies;
             if(totalBodies>0)progress?.Invoke("supplemental:"+sourceKind,processedBodies,totalBodies);
             process.Refresh();
             if(CheckpointPolicy.ShouldReopen(committed,initialMemory,process.PrivateMemorySize64))
+            {
+                Checkpoints.Save(doc,force:true);
                 throw new ImportCheckpointException("Дополнительная IFC-геометрия сохранена; требуется сброс истории и кэша Revit.");
+            }
         }
         return report;
     }

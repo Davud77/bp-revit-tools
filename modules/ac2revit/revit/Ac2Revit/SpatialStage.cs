@@ -57,10 +57,11 @@ public static class SpatialStage
                 state.Report.Items.AddRange(result.Items);state.Report.ZoneAreas.AddRange(result.ZoneAreas);state.Report.ZoneVerticals.AddRange(result.ZoneVerticals);state.Next+=batch.Count;
                 using(var transaction=new Transaction(doc,"Record spatial checkpoint"))
                 {transaction.Start();Storage.Tag(storage,project,key,signature,JsonSerializer.Serialize(state,Json.Options));transaction.Commit();}
-                if(!string.IsNullOrEmpty(doc.PathName))doc.Save();
                 state.Report.Save(Path.Combine(folder,"room-checkpoint-report.json"));progress?.Invoke("zoneAreas",state.Next,ordered.Length);
                 process.Refresh();batches++;
-                if(state.Next<ordered.Length && !string.IsNullOrEmpty(doc.PathName) && (batches>=4 || process.PrivateMemorySize64-initialMemory>768L*1024*1024))
+                bool reopen=state.Next<ordered.Length && !string.IsNullOrEmpty(doc.PathName) && (batches>=4 || process.PrivateMemorySize64-initialMemory>768L*1024*1024);
+                Checkpoints.Save(doc,force:reopen);
+                if(reopen)
                     throw new ImportCheckpointException($"Помещения {state.Next}/{ordered.Length} сохранены; освобождение истории Revit.");
             }
         }

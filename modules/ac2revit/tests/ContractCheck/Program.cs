@@ -1,5 +1,14 @@
 using Ac2Revit;
 
+// Routine checkpoint saves at most once per interval; the first one is always taken.
+{
+    var t0=new DateTime(2026,11,5,1,0,0,DateTimeKind.Utc);
+    if(!CheckpointPolicy.SaveDue(null,t0))throw new Exception("First checkpoint must save");
+    if(CheckpointPolicy.SaveDue(t0,t0.AddSeconds(30)))throw new Exception("Checkpoint 30 s after a save must be skipped");
+    if(!CheckpointPolicy.SaveDue(t0,t0+CheckpointPolicy.SaveInterval))throw new Exception("Checkpoint at the interval must save");
+    Console.WriteLine("PASS checkpoint saves are time-based");
+}
+
 // Site: Archicad north / survey point -> Revit shared coordinates and true north.
 {
     System.Text.Json.JsonElement SiteJson(string text)=>System.Text.Json.JsonDocument.Parse(text).RootElement;

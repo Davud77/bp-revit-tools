@@ -119,7 +119,7 @@ public static class ExtrudedColumnReplacer
                     report.Add(column.SourceGuid,"Column","replaced","Native two-level FamilyInstance; exact polygon extrusion with holes/parts; bounds and volume checked.",instance.UniqueId);
                 }
                 catch(Exception ex){if(t.GetStatus()==TransactionStatus.Started)t.RollBack();report.Add(column.SourceGuid,"Column","retained",ex.ToString());}
-                if(done%25==0 && !string.IsNullOrEmpty(doc.PathName)){report.Save(Path.Combine(folder,"replacement-checkpoint.json"));doc.Save();}
+                if(done%25==0 && !string.IsNullOrEmpty(doc.PathName)){report.Save(Path.Combine(folder,"replacement-checkpoint.json"));Checkpoints.Save(doc);}
             }
         }
         return report;
