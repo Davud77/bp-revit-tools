@@ -141,7 +141,10 @@ internal sealed class ExchangeWindow : Window
             var info=connection.Value;var project=info.GetProperty("project");
             source.Text=project.S("projectName")+"\n"+project.S("projectPath")+"\nTapir: "+info.D("port")+" · окно: "+info.S("windowType");
             foreach(var t in info.GetProperty("translators").EnumerateArray())translators.Items.Add(t.S("name"));
-            translators.SelectedItem=translators.Items.Cast<string>().FirstOrDefault(s=>s=="Точный Экспорт Геометрии");
+            // Same preference as tools/revit_session.py choose_translator: exact geometry, then general export, then similar names.
+            var available=translators.Items.Cast<string>().ToList();
+            translators.SelectedItem=new[]{"Точный Экспорт Геометрии","Exact Geometry Export","Транслятор для Общего Экспорта","General Translator"}.FirstOrDefault(available.Contains)
+                ??new[]{"точн","exact","общ","general"}.SelectMany(h=>available.Where(n=>n.Contains(h,StringComparison.OrdinalIgnoreCase))).FirstOrDefault();
             if(translators.SelectedIndex<0 && translators.Items.Count>0)translators.SelectedIndex=0;
             Log("Подключено. Выберите формат и категории экспорта.");
             if(resumeSession.Length>0)Log("Восстановление и подготовка: "+resumeSession+". Готовый IFC используется повторно; отсутствующий экспортируется после проверки источника.");

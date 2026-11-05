@@ -20,6 +20,10 @@ def audit(session,out,port=19723):
     for path in raw.glob('*GetDetailsOfElements.json'):
         request=json.loads(path.read_text(encoding='utf-8'))['request']['parameters']['addOnCommandParameters']
         for row in request['elements']:selected.add(row['elementId']['guid'].upper())
+    # Dimension capture also reads grid-marker objects that are not exported; count only exported elements.
+    manifest=json.loads((session/'source/manifest.json').read_text(encoding='utf-8-sig'))
+    exported={e['sourceGuid'].upper() for e in manifest['elements']}
+    selected&=exported
     if len(selected)!=sum(report['counts'].values()):raise ValueError('Detail selection does not match the completed export')
     out.mkdir(parents=True,exist_ok=False);api=TapirClient(port,out/'api',timeout=90)
     if api.call('GetProjectInfo')!=state['project']:raise ValueError('Different source project is open')

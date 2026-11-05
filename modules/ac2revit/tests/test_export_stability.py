@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'exporter'))
 from ac2r.export import story_structure  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
 from export_room_separators import same_source  # noqa: E402
+from revit_session import choose_translator  # noqa: E402
 
 
 class StoryStabilityTests(unittest.TestCase):
@@ -35,6 +36,22 @@ class SourceComparisonTests(unittest.TestCase):
     def test_real_change_still_detected(self):
         actual = {'begCoordinate': {'x': 1.0, 'y': 2.0}, 'height': 3.0, 'linkToSettings': {'homeStoryDifference': 0, 'topOffset': 0.3}}
         self.assertFalse(same_source(self.wall, actual))
+
+
+class TranslatorChoiceTests(unittest.TestCase):
+    """АР ветхое has no «Точный Экспорт Геометрии»; the export must still pick a translator and say which."""
+
+    def test_requested_kept(self):
+        self.assertEqual(choose_translator(['A', 'Точный Экспорт Геометрии'], 'Точный Экспорт Геометрии'), ('Точный Экспорт Геометрии', ''))
+
+    def test_fallback_is_stated(self):
+        name, note = choose_translator(['Экспорт в Revit MEP', 'Транслятор для Общего Экспорта'], 'Точный Экспорт Геометрии')
+        self.assertEqual(name, 'Транслятор для Общего Экспорта')
+        self.assertIn('отсутствует', note)
+        self.assertEqual(choose_translator(['Мой точный IFC'], 'Точный Экспорт Геометрии')[0], 'Мой точный IFC')
+        self.assertEqual(choose_translator(['Только этот'], 'X')[0], 'Только этот')
+        with self.assertRaises(ValueError):
+            choose_translator([], 'X')
 
 
 if __name__ == '__main__':

@@ -17,6 +17,22 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 
 
+# IFC translators are stored per Archicad project; names are localized. Preferred: exact geometry.
+PREFERRED_TRANSLATORS = ('Точный Экспорт Геометрии', 'Exact Geometry Export', 'Транслятор для Общего Экспорта', 'General Translator')
+TRANSLATOR_HINTS = ('точн', 'exact', 'общ', 'general')
+
+
+def choose_translator(names, requested):
+    """Requested translator when the project has it, otherwise the best available one, stated explicitly."""
+    if not names:
+        raise ValueError('В проекте Archicad нет IFC-трансляторов экспорта')
+    if requested in names:
+        return requested, ''
+    chosen = next((n for n in PREFERRED_TRANSLATORS if n in names), None) or \
+        next((n for h in TRANSLATOR_HINTS for n in names if h in n.lower()), None) or names[0]
+    return chosen, f'Транслятор «{requested}» отсутствует в проекте; использован «{chosen}».'
+
+
 def sessions_root():
     # Revit passes the per-user folder: outside the versioned install and short enough for MAX_PATH.
     return Path(os.environ.get('AC2R_SESSIONS') or ROOT/'artifacts/sessions').resolve()
@@ -233,10 +249,15 @@ def run(args):
     if info['projectId'] != args.project_id or info['project']['projectPath'] != args.project_path:
         raise ValueError('Активный проект Archicad изменился. Подключитесь повторно.')
     names = [t['name'] for t in info['translators']]
-    if mode!='json' and args.translator not in names: raise ValueError('Выбранный IFC-транслятор отсутствует')
+    translator, translator_note = args.translator, ''
+    if mode!='json':
+        translator, translator_note = choose_translator(names, args.translator)
+        if translator_note: print('IFC: '+translator_note, flush=True)
     session.mkdir(parents=True)
     options=dict(exportMode=mode,exportKinds=selected)
-    write_json(session/'session.json', dict(format='ac2r.session/1', status='exporting', selectedTranslator=args.translator, **options, **info))
+    write_json(session/'session.json', dict(format='ac2r.session/1', status='exporting', selectedTranslator=translator,
+               translatorNote=translator_note, **options, **info))
+    args.translator = translator
     phase = 'json-export'
     try:
         export_args = argparse.Namespace(output=str(session/'source'), port=args.port, timeout=180,
