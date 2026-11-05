@@ -9,13 +9,14 @@ public static class NativeGeometry
     public static List<Solid> Solids(Element element)
     {
         var list=new List<Solid>();
+        // Copies are independent; the element geometry is released here, on Revit's thread, not by the GC finalizer.
         void Read(GeometryElement g)
         {
             foreach(var o in g)
-                if(o is GeometryInstance i)Read(i.GetInstanceGeometry());
+                if(o is GeometryInstance i){using var instance=i.GetInstanceGeometry();Read(instance);}
                 else if(o is Solid s && s.Volume>1e-12)list.Add(SolidUtils.CreateTransformed(s,Transform.Identity));
         }
-        var geometry=element.get_Geometry(new Options{DetailLevel=ViewDetailLevel.Fine});
+        using var geometry=element.get_Geometry(new Options{DetailLevel=ViewDetailLevel.Fine});
         if(geometry!=null)Read(geometry);return list;
     }
     public static List<Solid> MeshSolids(JsonElement record,Transform worldToLocal)
@@ -83,9 +84,10 @@ public static class NativeGeometry
             foreach(var cut in subtract)
             {
                 if(remainder.Volume<1e-12)break;
-                remainder=BooleanOperationsUtils.ExecuteBooleanOperation(remainder,cut,BooleanOperationsType.Difference);
+                var next=BooleanOperationsUtils.ExecuteBooleanOperation(remainder,cut,BooleanOperationsType.Difference);
+                remainder.Dispose();remainder=next;
             }
-            total+=remainder.Volume;
+            total+=remainder.Volume;remainder.Dispose();
         }
         return UnitUtils.ConvertFromInternalUnits(total,UnitTypeId.CubicMeters);
     }

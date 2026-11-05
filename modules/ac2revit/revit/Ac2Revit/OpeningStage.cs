@@ -57,6 +57,10 @@ public static class OpeningStage
                 accepted.Add(record);report.Add(key,"Opening","unchanged","Existing owned cut retained",retained.UniqueId);continue;
             }
             guard.Enter(key);
+            // Every Revit solid created for this opening is released at the end of the opening, on Revit's thread.
+            // Left to the .NET finalizer, thousands of them were released off-thread ("АР ветхое": Revit 2026.4
+            // terminated at different openings, ucrtbase 0xc0000409 and coreclr 0xc0000005).
+            var owned=new HashSet<IDisposable>(ReferenceEqualityComparer.Instance);
             try
             {
                 var hostElement=index.GetValueOrDefault(record.S("hostGuid"))??throw new InvalidDataException("Source opening host is missing");
@@ -66,9 +70,16 @@ public static class OpeningStage
                 var points=vg.GetProperty("vertices").Read<List<Point>>().Select(NativeGeometry.At).ToList();
                 var center=new XYZ((points.Min(p=>p.X)+points.Max(p=>p.X))/2,(points.Min(p=>p.Y)+points.Max(p=>p.Y))/2,(points.Min(p=>p.Z)+points.Max(p=>p.Z))/2);
                 var local=Transform.CreateTranslation(center.Negate());var source=NativeGeometry.MeshSolids(vg,local);
-                var world=source.Select(s=>SolidUtils.CreateTransformed(s,Transform.CreateTranslation(center))).ToList();
-                var before=NativeGeometry.Solids(hostElement);if(before.Count==0)throw new InvalidDataException("Opening host has no solid geometry");
-                var expected=before.Select(s=>{var remainder=s;foreach(var cut in world)remainder=BooleanOperationsUtils.ExecuteBooleanOperation(remainder,cut,BooleanOperationsType.Difference);return remainder;}).Where(s=>s.Volume>1e-12).ToList();
+                owned.UnionWith(source);
+                var world=source.Select(s=>SolidUtils.CreateTransformed(s,Transform.CreateTranslation(center))).ToList();owned.UnionWith(world);
+                var before=NativeGeometry.Solids(hostElement);owned.UnionWith(before);if(before.Count==0)throw new InvalidDataException("Opening host has no solid geometry");
+                var expected=new List<Solid>();
+                foreach(var solid in before)
+                {
+                    var remainder=solid;
+                    foreach(var cut in world){var next=BooleanOperationsUtils.ExecuteBooleanOperation(remainder,cut,BooleanOperationsType.Difference);owned.Add(next);remainder=next;}
+                    if(remainder.Volume>1e-12)expected.Add(remainder);
+                }
                 double reduction=UnitUtils.ConvertFromInternalUnits(before.Sum(s=>s.Volume)-expected.Sum(s=>s.Volume),UnitTypeId.CubicMeters);
                 if(reduction<=1e-7)throw new InvalidDataException("IFC void does not intersect the actual native host; no guessed repositioning");
                 Family? cutFamily=null;
@@ -105,7 +116,7 @@ public static class OpeningStage
                     if(!InstanceVoidCutUtils.CanBeCutWithVoid(hostElement))throw new InvalidDataException("Native host cannot be cut with an instance void: "+hostElement.GetType().Name);
                     InstanceVoidCutUtils.AddInstanceVoidCut(doc,hostElement,cutter);cutElement=cutter;
                 }
-                doc.Regenerate();NativeGeometry.VerifySolids(NativeGeometry.Solids(hostElement),expected);
+                doc.Regenerate();var after=NativeGeometry.Solids(hostElement);owned.UnionWith(after);NativeGeometry.VerifySolids(after,expected);
                 Storage.Tag(cutElement,project,cutKey,"opening-ifc:"+root.S("ifcSha256"),record.GetRawText());
                 cutElement.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set("Source host "+record.S("hostGuid")+"; exact IFC void; filling "+key);
                 if(t.Commit()!=TransactionStatus.Committed)throw new InvalidDataException("Opening cut rolled back");
@@ -121,7 +132,7 @@ public static class OpeningStage
                 if(!record.B("emptyOpening") && record.TryGetProperty("vertices",out _) && !accepted.Any(r=>r.S("sourceGuid")==key))
                 {accepted.Add(record);report.Add(key,record.S("kind"),"incomplete","Точная IFC-геометрия заполнения будет перенесена; нативный проём не подтверждён.");}
             }
-            finally{guard.Exit();}
+            finally{guard.Exit();foreach(var solid in owned)try{solid.Dispose();}catch(Exception){}}
         }
         report.Save(Path.Combine(folder,"cut-report.json"));
         foreach(string kind in new[]{"Door","Window"})
