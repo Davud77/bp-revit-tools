@@ -186,8 +186,18 @@ def prepare_pipeline(session, manifest_path, ifc_path, assets):
                  'AC2R_RectangularBeam.rfa', 'AC2R_Void.rft'):
         if not (assets/name).is_file():
             raise FileNotFoundError(assets/name)
-    print('Чтение IFC для всех этапов подготовки', flush=True)
-    model=ifcopenshell.open(str(ifc_path))
+    import gc
+    import ifc_parts
+    parts=None
+    if ifc_parts.should_split(ifc_path):
+        parts=ifc_parts.ensure(manifest_path,ifc_path,Path(ifc_path).parent.parent/'ifc-parts')
+        def part(name):
+            gc.collect();print('IFC: часть '+name,flush=True);return ifcopenshell.open(parts['parts'][name]['file'])
+    else:
+        print('Чтение IFC для всех этапов подготовки', flush=True)
+        whole=ifcopenshell.open(str(ifc_path))
+        def part(name):return whole
+    model=part('columns')
     from ifc_coordinates import infer_frame
     with manifest_path.open(encoding='utf-8') as stream: frame=infer_frame(json.load(stream),model)
     write_json(session/'ifc-coordinate-frame.json',frame)
@@ -204,15 +214,19 @@ def prepare_pipeline(session, manifest_path, ifc_path, assets):
     write_json(session/'columns-mapping.json', dict(mapping, connectWalls=False, automaticSimpleColumns=True,
                columnFamilyFile=str((assets/'AC2R_RectangularColumn.rfa').resolve()), columnWidthParameter='b', columnDepthParameter='h'))
     print('Точная геометрия IFC: Beam',flush=True)
+    model=None;model=part('beams')
     bodies(manifest_path,ifc_path,session/'beam-bodies',kind='Beam',ifc_model=model,frame=frame)
     print('Распознавание профилей колонн и балок', flush=True)
     extrusions(session/'column-extrusions', session/'column-bodies/column-bodies.json', already)
     native_beams(session/'beam-bodies/beam-bodies.json', session/'native-beams')
     print('Окна, двери и проёмы IFC', flush=True)
+    model=None;model=part('openings')
     openings(session/'openings', manifest_path=manifest_path, ifc_path=ifc_path,ifc_model=model,frame=frame)
+    model=None
     print('Крыши, лестницы, ограждения и библиотечные объекты IFC',flush=True)
     supplemental(argparse.Namespace(out=session/'supplemental-bodies',manifest=manifest_path,ifc=ifc_path,
-        frame=session/'ifc-coordinate-frame.json',resume=False),ifc_model=model)
+        frame=session/'ifc-coordinate-frame.json',resume=False),
+        ifc_model=(lambda kind:part('supplemental-'+kind.lower())) if parts else part('all'))
     plan = {'pipelineFormat': 'ac2r.pipeline/1', 'sourceManifest': str(manifest_path),
             'mapping': str(session/'mapping.json'), 'gridsManifest': str(native_path),
             'columnNativeManifest': str(native_path), 'columnNativeMapping': str(session/'columns-mapping.json'),
@@ -225,6 +239,7 @@ def prepare_pipeline(session, manifest_path, ifc_path, assets):
             'openingsPlan': str(session/'openings/openings.json'),
             'completeWallsFromIfc': True,
             'ifcCoordinateFrame':str(session/'ifc-coordinate-frame.json'),
+            'ifcParts':str(Path(ifc_path).parent.parent/'ifc-parts'/'parts.json') if parts else '',
             'supplementalBodiesPlan':str(session/'supplemental-bodies/supplemental.json'),
             'completeInitialWallJoins':True,
             'roomSeparators': str(session/'separators.json'),
@@ -436,6 +451,10 @@ def prepare_captured_session(session,assets):
     state=json.loads(state_path.read_text(encoding='utf-8-sig'))
     if state['projectId']!=capture['projectId'] or state['project']!=capture['sourceProject']:raise ValueError('Captured session project mismatch')
     budget=memory_budget(session/'source/model.ifc')
+    if budget['defer']:
+        # The whole model does not fit: prepare from IFC parts, each opened alone (ifc_parts.py).
+        import ifc_parts
+        budget=ifc_parts.budget(ifc_parts.ensure(session/'source/manifest.json',session/'source/model.ifc',session/'ifc-parts'))
     if budget['defer']:raise MemoryError(f"Недостаточно доступной памяти для IFC: оценка {budget['requiredBytes']/1024**3:.1f} ГиБ, доступно {budget['availableCommitBytes']/1024**3:.1f} ГиБ. Закройте Archicad и другие большие модели; захват данных сохранён.")
     # Short attempt folder keeps deep stage files of long project names within MAX_PATH.
     stamp=datetime.datetime.now().strftime('%Y%m%d-%H%M%S');attempt=session/('prep-'+stamp);n=2

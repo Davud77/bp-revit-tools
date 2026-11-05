@@ -1,6 +1,7 @@
 """Prepare exact IFC bodies for physical categories without native adapters."""
 import argparse
 import collections
+import gc
 import json
 from pathlib import Path
 import sys
@@ -24,12 +25,18 @@ def prepare(args,ifc_model=None):
     if frame['projectId']!=m['source']['projectId'] or canonical_digest({k:v for k,v in frame.items() if k!='hash'})!=frame['hash']:
         raise ValueError('Coordinate frame identity/hash mismatch')
     print('Reading IFC for supplemental physical bodies',flush=True)
-    model=ifc_model if ifc_model is not None else ifcopenshell.open(str(args.ifc));batches=[];summary=collections.Counter();identities=SourceIfcIndex(m,model)
+    # ifc_model may be a callable kind -> model (IFC parts): only one kind's part is in memory at a time.
+    per_kind=callable(ifc_model)
+    model=None if per_kind else (ifc_model if ifc_model is not None else ifcopenshell.open(str(args.ifc)))
+    batches=[];summary=collections.Counter();identities=None if per_kind else SourceIfcIndex(m,model)
     ifc_sha=file_sha256(args.ifc)
     settings=ifcopenshell.geom.settings();settings.set('use-world-coords',True);settings.set('mesher-linear-deflection',.00025)
     for kind in ('Roof','Mesh','Stair','Railing','CurtainWall','Object','Shell','Skylight','Lamp'):
         keys=[e['sourceGuid'] for e in m['elements'] if e['kind']==kind and not
               (kind=='Mesh' and e.get('status')=='ready' and e.get('payload',{}).get('format')=='ac2r.terrain/1')]
+        if per_kind:
+            model=identities=None;gc.collect()
+            if keys:model=ifc_model(kind);identities=SourceIfcIndex(m,model)
         for n in range(0,len(keys),100):
             folder=args.out/(kind.lower()+'-'+str(n//100).zfill(4))
             source_keys={k.upper() for k in keys[n:n+100]};body_file=folder/(kind.lower()+'-bodies.json')

@@ -38,6 +38,8 @@ public static class PipelineRunner
         public bool CompleteWallsFromIfc {get;set;}
         public string ProfileColumnMode {get;set;}="auto";
         public string IfcCoordinateFrame {get;set;}="";
+    /// <summary>parts.json of IFC parts (tools/ifc_parts.py) for large models; empty when the whole IFC is used.</summary>
+    public string IfcParts {get;set;}="";
         public string SupplementalBodiesPlan {get;set;}="";
         public bool CompleteInitialWallJoins {get;set;}
     }
@@ -273,8 +275,11 @@ public static class PipelineRunner
                     using var reference=JsonDocument.Parse(File.ReadAllText(Resolve(plan.BeamBodies)));
                     string folder=Path.Combine(output,"missing-wall-ifc");
                     progress?.Invoke("wallGeometryPreparation",0,missing.Length);
-                    ExchangeServices.Run("prepare_column_bodies.py",["--manifest",Resolve(plan.SourceManifest),"--ifc",Resolve(reference.RootElement.S("ifcPath")),
-                        "--kind","Wall","--keys-file",keys,"--out",folder],line=>File.AppendAllText(Path.Combine(output,"missing-wall-ifc.log"),line+Environment.NewLine));
+                    var wallArgs=new List<string>{"--manifest",Resolve(plan.SourceManifest),"--ifc",Resolve(reference.RootElement.S("ifcPath")),"--kind","Wall","--keys-file",keys,"--out",folder};
+                    // Large models: read the walls part, not the whole IFC, while Revit holds the model in memory.
+                    string wallsPart=plan.IfcParts.Length>0?Path.Combine(Path.GetDirectoryName(Resolve(plan.IfcParts))!,"walls.ifc"):"";
+                    if(wallsPart.Length>0 && File.Exists(wallsPart))wallArgs.AddRange(["--ifc-part",wallsPart]);
+                    ExchangeServices.Run("prepare_column_bodies.py",wallArgs,line=>File.AppendAllText(Path.Combine(output,"missing-wall-ifc.log"),line+Environment.NewLine));
                     bodyPath=Path.Combine(folder,"wall-bodies.json");
                 }
             }

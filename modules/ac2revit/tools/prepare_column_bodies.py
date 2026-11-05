@@ -93,8 +93,13 @@ if __name__=='__main__':
     p.add_argument('--ifc',type=Path,required=True)
     p.add_argument('--kind',choices=['Column','Beam','Wall','Slab'],default='Column')
     p.add_argument('--keys-file',type=Path)
+    p.add_argument('--ifc-part',type=Path,help='IFC part to read from (ifc_parts.py); --ifc stays the recorded source')
     p.add_argument('--out',type=Path,required=True);a=p.parse_args()
     from ifc_reader_wait import wait_for_reader
     wait_for_reader(ROOT)
     keys={k.upper() for k in json.loads(a.keys_file.read_text(encoding='utf-8'))} if a.keys_file else None
-    print(json.dumps(prepare(a.manifest,a.ifc,a.out,a.kind,keys),indent=2),flush=True)
+    part=None
+    if a.ifc_part:
+        import ifcopenshell
+        part=ifcopenshell.open(str(a.ifc_part))
+    print(json.dumps(prepare(a.manifest,a.ifc,a.out,a.kind,keys,ifc_model=part),indent=2),flush=True)
