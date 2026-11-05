@@ -68,7 +68,7 @@ public sealed class Importer
         return true;
     }
     public const int ElementBatchSize=50;
-    static readonly HashSet<string> BatchKinds=["Wall","Slab","Column","Beam","Object","Lamp","Morph","Grid"];
+    static readonly HashSet<string> BatchKinds=["Wall","Slab","Column","Beam","Object","Lamp","Morph","Grid","Zone"];
     /// <summary>Creates validated independent elements in one transaction, each in its own sub-transaction, with one
     /// regeneration and one commit (per-element Commit/Regenerate dominated large imports and grew the undo history).
     /// If Revit rolls the batch back, its report entries are discarded and every element is retried on its own,
@@ -77,8 +77,8 @@ public sealed class Importer
     {
         if(batch.Count==0)return;
         var items=batch.ToList();batch.Clear();
-        int reportCount=Report.Items.Count,offsetCount=Report.WallOffsets.Count;
-        var created=new List<(ElementRecord Record,Element Element)>();var failed=new List<ElementRecord>();var owners=new Dictionary<ElementId,string>();
+        int reportCount=Report.Items.Count,offsetCount=Report.WallOffsets.Count,areaCount=Report.ZoneAreas.Count;
+        var created=new List<(ElementRecord Record,Element Element)>();var failed=new List<(ElementRecord Record,Exception Error)>();var owners=new Dictionary<ElementId,string>();
         bool committed=false;
         using(var transaction=new Transaction(doc,"AC "+items.Count+" elements"))
         {
@@ -97,7 +97,7 @@ public sealed class Importer
                         if(sub.Commit()!=TransactionStatus.Committed)throw new InvalidOperationException("Sub-transaction rolled back");
                         created.Add((e,element));owners[element.Id]=e.SourceGuid;
                     }
-                    catch(Exception){if(sub.GetStatus()==TransactionStatus.Started)sub.RollBack();failed.Add(e);}
+                    catch(Exception ex){if(sub.GetStatus()==TransactionStatus.Started)sub.RollBack();failed.Add((e,ex));}
                 }
                 doc.Regenerate();
                 committed=transaction.Commit()==TransactionStatus.Committed;
@@ -106,15 +106,22 @@ public sealed class Importer
         }
         if(!committed)
         {
+            // Revit rejected the batch: discard its report entries and give every element its own transaction.
             Report.Items.RemoveRange(reportCount,Report.Items.Count-reportCount);Report.WallOffsets.RemoveRange(offsetCount,Report.WallOffsets.Count-offsetCount);
-            failed=items;created.Clear();
+            Report.ZoneAreas.RemoveRange(areaCount,Report.ZoneAreas.Count-areaCount);
+            foreach(var e in items)
+            {
+                try{var element=Commit(e.SourceGuid,e.Kind,ElementHash(e),()=>Create(e),e.Raw.GetRawText());if(element!=null)hosts[e.SourceGuid]=element;}
+                catch(Exception ex){Report.Add(e.SourceGuid,e.Kind,"blocked",ex.Message);if(!config.AllowPartial)throw;}
+            }
+            return;
         }
         foreach(var (e,element) in created){existing[e.SourceGuid]=element;hosts[e.SourceGuid]=element;Report.Add(e.SourceGuid,e.Kind,"created","",element.UniqueId);}
-        // Failures are rerun in their own transaction for the exact per-element report and behaviour.
-        foreach(var e in failed)
+        // An element that threw was rolled back by its own sub-transaction; it is reported exactly as Commit reports it.
+        foreach(var (e,error) in failed)
         {
-            try{var element=Commit(e.SourceGuid,e.Kind,ElementHash(e),()=>Create(e),e.Raw.GetRawText());if(element!=null)hosts[e.SourceGuid]=element;}
-            catch(Exception ex){Report.Add(e.SourceGuid,e.Kind,"blocked",ex.Message);if(!config.AllowPartial)throw;}
+            Report.Add(e.SourceGuid,e.Kind,"failed",error.Message);
+            if(!config.AllowPartial){Report.Add(e.SourceGuid,e.Kind,"blocked",error.Message);throw error;}
         }
     }
     Element? Commit(string key, string kind, string hash, Func<Element> action, string raw = "")

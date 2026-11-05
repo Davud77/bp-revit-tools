@@ -44,13 +44,16 @@ public static class SpatialStage
             storage=DataStorage.Create(doc);Storage.Tag(storage,project,key,signature,JsonSerializer.Serialize(state,Json.Options));reset.Commit();
             if(!string.IsNullOrEmpty(doc.PathName))doc.Save();
         }
-        using var process=System.Diagnostics.Process.GetCurrentProcess();process.Refresh();long initialMemory=process.PrivateMemorySize64;int batches=0;
+        using var process=System.Diagnostics.Process.GetCurrentProcess();process.Refresh();long initialMemory=process.PrivateMemorySize64;
+        // Each batch is one undo entry (assimilated group), so only memory growth forces a reopen; a fixed count
+        // of 4 batches reopened the 2 722-room Stavropol model 7 times without memory pressure.
+        long growthLimit=CheckpointPolicy.GrowthLimit(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes);
         var original=source.Elements;
         try
         {
             while(state.Next<ordered.Length)
             {
-                int start=state.Next;var batch=ordered.Skip(start).Take(100).ToHashSet();
+                int start=state.Next;var batch=ordered.Skip(start).Take(200).ToHashSet();
                 source.Elements=original.Where(e=>e.Kind!="Zone" || batch.Contains(e)).ToList();
                 var result=new Importer(doc,source,config){Progress=(_,n,_)=>progress?.Invoke("zoneAreas",start+n,ordered.Length)}
                     .Run(new HashSet<string>{"Zone"},false,false);
@@ -58,8 +61,8 @@ public static class SpatialStage
                 using(var transaction=new Transaction(doc,"Record spatial checkpoint"))
                 {transaction.Start();Storage.Tag(storage,project,key,signature,JsonSerializer.Serialize(state,Json.Options));transaction.Commit();}
                 state.Report.Save(Path.Combine(folder,"room-checkpoint-report.json"));progress?.Invoke("zoneAreas",state.Next,ordered.Length);
-                process.Refresh();batches++;
-                bool reopen=state.Next<ordered.Length && !string.IsNullOrEmpty(doc.PathName) && (batches>=4 || process.PrivateMemorySize64-initialMemory>768L*1024*1024);
+                process.Refresh();
+                bool reopen=state.Next<ordered.Length && !string.IsNullOrEmpty(doc.PathName) && process.PrivateMemorySize64-initialMemory>growthLimit;
                 Checkpoints.Save(doc,force:reopen);
                 if(reopen)
                     throw new ImportCheckpointException($"Помещения {state.Next}/{ordered.Length} сохранены; освобождение истории Revit.");
