@@ -23,7 +23,7 @@ public static class OpeningStage
         }
         var families=new Dictionary<string,Family>();var accepted=new List<JsonElement>();int done=0,mutations=0;
         // Survives a native Revit crash: the marker lives next to the session's openings plan.
-        var guard=new CrashGuard(Path.GetDirectoryName(Path.GetFullPath(plan))!,"openingCuts");
+        var guard=new CrashGuard(CrashGuard.SessionFolder(plan),"openingCuts");
         using var process=System.Diagnostics.Process.GetCurrentProcess();process.Refresh();long initialMemory=process.PrivateMemorySize64;
         foreach(var record in records)
         {

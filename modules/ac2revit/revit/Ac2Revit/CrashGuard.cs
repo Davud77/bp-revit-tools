@@ -33,6 +33,14 @@ public sealed class CrashGuard
         Quarantined = quarantined;
     }
 
+    /// <summary>The source session (folder with session.json) above a prepared plan; repeated preparations share it.</summary>
+    public static string SessionFolder(string planPath)
+    {
+        for (var d = new DirectoryInfo(Path.GetDirectoryName(Path.GetFullPath(planPath))!); d != null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "session.json"))) return d.FullName;
+        return Path.GetDirectoryName(Path.GetFullPath(planPath))!;
+    }
+
     public void Enter(string key) => File.WriteAllText(path, JsonSerializer.Serialize(new { stage, key, utc = DateTime.UtcNow }));
     public void Exit() { if (File.Exists(path)) File.Delete(path); }
 }
