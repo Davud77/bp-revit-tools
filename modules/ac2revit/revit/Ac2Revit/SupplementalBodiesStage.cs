@@ -66,7 +66,7 @@ public static class SupplementalBodiesStage
             processedBodies+=batchBodies;
             if(totalBodies>0)progress?.Invoke("supplemental:"+sourceKind,processedBodies,totalBodies);
             process.Refresh();
-            if(CheckpointPolicy.ShouldReopen(committed,initialMemory,process.PrivateMemorySize64))
+            if(CheckpointPolicy.ShouldReopen(committed,initialMemory,process.PrivateMemorySize64,CheckpointPolicy.GrowthLimit(GC.GetGCMemoryInfo().TotalAvailableMemoryBytes)))
             {
                 Checkpoints.Save(doc,force:true);
                 throw new ImportCheckpointException("Дополнительная IFC-геометрия сохранена; требуется сброс истории и кэша Revit.");

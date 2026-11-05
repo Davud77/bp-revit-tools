@@ -6,7 +6,10 @@ using Ac2Revit;
     if(!CheckpointPolicy.SaveDue(null,t0))throw new Exception("First checkpoint must save");
     if(CheckpointPolicy.SaveDue(t0,t0.AddSeconds(30)))throw new Exception("Checkpoint 30 s after a save must be skipped");
     if(!CheckpointPolicy.SaveDue(t0,t0+CheckpointPolicy.SaveInterval))throw new Exception("Checkpoint at the interval must save");
-    Console.WriteLine("PASS checkpoint saves are time-based");
+    long GiB=1024L*1024*1024;
+    if(CheckpointPolicy.GrowthLimit(28*GiB)!=28*GiB/8 || CheckpointPolicy.GrowthLimit(4*GiB)!=768L*1024*1024 || CheckpointPolicy.GrowthLimit(64*GiB)!=4*GiB)throw new Exception("Reopen growth limit must scale with memory within 768 MB .. 4 GB");
+    if(CheckpointPolicy.ShouldReopen(true,2*GiB,4*GiB,CheckpointPolicy.GrowthLimit(28*GiB)))throw new Exception("2 GB growth on a 28 GB computer must not reopen");
+    Console.WriteLine("PASS checkpoint saves are time-based; reopen limit scales with memory");
 }
 
 // Site: Archicad north / survey point -> Revit shared coordinates and true north.
