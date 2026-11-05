@@ -104,9 +104,11 @@ public static class WallCompletion
         }
         int nativeCount=walls.Count(w=>index.GetValueOrDefault(w.SourceGuid) is Wall),substitutes=walls.Count(w=>index.GetValueOrDefault(w.SourceGuid) is DirectShape);
         var missing=walls.Where(w=>!index.ContainsKey(w.SourceGuid)).Select(w=>w.SourceGuid).ToArray();
-        report.Add("wall-coverage","WallCoverage",missing.Length==0?"verified":"failed",$"Source {walls.Count}; native {nativeCount}; explicitly incomplete {substitutes}; missing {missing.Length}: "+string.Join(",",missing));
+        // Missing walls are reported per GUID with their failure reason; the rest of the model is still built
+        // (Kizlyar: 14 of 5711 walls had no exact representation and used to stop the whole transfer).
+        report.Add("wall-coverage","WallCoverage",missing.Length==0?"verified":"partial",$"Source {walls.Count}; native {nativeCount}; explicitly incomplete {substitutes}; missing {missing.Length}: "+string.Join(",",missing));
+        foreach(string guid in missing)report.Add(guid,"Wall","notTransferred","Стена не перенесена: нет нативной стены и точной геометрии; причина — в записях WallGeometry этого GUID.");
         report.Save(Path.Combine(output,"coverage.json"));
-        if(missing.Length>0)throw new InvalidDataException("Wall coverage incomplete; see "+Path.Combine(output,"coverage.json"));
         return report;
     }
 }

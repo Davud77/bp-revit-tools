@@ -57,9 +57,26 @@ def infer_frame(manifest, model, identities=None):
         a.append(world); b.append(source)
         evidence.append({'sourceGuid': element['sourceGuid'], 'ifcGlobalId': obj.GlobalId,
                          'ifcInsertionMeters': world.tolist(), 'sourceInsertionMeters': source})
+    method = 'Rigid Z rotation/translation from exact IFC ObjectPlacement/API insertion point pairs; all anchors validated'
+    if len(a) < 3:
+        # Projects without simple columns (houses): a straight wall's IFC placement origin is its Archicad begin
+        # point at the wall's base. Exact pairs only; fit_frame still rejects any pair beyond 1 micrometre.
+        for element in manifest['elements']:
+            if element['kind'] != 'Wall' or len(a) >= 200: continue
+            d = element['raw'].get('details', {})
+            if d.get('geometryType') not in (None, 'Straight') or abs(d.get('arcAngle', 0) or 0) > 1e-12 or 'begCoordinate' not in d or d.get('zCoordinate') is None: continue
+            matches = identities.matches(element)
+            if len(matches) != 1 or not getattr(matches[0], 'ObjectPlacement', None): continue
+            obj = matches[0]
+            world = ifcopenshell.util.placement.get_local_placement(obj.ObjectPlacement)[:3, 3]*scale
+            source = [d['begCoordinate']['x'], d['begCoordinate']['y'], d['zCoordinate']]
+            a.append(world); b.append(source)
+            evidence.append({'sourceGuid': element['sourceGuid'], 'ifcGlobalId': obj.GlobalId, 'anchor': 'wallBegin',
+                             'ifcInsertionMeters': world.tolist(), 'sourceInsertionMeters': source})
+        method += '; straight wall begin points used because fewer than three simple columns exist'
     frame = fit_frame(a, b)
     frame.update(format='ac2r.ifc-frame/1', projectId=manifest['source']['projectId'],
-                 method='Rigid Z rotation/translation from exact IFC ObjectPlacement/API insertion point pairs; all anchors validated',
+                 method=method,
                  evidence=evidence)
     frame['hash'] = canonical_digest(frame)
     print(f"IFC → Archicad: {frame['anchors']} exact anchors, residual {frame['maxResidualMeters']:.9g} m, translation {frame['translationMeters']}", flush=True)
