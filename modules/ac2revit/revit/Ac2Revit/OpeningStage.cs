@@ -22,6 +22,8 @@ public static class OpeningStage
             records=sample.Concat(records.Where(r=>r.S("status") is "ready" or "fillingOnly").Where(r=>!sample.Any(s=>s.S("sourceGuid")==r.S("sourceGuid")))).Take(limit).ToList();
         }
         var families=new Dictionary<string,Family>();var accepted=new List<JsonElement>();int done=0,mutations=0;
+        // Survives a native Revit crash: the marker lives next to the session's openings plan.
+        var guard=new CrashGuard(Path.GetDirectoryName(Path.GetFullPath(plan))!,"openingCuts");
         using var process=System.Diagnostics.Process.GetCurrentProcess();process.Refresh();long initialMemory=process.PrivateMemorySize64;
         foreach(var record in records)
         {
@@ -43,11 +45,18 @@ public static class OpeningStage
                 accepted.Add(record);report.Add(key,record.S("kind"),"incomplete","НЕПОЛНОЦЕННОЕ ЗАПОЛНЕНИЕ: точная IFC-геометрия; вырез не создаётся без подтверждённой связи. "+record.S("reason"));continue;
             }
             if(record.S("status")!="ready"){report.Add(key,record.S("kind"),"blocked",record.S("reason"));continue;}
+            if(guard.Quarantined.Contains(key))
+            {
+                report.Add(key,"Opening","blocked","Вырез не выполнен: на этом проёме Revit аварийно завершился в предыдущем запуске; элемент пропущен, остальная модель построена.");
+                if(!record.B("emptyOpening") && record.TryGetProperty("vertices",out _))accepted.Add(record);
+                continue;
+            }
             if(index.TryGetValue(cutKey,out var retained))
             {
                 if(Storage.Read(retained)?.Hash!="opening-ifc:"+root.S("ifcSha256"))throw new InvalidDataException("Existing opening reference changed; update adapter required: "+key);
                 accepted.Add(record);report.Add(key,"Opening","unchanged","Existing owned cut retained",retained.UniqueId);continue;
             }
+            guard.Enter(key);
             try
             {
                 var hostElement=index.GetValueOrDefault(record.S("hostGuid"))??throw new InvalidDataException("Source opening host is missing");
@@ -112,6 +121,7 @@ public static class OpeningStage
                 if(!record.B("emptyOpening") && record.TryGetProperty("vertices",out _) && !accepted.Any(r=>r.S("sourceGuid")==key))
                 {accepted.Add(record);report.Add(key,record.S("kind"),"incomplete","Точная IFC-геометрия заполнения будет перенесена; нативный проём не подтверждён.");}
             }
+            finally{guard.Exit();}
         }
         report.Save(Path.Combine(folder,"cut-report.json"));
         foreach(string kind in new[]{"Door","Window"})
