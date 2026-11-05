@@ -69,9 +69,13 @@ public static class OpeningStage
                 var vg=record.GetProperty("voidGeometry");
                 var points=vg.GetProperty("vertices").Read<List<Point>>().Select(NativeGeometry.At).ToList();
                 var center=new XYZ((points.Min(p=>p.X)+points.Max(p=>p.X))/2,(points.Min(p=>p.Y)+points.Max(p=>p.Y))/2,(points.Min(p=>p.Z)+points.Max(p=>p.Z))/2);
-                var local=Transform.CreateTranslation(center.Negate());var source=NativeGeometry.MeshSolids(vg,local);
+                // Shape key in the host wall's axes: equal openings in walls of any direction share one void family;
+                // the instance is rotated back. The Boolean check below still compares the actual cut with the IFC void.
+                double angle=hostElement is Wall { Location: LocationCurve { Curve: Line axis } }?Math.Atan2(axis.Direction.Y,axis.Direction.X):0;
+                var local=Transform.CreateRotation(XYZ.BasisZ,-angle).Multiply(Transform.CreateTranslation(center.Negate()));var source=NativeGeometry.MeshSolids(vg,local);
+                var toWorld=local.Inverse;
                 owned.UnionWith(source);
-                var world=source.Select(s=>SolidUtils.CreateTransformed(s,Transform.CreateTranslation(center))).ToList();owned.UnionWith(world);
+                var world=source.Select(s=>SolidUtils.CreateTransformed(s,toWorld)).ToList();owned.UnionWith(world);
                 var before=NativeGeometry.Solids(hostElement);owned.UnionWith(before);if(before.Count==0)throw new InvalidDataException("Opening host has no solid geometry");
                 var expected=new List<Solid>();
                 foreach(var solid in before)
@@ -85,7 +89,7 @@ public static class OpeningStage
                 Family? cutFamily=null;
                 if(opening.S("mode")!="rectangle")
                 {
-                    string shapeKey=Json.Hash(new{vertices=points.Select(p=>new[]{Math.Round(UnitUtils.ConvertFromInternalUnits(p.X-center.X,UnitTypeId.Meters),6),Math.Round(UnitUtils.ConvertFromInternalUnits(p.Y-center.Y,UnitTypeId.Meters),6),Math.Round(UnitUtils.ConvertFromInternalUnits(p.Z-center.Z,UnitTypeId.Meters),6)}),faces=vg.GetProperty("faces")});
+                    string shapeKey=Json.Hash(new{vertices=points.Select(local.OfPoint).Select(p=>new[]{Math.Round(UnitUtils.ConvertFromInternalUnits(p.X,UnitTypeId.Meters),6)+0.0,Math.Round(UnitUtils.ConvertFromInternalUnits(p.Y,UnitTypeId.Meters),6)+0.0,Math.Round(UnitUtils.ConvertFromInternalUnits(p.Z,UnitTypeId.Meters),6)+0.0}),faces=vg.GetProperty("faces")});
                     if(!families.TryGetValue(shapeKey,out cutFamily))
                     {
                         string familyKey="opening-void-family:"+shapeKey;
@@ -112,7 +116,9 @@ public static class OpeningStage
                 else
                 {
                     var symbol=(FamilySymbol)doc.GetElement(cutFamily.GetFamilySymbolIds().First());if(!symbol.IsActive){symbol.Activate();doc.Regenerate();}
-                    var cutter=doc.Create.NewFamilyInstance(center,symbol,StructuralType.NonStructural);doc.Regenerate();
+                    var cutter=doc.Create.NewFamilyInstance(center,symbol,StructuralType.NonStructural);
+                    if(Math.Abs(angle)>1e-12)ElementTransformUtils.RotateElement(doc,cutter.Id,Line.CreateUnbound(center,XYZ.BasisZ),angle);
+                    doc.Regenerate();
                     if(!InstanceVoidCutUtils.CanBeCutWithVoid(hostElement))throw new InvalidDataException("Native host cannot be cut with an instance void: "+hostElement.GetType().Name);
                     InstanceVoidCutUtils.AddInstanceVoidCut(doc,hostElement,cutter);cutElement=cutter;
                 }

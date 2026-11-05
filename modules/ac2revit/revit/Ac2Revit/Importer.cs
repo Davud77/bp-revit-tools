@@ -67,6 +67,56 @@ public sealed class Importer
         Report.Add(key, kind, "unchanged", "Existing tagged element retained. Local Revit edits are not overwritten.", found.UniqueId);
         return true;
     }
+    public const int ElementBatchSize=50;
+    static readonly HashSet<string> BatchKinds=["Wall","Slab","Column","Beam","Object","Lamp","Morph","Grid"];
+    /// <summary>Creates validated independent elements in one transaction, each in its own sub-transaction, with one
+    /// regeneration and one commit (per-element Commit/Regenerate dominated large imports and grew the undo history).
+    /// If Revit rolls the batch back, its report entries are discarded and every element is retried on its own,
+    /// so the result per element is the same as with one transaction each.</summary>
+    void CommitBatch(List<ElementRecord> batch)
+    {
+        if(batch.Count==0)return;
+        var items=batch.ToList();batch.Clear();
+        int reportCount=Report.Items.Count,offsetCount=Report.WallOffsets.Count;
+        var created=new List<(ElementRecord Record,Element Element)>();var failed=new List<ElementRecord>();var owners=new Dictionary<ElementId,string>();
+        bool committed=false;
+        using(var transaction=new Transaction(doc,"AC "+items.Count+" elements"))
+        {
+            try
+            {
+                transaction.Start();
+                var options=transaction.GetFailureHandlingOptions();
+                options.SetFailuresPreprocessor(new Failures(Report,items[0].SourceGuid,items[0].Kind,id=>owners.GetValueOrDefault(id)));
+                options.SetClearAfterRollback(true);transaction.SetFailureHandlingOptions(options);
+                foreach(var e in items)
+                {
+                    using var sub=new SubTransaction(doc);sub.Start();
+                    try
+                    {
+                        var element=Create(e);Storage.Tag(element,project,e.SourceGuid,ElementHash(e),e.Raw.GetRawText());
+                        if(sub.Commit()!=TransactionStatus.Committed)throw new InvalidOperationException("Sub-transaction rolled back");
+                        created.Add((e,element));owners[element.Id]=e.SourceGuid;
+                    }
+                    catch(Exception){if(sub.GetStatus()==TransactionStatus.Started)sub.RollBack();failed.Add(e);}
+                }
+                doc.Regenerate();
+                committed=transaction.Commit()==TransactionStatus.Committed;
+            }
+            catch(Exception){if(transaction.GetStatus()==TransactionStatus.Started)transaction.RollBack();}
+        }
+        if(!committed)
+        {
+            Report.Items.RemoveRange(reportCount,Report.Items.Count-reportCount);Report.WallOffsets.RemoveRange(offsetCount,Report.WallOffsets.Count-offsetCount);
+            failed=items;created.Clear();
+        }
+        foreach(var (e,element) in created){existing[e.SourceGuid]=element;hosts[e.SourceGuid]=element;Report.Add(e.SourceGuid,e.Kind,"created","",element.UniqueId);}
+        // Failures are rerun in their own transaction for the exact per-element report and behaviour.
+        foreach(var e in failed)
+        {
+            try{var element=Commit(e.SourceGuid,e.Kind,ElementHash(e),()=>Create(e),e.Raw.GetRawText());if(element!=null)hosts[e.SourceGuid]=element;}
+            catch(Exception ex){Report.Add(e.SourceGuid,e.Kind,"blocked",ex.Message);if(!config.AllowPartial)throw;}
+        }
+    }
     Element? Commit(string key, string kind, string hash, Func<Element> action, string raw = "")
     {
         using var elementGroup=kind=="Mesh"?new TransactionGroup(doc,"Verified source Mesh"):null;
@@ -139,11 +189,13 @@ public sealed class Importer
             var ordered = manifest.OrderedElements().Where(e=>e.Kind!="Dimension"&&(kinds==null || kinds.Contains(e.Kind))).ToList();
             int processed = 0;
             bool wallsConnected = false;
+            var batch=new List<ElementRecord>();
             foreach (var e in ordered)
             {
                 // All physical hosts are ready before the first spatial element is evaluated.
                 if (!wallsConnected && e.Kind == "Zone")
                 {
+                    CommitBatch(batch);
                     if (config.ConnectWalls && finalizeJoins) ConnectWalls();
                     wallsConnected = true;
                 }
@@ -153,20 +205,27 @@ public sealed class Importer
                     if (old != null) hosts[e.SourceGuid] = old;
                     continue;
                 }
+                // Independent elements share one transaction (see CommitBatch); an element whose host is still
+                // in the open batch, or of a kind that needs its own transaction, first flushes the batch.
+                bool batchable=BatchKinds.Contains(e.Kind) && e.Dependencies.All(hosts.ContainsKey);
+                if(!batchable)CommitBatch(batch);
                 try
                 {
                     ValidateElement(e);
                     if (!levels.ContainsKey(e.LevelKey)) throw new InvalidOperationException("Home story was not imported");
                     if (e.Dependencies.Any(h => !hosts.ContainsKey(h))) throw new InvalidOperationException("Host failed/blocked");
-                    var element = Commit(e.SourceGuid, e.Kind, ElementHash(e), () => Create(e), e.Raw.GetRawText());
-                    if (element != null) hosts[e.SourceGuid] = element;
+                    if(batchable)batch.Add(e);
+                    else{var element = Commit(e.SourceGuid, e.Kind, ElementHash(e), () => Create(e), e.Raw.GetRawText());
+                    if (element != null) hosts[e.SourceGuid] = element;}
                 }
                 catch (Exception ex)
                 {
                     Report.Add(e.SourceGuid, e.Kind, "blocked", ex.Message);
                     if (!config.AllowPartial) throw;
                 }
+                if(batch.Count>=ElementBatchSize)CommitBatch(batch);
             }
+            CommitBatch(batch);
             if (!wallsConnected && config.ConnectWalls && finalizeJoins) ConnectWalls();
             group.Assimilate();
         }
@@ -818,14 +877,15 @@ public sealed class Importer
         Report.Add(e.SourceGuid, e.Kind, "notice", "Family orientation uses a calibrated mapping. Archicad oSide retained in source metadata.");
         return instance;
     }
-    sealed class Failures(Report report, string key, string kind) : IFailuresPreprocessor
+    sealed class Failures(Report report, string key, string kind, Func<ElementId,string?>? owner=null) : IFailuresPreprocessor
     {
         public FailureProcessingResult PreprocessFailures(FailuresAccessor accessor)
         {
             bool error = false;
             foreach (var failure in accessor.GetFailureMessages())
             {
-                report.Add(key, kind, failure.GetSeverity()==FailureSeverity.Warning?"warning":"revitError", failure.GetDescriptionText());
+                string target=owner==null?key:failure.GetFailingElementIds().Select(owner).FirstOrDefault(k=>k!=null)??key;
+                report.Add(target, kind, failure.GetSeverity()==FailureSeverity.Warning?"warning":"revitError", failure.GetDescriptionText());
                 if (failure.GetSeverity() == FailureSeverity.Warning) accessor.DeleteWarning(failure);
                 else error = true;
             }
