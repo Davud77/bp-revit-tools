@@ -25,6 +25,8 @@ public static class SupplementalBodiesStage
         if(guard==null || Storage.Read(guard)?.Hash!=Json.Hash(new{manifestSha,referenceSha,frameSha}))throw new InvalidDataException("Supplemental source/frame does not match the saved core model");
         Directory.CreateDirectory(folder);var report=new Report{ProjectId=project,Mode="supplementalIfcBodies"};int batchNumber=0;
         using var process=System.Diagnostics.Process.GetCurrentProcess();process.Refresh();long initialMemory=process.PrivateMemorySize64;
+        // The document is indexed once; created bodies are added as they are reported (see ReferenceFallback).
+        var known=new HashSet<string>(Storage.Index(doc,project).Keys,StringComparer.OrdinalIgnoreCase);
         int processedBodies=0,totalBodies=bundle["outcomes"]?["extracted"]?.GetValue<int>()??0;
         if(kinds!=null)
         {
@@ -48,9 +50,8 @@ public static class SupplementalBodiesStage
             }
             var data=JsonNode.Parse(File.ReadAllText(bodyPath))!;
             if(data["ifcToSource"]?["hash"]?.GetValue<string>()!=frameHash || data["ifcSha256"]?.GetValue<string>()!=referenceSha)throw new InvalidDataException("Supplemental IFC frame/hash mismatch");
-            var index=Storage.Index(doc,project);
             int batchBodies=data["elements"]!.AsArray().Count;
-            var missing=data["elements"]!.AsArray().Where(r=>r!=null && !index.ContainsKey(r["sourceGuid"]!.GetValue<string>())).Select(r=>r!.DeepClone()).ToArray();
+            var missing=data["elements"]!.AsArray().Where(r=>r!=null && !known.Contains(r["sourceGuid"]!.GetValue<string>())).Select(r=>r!.DeepClone()).ToArray();
             data["elements"]=new JsonArray(missing);
             string input=Path.Combine(folder,$"{batchNumber++:0000}.json");File.WriteAllText(input,data.ToJsonString());
             bool committed=false;
@@ -58,8 +59,10 @@ public static class SupplementalBodiesStage
             {
                 string kind=sourceKind;
                 var stage=kind=="Mesh"?TerrainStage.Run(doc,input,manifest):ReferenceFallback.Run(doc,input,Resolve,(done,total)=>progress?.Invoke("supplemental:"+kind,
-                    totalBodies>0?processedBodies+batchBodies-missing.Length+done:done,totalBodies>0?totalBodies:total),BuiltInCategory.OST_GenericModel,"Supplemental:"+kind,uniqueMarks:true);
-                report.Items.AddRange(stage.Items);report.Save(Path.Combine(folder,"checkpoint-report.json"));
+                    totalBodies>0?processedBodies+batchBodies-missing.Length+done:done,totalBodies>0?totalBodies:total),BuiltInCategory.OST_GenericModel,"Supplemental:"+kind,uniqueMarks:true,existingKeys:known);
+                report.Items.AddRange(stage.Items);
+                if(kind=="Mesh")known=new HashSet<string>(Storage.Index(doc,project).Keys,StringComparer.OrdinalIgnoreCase);
+                else foreach(var item in stage.Items)if(item.Status=="created")known.Add(item.SourceKey);report.Save(Path.Combine(folder,"checkpoint-report.json"));
                 committed=stage.Items.Any(i=>i.Status=="created");
                 Checkpoints.Save(doc);
             }

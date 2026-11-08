@@ -89,6 +89,14 @@ public static class RuntimeJobs
                 var result=type.GetMethod("Run")!.Invoke(null,[ui,folder,WorkspacePath(job.TemplatePath),string.IsNullOrEmpty(job.ReferenceGeometryPath)?"":WorkspacePath(job.ReferenceGeometryPath)]);
                 File.WriteAllText(resultPath,JsonSerializer.Serialize(result,Json.Options));return;
             }
+            if(job.Operation=="openingLinkedValidation")
+            {
+                string folder=Path.GetDirectoryName(job.ReportPath)!;Directory.CreateDirectory(folder);
+                var type=AppDomain.CurrentDomain.GetAssemblies().Select(a=>a.GetType("BotPlus.Openings.LinkedValidation")).FirstOrDefault(t=>t!=null)
+                    ??throw new InvalidOperationException("Модуль менеджера отверстий не загружен.");
+                var result=type.GetMethod("Run")!.Invoke(null,[ui,job.SourceRvt,folder,job.TemplatePath,job.Limit>0?job.Limit:3000]);
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(result,Json.Options));return;
+            }
             if(job.Operation=="release16Check")
             {
                 string output=WorkspacePath(job.OutputRvt),folder=Path.GetDirectoryName(output)!;

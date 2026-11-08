@@ -10,6 +10,18 @@ internal static class RibbonStyle
     {
         foreach(var panel in app.GetRibbonPanels("BotPlus RT"))foreach(var item in panel.GetItems().OfType<PushButton>())
         {item.Image=Icon(item.Name,16);item.LargeImage=Icon(item.Name,32);}
+        ApplyVisibility(app.GetRibbonPanels("BotPlus RT"));
+    }
+    /// <summary>Скрывает панели, снятые в настройках. Панель «Настройки» не входит в список и остаётся всегда.</summary>
+    internal static void ApplyVisibility(IEnumerable<RibbonPanel> panels)
+    {
+        BotPlus.Shared.BotPlusSettings.Load();
+        foreach(var panel in panels)
+        {
+            if(!BotPlus.Shared.BotPlusSettings.Panels.Contains(panel.Name))continue;
+            bool visible=!BotPlus.Shared.BotPlusSettings.HiddenPanels.Contains(panel.Name);
+            if(panel.Visible!=visible)panel.Visible=visible;
+        }
     }
     internal static DrawingImage Icon(string name,int pixels)
     {
@@ -20,7 +32,8 @@ internal static class RibbonStyle
             void Shape(string path,Brush? fill=null,Pen? pen=null)=>d.DrawGeometry(fill,pen??outline,Geometry.Parse(path));
             void Line(double x,double y,double a,double b)=>d.DrawLine(outline,new Point(x,y),new Point(a,b));
             void Arrow()=>Shape("M15,12 L23,12 L23,7 L30,16 L23,25 L23,20 L15,20 Z",green);
-            if(name.Contains("Opening")){d.DrawRoundedRectangle(paper,outline,new Rect(4,4,24,24),1,1);d.DrawEllipse(Brushes.White,new Pen(blue,2),new Point(16,16),7,7);Line(1,16,10,16);Line(22,16,31,16);Line(16,1,16,10);Line(16,22,16,31);}
+            if(name.Contains("Crossings")){d.DrawRoundedRectangle(paper,outline,new Rect(12,3,8,26),1,1);d.DrawRectangle(null,new Pen(blue,3.4),new Rect(2,12,28,8));d.DrawEllipse(Brushes.White,new Pen(green,2),new Point(16,16),4,4);}
+            else if(name.Contains("Opening")){d.DrawRoundedRectangle(paper,outline,new Rect(4,4,24,24),1,1);d.DrawEllipse(Brushes.White,new Pen(blue,2),new Point(16,16),7,7);Line(1,16,10,16);Line(22,16,31,16);Line(16,1,16,10);Line(16,22,16,31);}
             else if(name.Contains("Tags"))
             {
                 Shape("M3,7 L18,7 L25,14 L18,21 L3,21 Z",paper);d.DrawEllipse(blue,null,new Point(18,14),2,2);Line(6,11,13,11);Line(6,16,12,16);
@@ -36,6 +49,7 @@ internal static class RibbonStyle
                 var heat=new Pen(new SolidColorBrush(Color.FromRgb(221,102,48)),2){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round};
                 for(int x=12;x<=20;x+=4)Shape($"M{x},24 C{x-3},21 {x+3},19 {x},16",null,heat);
             }
+            else if(name.Contains("Settings")){for(int i=0;i<8;i++){d.PushTransform(new RotateTransform(i*45,16,16));d.DrawRoundedRectangle(paper,outline,new Rect(13,2.5,6,6.5),1,1);d.Pop();}d.DrawEllipse(paper,outline,new Point(16,16),9.5,9.5);d.DrawEllipse(blue,null,new Point(16,16),4.2,4.2);d.DrawEllipse(Brushes.White,null,new Point(16,16),1.7,1.7);}
             else if(name.Contains("Information")||name.Contains("Service")){Shape("M5,3 L22,3 L28,9 L28,29 L5,29 Z",paper);Line(21,3,21,10);Line(21,10,28,10);d.DrawEllipse(blue,null,new Point(17,20),6,6);d.DrawLine(new Pen(Brushes.White,2),new Point(17,19),new Point(17,24));d.DrawEllipse(Brushes.White,null,new Point(17,16),1,1);}
             else if(name.Contains("Update")||name.Contains("Continue")){d.DrawEllipse(paper,outline,new Point(16,16),12,12);Shape("M7,13 C9,5 23,5 25,13 M25,13 L25,6 M25,13 L18,13",null,new Pen(blue,2.2));Shape("M25,20 C22,28 9,27 7,20 M7,20 L7,27 M7,20 L14,20",null,new Pen(green,2.2));}
             else if(name.Contains("Confirm")){d.DrawRoundedRectangle(paper,outline,new Rect(4,4,24,24),3,3);Shape("M8,16 L14,22 L25,9",null,new Pen(green,3));}

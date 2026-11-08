@@ -37,7 +37,7 @@ namespace WEAM.Revit.AI { public sealed class PluginApplication() : FakeModule("
 namespace Ac2Revit { public sealed class App() : FakeModule("ac2revit"); }
 namespace HeatLossViewer { public sealed class App() : FakeModule("ov"); }
 namespace BotPlus.Openings { public sealed class App() : FakeModule("openings"); }
-namespace BotPlus.RT { public sealed class ServiceCommand { } }
+namespace BotPlus.RT { public sealed class SettingsCommand { } }
 namespace BotPlus.RT { public sealed class MatchTagCommand { } public sealed class CopyTagCommand { } }
 namespace BotPlus.RT { internal static class StartupUpdates { public static void Attach(Autodesk.Revit.UI.UIControlledApplication app){} public static void Detach(Autodesk.Revit.UI.UIControlledApplication app){} } }
 namespace BotPlus.RT { public sealed class HostAvailable{} }

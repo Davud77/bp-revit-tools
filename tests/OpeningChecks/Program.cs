@@ -43,3 +43,19 @@ Denied(()=>CrossingGeometry.Fit(new(0,0,0),new(0,1,0),new(1,0,0),new(1,0,0),100,
 Denied(()=>(options with{Clearance=-1}).Validate());
 Check(CrossingGeometry.Key("link1","host","mep")!=CrossingGeometry.Key("link2","host","mep"),"Two instances of a link share crossing identity");
 Console.WriteLine("PASS crossing projection, oblique thickness, insulation, floor penetration, profile guards and link instance identity");
+// Правила размеров и склейка примыкающих.
+var rules=new CrossingOptions(Clearance:20,Step:10,ClearanceHeight:40,ClearanceDiameter:30);
+var ruled=CrossingGeometry.Fit(new(0,0,1500),new(0,1,0),new(1,0,0),new(0,0,1),400,200,false,0,300,HoleOrientation.Wall,0,rules);
+Check(Math.Abs(ruled.Width-440)<1e-6&&Math.Abs(ruled.Height-280)<1e-6,"Width and height clearances are independent: "+ruled.Width+"x"+ruled.Height);
+var ruledRound=CrossingGeometry.Fit(new(0,0,1500),new(0,1,0),new(1,0,0),new(0,0,1),100,100,true,0,300,HoleOrientation.Wall,0,rules);
+Check(ruledRound.Shape==HoleShape.Round&&Math.Abs(ruledRound.Diameter-160)<1e-6,"Diameter clearance: "+ruledRound.Diameter);
+var forcedRect=CrossingGeometry.Fit(new(0,0,1500),new(0,1,0),new(1,0,0),new(0,0,1),100,100,true,0,300,HoleOrientation.Wall,0,rules with{RoundForRound=false});
+Check(forcedRect.Shape==HoleShape.Rectangle,"Round pipe may be forced to a rectangular hole");
+var minimum=CrossingGeometry.Fit(new(0,0,1500),new(0,1,0),new(1,0,0),new(0,0,1),50,50,false,0,300,HoleOrientation.Wall,0,rules with{MinSize=200});
+Check(minimum.Width>=200&&minimum.Height>=200,"Minimum size applies");
+var h1=new HoleGeometry{X=0,Y=0,Z=1000,Width=200,Height=200,Depth=300};var h2=h1 with{X=250};var h3=h1 with{X=1000};var other=h1 with{X=100};
+var groups=CrossingGeometry.GroupAdjacent([h1,h2,h3,other],["a","a","a","b"],100);
+Check(groups.Count==3&&groups[0].SequenceEqual([0,1])&&groups[1].SequenceEqual([2])&&groups[2].SequenceEqual([3]),"Adjacent holes of one host form one group: "+string.Join("|",groups.Select(g=>string.Join(",",g))));
+Check(CrossingGeometry.GroupAdjacent([h1,h2],["a","a"],0).Count==2,"Gap larger than the join distance keeps holes apart");
+var union=CrossingGeometry.Union([h1,h2]);Check(Math.Abs(union.Width-450)<1e-6&&Math.Abs(union.X-125)<1e-6&&Math.Abs(union.Height-200)<1e-6,"Union spans both holes: "+union.Width+" at "+union.X);
+Console.WriteLine("PASS size rules, independent clearances, minimum size and adjacent-hole grouping");

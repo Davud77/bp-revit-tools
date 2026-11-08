@@ -14,21 +14,24 @@ public sealed class App : IExternalApplication
         try{app.CreateRibbonTab(tab);}catch(Autodesk.Revit.Exceptions.ArgumentException){ /* Tab already exists. */ }
         var panel = app.CreateRibbonPanel(tab,"Ac2Revit");
         var assembly = Assembly.GetExecutingAssembly().Location;
-        void Add(RibbonPanel target,string id,string label,Type command,string icon,string tooltip,bool noDocument=false)
+        PushButtonData Data(string id,string label,Type command,string icon,string tooltip,bool noDocument=false)
         {
             var button=new PushButtonData(id,label,assembly,command.FullName){Image=RibbonIcons.Make(icon,16),LargeImage=RibbonIcons.Make(icon,32),ToolTip=tooltip};
             if(noDocument)button.AvailabilityClassName=typeof(AlwaysAvailable).FullName;
-            target.AddItem(button);
+            return button;
         }
-        Add(panel,"AcTransfer","Archicad\n→ Revit",typeof(TransferCommand),"transfer","Выгрузить открытый проект Archicad через Tapir и собрать его в Revit. JSON, IFC и отчёты сохраняются в папке обмена.",true);
-        Add(panel,"AcExport","Экспорт\nArchicad",typeof(ExportArchicadCommand),"export","Экспортировать JSON, IFC или оба формата; выбрать категории. Работает без открытой модели Revit.",true);
-        Add(panel,"AcBuildLatest","Собрать\nэкспорт",typeof(BuildLatestCommand),"build","Собрать последний успешно подготовленный экспорт. Неполные выгрузки не используются.",true);
-        Add(panel,"AcContinueSession","Продолжить\nсеанс",typeof(ContinueSessionCommand),"resume","Восстановить JSON из архива и продолжить подготовку. Готовый IFC используется повторно; отсутствующий экспортируется после проверки источника.",true);
+        // Главная команда остаётся большой, остальные — компактными блоками по три.
+        panel.AddItem(Data("AcTransfer","Archicad\n→ Revit",typeof(TransferCommand),"transfer","Выгрузить открытый проект Archicad через Tapir и собрать его в Revit. JSON, IFC и отчёты сохраняются в папке обмена.",true));
         panel.AddSeparator();
-        var files=panel;
-        Add(files,"AcPreview","Проверить\nJSON",typeof(PreviewCommand),"preview","Выбрать manifest.json или pipeline.json и проверить план импорта.");
-        Add(files,"AcImport","Импорт\nJSON",typeof(ImportCommand),"import","Выбрать подготовленный JSON и выполнить импорт в открытый проект Revit.");
-        Add(files,"AcExchangeFolder","Папка\nобмена",typeof(ExchangeFolderCommand),"folder","Открыть сеансы экспорта, промежуточные данные, модели и отчёты.",true);
+        panel.AddStackedItems(
+            Data("AcExport","Экспорт Archicad",typeof(ExportArchicadCommand),"export","Экспортировать JSON, IFC или оба формата; выбрать категории. Работает без открытой модели Revit.",true),
+            Data("AcBuildLatest","Собрать экспорт",typeof(BuildLatestCommand),"build","Собрать последний успешно подготовленный экспорт. Неполные выгрузки не используются.",true),
+            Data("AcContinueSession","Продолжить сеанс",typeof(ContinueSessionCommand),"resume","Восстановить JSON из архива и продолжить подготовку. Готовый IFC используется повторно; отсутствующий экспортируется после проверки источника.",true));
+        panel.AddSeparator();
+        panel.AddStackedItems(
+            Data("AcPreview","Проверить JSON",typeof(PreviewCommand),"preview","Выбрать manifest.json или pipeline.json и проверить план импорта."),
+            Data("AcImport","Импорт JSON",typeof(ImportCommand),"import","Выбрать подготовленный JSON и выполнить импорт в открытый проект Revit."),
+            Data("AcExchangeFolder","Папка обмена",typeof(ExchangeFolderCommand),"folder","Открыть сеансы экспорта, промежуточные данные, модели и отчёты.",true));
         RuntimeJobs.Start(app, assembly);
         app.ControlledApplication.DocumentSaved+=ImportJournal.Saved;app.ControlledApplication.DocumentSavedAs+=ImportJournal.SavedAs;
         return Result.Succeeded;

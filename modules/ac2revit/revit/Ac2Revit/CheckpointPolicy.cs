@@ -15,6 +15,9 @@ public static class CheckpointPolicy
     /// Growth allowed before a reopen: 1/8 of the machine's memory, between 768 MB and 4 GB. A fixed 768 MB made the
     /// Hippodrome reopen its 525 MB model 55 times on a 28 GB computer; small computers keep the previous limit.
     /// </summary>
+    /// <summary>Below this free space a long stage saves and reopens: Revit's temporary files are released only then,
+    /// and a full disk made Revit crash while writing element data.</summary>
+    public const long MinimumFreeDiskBytes=4L*1024*1024*1024;
     public static long GrowthLimit(long totalMemoryBytes)=>Math.Clamp(totalMemoryBytes/8,768L*1024*1024,4L*1024*1024*1024);
 
     public static readonly TimeSpan SaveInterval=TimeSpan.FromMinutes(2.5);

@@ -59,6 +59,7 @@ internal static class HoleMarkers
     {
         var removed=doc.Delete(id);if(removed.Any(other=>other!=id))throw new InvalidOperationException("Удаление затронет зависимые элементы. Сначала проверьте марки и размеры этого отверстия.");
     }
+    static Color Palette(string discipline){var c=HoleSettings.DisciplineColour(discipline);return new Color(c.R,c.G,c.B);}
     internal static void Colour(Document doc,View view,IEnumerable<Hole> holes,Role role)
     {
         if(view.IsTemplate||!view.AreGraphicsOverridesAllowed())return;
@@ -66,7 +67,7 @@ internal static class HoleMarkers
         foreach(var hole in holes.Where(h=>!h.Deleted))
         {
             var marker=Marker(doc,hole);if(marker==null)continue;
-            var rgb=hole.DeletionRequested?new Color(157,80,190):hole.FullyApproved?new Color(45,170,90):hole.Approvals.Any(a=>a.Role==role)?new Color(235,175,35):new Color(220,65,65);
+            var rgb=HoleSettings.Colouring==ColouringMode.Discipline?Palette(hole.Discipline):hole.DeletionRequested?new Color(157,80,190):hole.FullyApproved?new Color(45,170,90):hole.Approvals.Any(a=>a.Role==role)?new Color(235,175,35):new Color(220,65,65);
             using var graphics=view.GetElementOverrides(marker.Id);graphics.SetProjectionLineColor(rgb);graphics.SetCutLineColor(rgb);graphics.SetSurfaceTransparency(65);
             if(solid!=null){graphics.SetSurfaceForegroundPatternId(solid.Id);graphics.SetSurfaceForegroundPatternColor(rgb);graphics.SetCutForegroundPatternId(solid.Id);graphics.SetCutForegroundPatternColor(rgb);}
             view.SetElementOverrides(marker.Id,graphics);

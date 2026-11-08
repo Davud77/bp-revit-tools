@@ -36,11 +36,14 @@ public static class Storage
         var result = new Dictionary<string, Element>(StringComparer.OrdinalIgnoreCase);
         var schema = Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(Id);
         if (schema == null) return result;
+        // Fields are resolved once, not per element (Read looks the schema and fields up on every call).
+        Field projectField = schema.GetField("ProjectId"), keyField = schema.GetField("SourceKey");
         foreach (var e in new FilteredElementCollector(doc).WherePasses(new ExtensibleStorageFilter(Id)))
         {
-            var tag = Read(e);
-            if (tag.HasValue && string.Equals(tag.Value.Project,project,StringComparison.OrdinalIgnoreCase) && !result.TryAdd(tag.Value.Key, e))
-                throw new InvalidOperationException("Duplicate imported source key in Revit: " + tag.Value.Key);
+            var entity = e.GetEntity(schema);
+            if (!entity.IsValid() || !string.Equals(entity.Get<string>(projectField),project,StringComparison.OrdinalIgnoreCase)) continue;
+            string key = entity.Get<string>(keyField);
+            if (!result.TryAdd(key, e)) throw new InvalidOperationException("Duplicate imported source key in Revit: " + key);
         }
         return result;
     }

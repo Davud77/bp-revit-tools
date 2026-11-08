@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Markup;
 using System.Windows.Media;
+using BotPlus.Shared;
 using HeatLossViewer.Export;
 using Button = System.Windows.Controls.Button;
 using TextBox = System.Windows.Controls.TextBox;
@@ -28,7 +29,7 @@ public sealed class OvLibraryWindow : Window
     public OvLibraryWindow(OvLibraryData data, BuildingData building, bool showRadiators = false)
     {
         Data = data; Title = "ОВ — библиотека проекта"; Width = 1180; Height = 790; MinWidth = 800; MinHeight = 560;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner; Language = XmlLanguage.GetLanguage(CultureInfo.CurrentCulture.IetfLanguageTag);
+        WindowStartupLocation = WindowStartupLocation.CenterOwner; BotPlusTheme.Apply(this); Language = XmlLanguage.GetLanguage(CultureInfo.CurrentCulture.IetfLanguageTag);
         var root = new DockPanel { Margin = new Thickness(12) }; Content = root;
         var bottom = new DockPanel(); DockPanel.SetDock(bottom, Dock.Bottom); root.Children.Add(bottom);
         var buttons = new StackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right };

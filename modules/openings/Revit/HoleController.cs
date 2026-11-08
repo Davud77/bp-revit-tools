@@ -6,6 +6,7 @@ using System.Windows.Interop;
 
 namespace BotPlus.Openings;
 
+internal enum CrossingTarget {Communication,Host,Both}
 internal sealed record LevelChoice(string Id,string Name,double Elevation)
 {public override string ToString()=>Name;}
 internal sealed record LinkChoice(string Id,string Name)
@@ -22,7 +23,7 @@ internal sealed class HoleController:IExternalEventHandler
         Document=ui.ActiveUIDocument.Document;external=ExternalEvent.Create(this);Window=new(this);
         new WindowInteropHelper(Window){Owner=ui.MainWindowHandle};Window.Closed+=(_,_)=>{closed=true;external.Dispose();App.Controllers.Remove(this);};Refresh();
     }
-    internal void Show()=>Window.Show();
+    internal void Show(bool crossingsFirst){Window.ShowTab(crossingsFirst);Window.Show();}
     internal void Close()=>Window.Close();
     internal void Request(Action<UIApplication,Registry> action)
     {
@@ -39,14 +40,14 @@ internal sealed class HoleController:IExternalEventHandler
             var data=HoleStore.Read(Document);HoleMonitor.Reconcile(Document,data);action(ui,data);Refresh();
         }
         catch(Autodesk.Revit.Exceptions.OperationCanceledException){Window.SetStatus("Выбор отменён.");Window.Show();}
-        catch(Exception error){Window.SetStatus(error.Message);Window.Show();}
+        catch(Exception error){Window.SetStatus(error.Message);Window.Show();System.Windows.MessageBox.Show(Window,error.Message,"Менеджер отверстий");}
     }
     internal void Refresh()
     {
         var data=HoleStore.Read(Document);
         var levels=new FilteredElementCollector(Document).OfClass(typeof(Level)).Cast<Level>().OrderBy(l=>l.Elevation).Select(l=>new LevelChoice(l.UniqueId,l.Name,HoleMarkers.Mm(l.Elevation))).ToList();
         var links=new FilteredElementCollector(Document).OfClass(typeof(RevitLinkInstance)).Cast<RevitLinkInstance>().Where(l=>l.GetLinkDocument()!=null).Select(l=>new LinkChoice(l.UniqueId,l.Name)).ToList();
-        Window.SetData(data,levels,links,Document.Title);
+        Window.SetTargets(HoleTransfer.Targets(Document));Window.SetData(data,levels,links,Document.Title);
         HoleMonitor.Track(Document);
     }
     internal static void RequireProject(Registry data){if(data.Project==null)throw new InvalidOperationException("Создайте реестр на вкладке «Настройки».");}
@@ -117,6 +118,43 @@ internal sealed class HoleController:IExternalEventHandler
         RequireProject(data);Window.Hide();XYZ point;try{point=ui.ActiveUIDocument.Selection.PickPoint("Укажите новый центр отверстия");}finally{Window.Show();}
         var h=HoleWorkflow.Copy(data.Project!,source,HoleStore.Actor(data),HoleMarkers.Mm(point.X)-source.Geometry.X,HoleMarkers.Mm(point.Y)-source.Geometry.Y,0,source.LevelId,source.LevelName,source.LevelElevation);
         h.HostId="";h.Mark=NextMark(data,h.Discipline);data.Holes.Add(h);Save(data,[h],"Копировать задание");
+    }
+    /// <summary>Выделяет коммуникацию текущей модели и/или основу (в том числе в связи) и показывает точку пересечения.</summary>
+    internal void ShowCrossing(UIApplication ui,CrossingCandidate candidate,CrossingTarget target)
+    {
+        var uidoc=ui.ActiveUIDocument;var point=HoleMarkers.Center(candidate.Geometry);
+        var own=candidate.CommunicationId.Length>0?Document.GetElement(candidate.CommunicationId):null;
+        var link=candidate.LinkId.Length>0?Document.GetElement(candidate.LinkId) as RevitLinkInstance:null;
+        var host=candidate.LinkId.Length==0?Document.GetElement(candidate.HostId):link?.GetLinkDocument()?.GetElement(candidate.HostId);
+        var references=new List<Reference>();
+        if(target is CrossingTarget.Communication or CrossingTarget.Both&&own!=null)references.Add(new Reference(own));
+        if(target is CrossingTarget.Host or CrossingTarget.Both&&host!=null)
+            references.Add(link==null?new Reference(host):new Reference(host).CreateLinkReference(link));
+        if(references.Count>0)
+        {
+            try{uidoc.Selection.SetReferences(references);}
+            catch{uidoc.Selection.SetElementIds(references.Where(r=>r.LinkedElementId==ElementId.InvalidElementId).Select(r=>r.ElementId).ToList());}
+        }
+        double reach=HoleMarkers.Feet(1500);
+        try
+        {
+            var view=uidoc.GetOpenUIViews().FirstOrDefault(v=>v.ViewId==uidoc.ActiveView.Id);
+            if(view==null)throw new InvalidOperationException();
+            view.ZoomAndCenterRectangle(point-new XYZ(reach,reach,reach),point+new XYZ(reach,reach,reach));
+        }
+        catch{if(own!=null)uidoc.ShowElements(own.Id);}
+    }
+    HashSet<long>? lastSelection;
+    /// <summary>Если в Revit выбраны маркеры отверстий, те же строки выбираются в реестре менеджера.</summary>
+    internal void SyncSelection(UIApplication ui)
+    {
+        if(closed)return;var uidoc=ui.ActiveUIDocument;if(uidoc==null||!uidoc.Document.Equals(Document))return;
+        var set=uidoc.Selection.GetElementIds().Select(id=>id.Value).ToHashSet();
+        if(lastSelection!=null&&lastSelection.SetEquals(set))return;lastSelection=set;
+        if(set.Count==0||set.Count>5000)return;
+        var keys=new HashSet<string>();
+        foreach(long id in set)if(Document.GetElement(new ElementId(id)) is DirectShape shape&&shape.ApplicationId==HoleStore.AppId)keys.Add(shape.ApplicationDataId);
+        if(keys.Count>0)Window.SelectHoles(keys);
     }
     internal void ShowHole(UIApplication ui,IReadOnlyList<Hole> holes,bool threeD)
     {

@@ -29,6 +29,8 @@ public sealed class ProjectCalculationEditor : TabControl
     public ProjectCalculationEditor(ProjectCalculationInputs value, List<(string Key, string Label, string LevelKey, string LevelName)> catalog,
         Action<string, double> importClimate, Func<string, double?> readClimate)
     {
+        // Производный от TabControl тип не получает неявный стиль темы сам.
+        SetResourceReference(StyleProperty, typeof(TabControl));
         draft = JsonSerializer.Deserialize<ProjectCalculationInputs>(JsonSerializer.Serialize(value))!;
         var general = new StackPanel { Margin = new Thickness(10) };
         general.Children.Add(new TextBlock { Text = "Температуры, ветер и высота — на вкладке «Проект». Пустое поле использует значение по умолчанию; этаж и помещение наследуют параметры здания. U = 1 / R.", TextWrapping = TextWrapping.Wrap });

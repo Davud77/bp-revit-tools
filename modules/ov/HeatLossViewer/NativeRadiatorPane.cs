@@ -59,6 +59,11 @@ public sealed class NativeRadiatorPane : Grid, IDisposable
                 catch (Exception ex) { System.Windows.MessageBox.Show("Радиаторы: " + ex.Message); }
             };
             browser.CoreWebView2.NavigationCompleted += (_, args) => { if (!args.IsSuccess) ready.TrySetException(new InvalidOperationException("Не удалось открыть вкладку: " + args.WebErrorStatus)); };
+            // Страница подбора следует теме плагина: тема читается из localStorage до отрисовки.
+            bool dark = BotPlus.Shared.BotPlusTheme.DetectDark();
+            browser.CoreWebView2.Profile.PreferredColorScheme = dark ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light;
+            await browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("try{localStorage.setItem('heatloss-theme','" + (dark ? "dark" : "light") + "')}catch(e){}");
+            browser.DefaultBackgroundColor = dark ? System.Drawing.Color.FromArgb(13, 13, 13) : System.Drawing.Color.White;
             browser.Source = page;
             await ready.Task.WaitAsync(TimeSpan.FromSeconds(45));
         }

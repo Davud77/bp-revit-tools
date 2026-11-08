@@ -70,15 +70,61 @@ public static class NativeDimensionStage
     static Report RunCore(Document doc,Manifest manifest,Action<string,int,int>? progress,UIApplication? ui)
     {
         var report=new Report{ProjectId=manifest.Source.ProjectId,Mode="nativeDimensions"};var index=Storage.Index(doc,manifest.Source.ProjectId);
-        var geometry=new Geometry(doc,manifest.Coordinates.Transform);var rows=manifest.Elements.Where(e=>e.Kind=="Dimension").ToList();int done=0;
+        // Revit resolves dimension references only in a displayed plan, so the level plan is shown, once per level
+        // (rows are grouped by level), and the plan this stage showed before is closed. A plan opened per row filled
+        // memory and disk after ~600 of the Hippodrome's 3 111 dimensions until Revit crashed inside SetEntity.
+        var geometry=new Geometry(doc,manifest.Coordinates.Transform);var rows=manifest.Elements.Where(e=>e.Kind=="Dimension").OrderBy(e=>e.LevelKey,StringComparer.Ordinal).ToList();int done=0,created=0;
+        var anchors=manifest.DimensionAnchors.OrderBy(a=>a.SourceGuid,StringComparer.Ordinal).ToArray();
+        using var process=System.Diagnostics.Process.GetCurrentProcess();process.Refresh();long initialMemory=process.PrivateMemorySize64;
+        long totalMemory=GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,growthLimit=CheckpointPolicy.GrowthLimit(totalMemory);
+        string? shownLevel=null;bool baselinePending=false;
+        // The plan of a level is shown lazily, right before a dimension is created on it (Revit resolves dimension
+        // references only in a displayed plan). Rows rejected by source checks and rows already created never draw
+        // a plan, so a checkpoint reopen does not spend its memory budget redrawing finished levels (the Hippodrome
+        // advanced 1 156, 1 135 and then only 213 rows per cycle when every level was redrawn).
+        void Show(Level nativeLevel)
+        {
+            if(ui==null||shownLevel==nativeLevel.UniqueId)return;
+            ViewPlan target;
+            using(var preparation=new Transaction(doc,"План нативных размеров"))
+            {
+                preparation.Start();target=View(doc,nativeLevel);
+                // IFC bodies (DirectShape generic models) are never dimension witnesses but dominate the drawing of
+                // a large plan. Temporary hiding is not saved with the model and is cleared when the stage ends.
+                var generic=new ElementId(BuiltInCategory.OST_GenericModel);
+                if(target.CanCategoryBeHidden(generic)&&!target.GetCategoryHidden(generic))target.HideCategoriesTemporary([generic]);
+                preparation.Commit();
+            }
+            var previous=ui.ActiveUIDocument.ActiveView;
+            if(previous?.Id!=target.Id)
+            {
+                ui.ActiveUIDocument.ActiveView=target;
+                if(previous is ViewPlan {IsValidObject:true} plan&&plan.Name.StartsWith("AC Plan ",StringComparison.Ordinal))
+                {
+                    ui.ActiveUIDocument.GetOpenUIViews().FirstOrDefault(v=>v.ViewId==plan.Id)?.Close();
+                    ResetTemporary(doc,plan);
+                }
+                // Revit draws the plan after the next commits; that one-off cost is not growth from dimensions,
+                // so the memory baseline is taken at the first check on this level.
+                baselinePending=true;
+            }
+            shownLevel=nativeLevel.UniqueId;
+        }
         foreach(var row in rows)
         {
-            progress?.Invoke("nativeDimensions",done++,rows.Count);string hash=Json.Hash(new{row.Payload,manifest.Coordinates.Transform,anchors=manifest.DimensionAnchors.OrderBy(a=>a.SourceGuid,StringComparer.Ordinal).ToArray()});
-            if(ui!=null&&index.GetValueOrDefault(row.LevelKey) is Level nativeLevel)
+            progress?.Invoke("nativeDimensions",done++,rows.Count);string hash=Json.Hash(new{row.Payload,manifest.Coordinates.Transform,anchors});
+            if(created>0&&created%25==0&&!string.IsNullOrEmpty(doc.PathName))
             {
-                ViewPlan target;
-                using(var preparation=new Transaction(doc,"План нативных размеров")){preparation.Start();target=View(doc,nativeLevel);preparation.Commit();}
-                ui.ActiveUIDocument.ActiveView=target;
+                // Memory and free disk are checked between dimensions. A reopen releases Revit's caches and temporary
+                // files; the stage then resumes, and created dimensions are recognised as unchanged.
+                process.Refresh();long free=new DriveInfo(Path.GetPathRoot(Path.GetFullPath(doc.PathName))!).AvailableFreeSpace;
+                if(baselinePending){initialMemory=process.PrivateMemorySize64;baselinePending=false;}
+                if(process.PrivateMemorySize64-initialMemory>growthLimit||process.PrivateMemorySize64>totalMemory/4*3||free<CheckpointPolicy.MinimumFreeDiskBytes)
+                {
+                    if(ui?.ActiveUIDocument?.ActiveView is ViewPlan shown)ResetTemporary(doc,shown);
+                    Checkpoints.Save(doc,force:true);
+                    throw new ImportCheckpointException($"Нативные размеры {done-1}/{rows.Count} сохранены; освобождение памяти и временных файлов Revit.");
+                }
             }
             if(index.TryGetValue(row.SourceGuid,out var old))
             {
@@ -86,29 +132,39 @@ public static class NativeDimensionStage
                 {
                     var native=old as Dimension??throw new InvalidOperationException("Ключ размера занят другим элементом.");
                     var raw=native.GetEntity(Storage.Schema()).Get<string>(Storage.Schema().GetField("RawJson"));using var state=JsonDocument.Parse(raw);
-                    bool same=Storage.Read(native)?.Hash==hash&&native.AreReferencesAvailable&&state.RootElement.S("nativeHash")==Snapshot(doc,native);
+                    // Revit evaluates reference availability only in a displayed plan; elsewhere the stable references,
+                    // values and text in the snapshot are compared.
+                    bool displayed=ui==null||ui.ActiveUIDocument?.ActiveView?.Id==native.OwnerViewId;
+                    bool same=Storage.Read(native)?.Hash==hash&&(!displayed||native.AreReferencesAvailable)&&state.RootElement.S("nativeHash")==Snapshot(doc,native);
                     report.Add(row.SourceGuid,"Dimension",same?"unchanged":"conflict",same?"Нативные опоры и положение сохранены.":"Размер или опоры изменились; существующий размер сохранён.",native.UniqueId);
                 }
                 catch(Exception error){report.Add(row.SourceGuid,"Dimension","conflict",error.Message,old.UniqueId);}
                 continue;
             }
-            using var group=new TransactionGroup(doc,"Archicad — проверенный нативный размер");group.Start();
-            using var transaction=new Transaction(doc,"Archicad — нативный размер");transaction.Start();var failures=new DimensionFailures();
-            transaction.SetFailureHandlingOptions(transaction.GetFailureHandlingOptions().SetFailuresPreprocessor(failures).SetClearAfterRollback(true));
+            SourceDimension source;Level level;XYZ d;List<(DimensionWitness Source,XYZ Point)> witnesses;var refs=new ReferenceArray();
             try
             {
                 if(row.Status!="ready")throw new InvalidOperationException(row.Reason);
-                var source=row.Payload.Read<SourceDimension>();source.Validate();
-                if(index.GetValueOrDefault(row.LevelKey) is not Level level)throw new InvalidOperationException("Не найден нативный уровень исходного размера.");
-                var view=View(doc,level);double yaw=manifest.Coordinates.Transform.RotationRadians;
-                var d=new XYZ(source.Direction.X*Math.Cos(yaw)-source.Direction.Y*Math.Sin(yaw),source.Direction.X*Math.Sin(yaw)+source.Direction.Y*Math.Cos(yaw),0).Normalize();
-                var witnesses=source.Witnesses.Select(w=>(Source:w,Point:geometry.Xyz(w.Coordinate))).OrderBy(w=>w.Point.DotProduct(d)).ToList();
-                var refs=new ReferenceArray();var stable=new HashSet<string>();
+                source=row.Payload.Read<SourceDimension>();source.Validate();
+                level=index.GetValueOrDefault(row.LevelKey) as Level??throw new InvalidOperationException("Не найден нативный уровень исходного размера.");
+                double yaw=manifest.Coordinates.Transform.RotationRadians;
+                d=new XYZ(source.Direction.X*Math.Cos(yaw)-source.Direction.Y*Math.Sin(yaw),source.Direction.X*Math.Sin(yaw)+source.Direction.Y*Math.Cos(yaw),0).Normalize();
+                var axis=d;witnesses=source.Witnesses.Select(w=>(Source:w,Point:geometry.Xyz(w.Coordinate))).OrderBy(w=>w.Point.DotProduct(axis)).ToList();
+                var stable=new HashSet<string>();
                 foreach(var witness in witnesses)
                 {
                     var owner=Owner(doc,manifest,index,geometry,witness.Source.SourceGuid);
                     var reference=Resolve(doc,owner,witness.Point,d);if(!stable.Add(reference.ConvertToStableRepresentation(doc)))throw new InvalidOperationException("Повтор нативной опоры в цепи.");refs.Append(reference);
                 }
+            }
+            catch(Exception error){report.Add(row.SourceGuid,"Dimension","unsupported",error.Message);continue;}
+            try{Show(level);}catch(Exception error){report.Add(row.SourceGuid,"Dimension","unsupported","План уровня не открыт: "+error.Message);continue;}
+            using var group=new TransactionGroup(doc,"Archicad — проверенный нативный размер");group.Start();
+            using var transaction=new Transaction(doc,"Archicad — нативный размер");transaction.Start();var failures=new DimensionFailures();
+            transaction.SetFailureHandlingOptions(transaction.GetFailureHandlingOptions().SetFailuresPreprocessor(failures).SetClearAfterRollback(true));
+            try
+            {
+                var view=View(doc,level);
                 var position=geometry.Xyz(source.LinePosition);position=new XYZ(position.X,position.Y,level.Elevation);
                 double min=witnesses.Min(w=>(w.Point-position).DotProduct(d)),max=witnesses.Max(w=>(w.Point-position).DotProduct(d));
                 var line=Line.CreateBound(position+d*(min-Geometry.Feet(0.2)),position+d*(max+Geometry.Feet(0.2)));
@@ -124,11 +180,18 @@ public static class NativeDimensionStage
                     if(state.Commit()!=TransactionStatus.Committed)throw new InvalidOperationException("Не сохранены исходные опоры размера.");
                 }
                 group.Assimilate();
-                index[row.SourceGuid]=dim;report.Add(row.SourceGuid,"Dimension","created","Нативные опоры проверены; отклонение цепи не более 1 мм.",dim.UniqueId);
+                index[row.SourceGuid]=dim;created++;report.Add(row.SourceGuid,"Dimension","created","Нативные опоры проверены; отклонение цепи не более 1 мм.",dim.UniqueId);
             }
             catch(Exception error){if(transaction.GetStatus()==TransactionStatus.Started)transaction.RollBack();if(group.GetStatus()==TransactionStatus.Started)group.RollBack();report.Add(row.SourceGuid,"Dimension","unsupported",error.Message);}
         }
+        if(ui?.ActiveUIDocument?.ActiveView is ViewPlan last)ResetTemporary(doc,last);
         progress?.Invoke("nativeDimensions",rows.Count,rows.Count);return report;
+    }
+    static void ResetTemporary(Document doc,View view)
+    {
+        if(!view.IsValidObject||!view.IsInTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate))return;
+        using var t=new Transaction(doc,"Сбросить временное скрытие плана размеров");t.Start();
+        view.DisableTemporaryViewMode(TemporaryViewMode.TemporaryHideIsolate);t.Commit();
     }
     sealed class DimensionFailures:IFailuresPreprocessor
     {

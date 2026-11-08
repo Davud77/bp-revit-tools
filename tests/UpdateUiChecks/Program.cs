@@ -27,7 +27,34 @@ internal static class Program
         Render("current", output, "Установлена актуальная версия");
         UpdateSession.Latest = null; UpdateSession.Error = "Нет соединения с GitHub";
         Render("offline", output, "Не удалось проверить обновления");
+        RenderSettings(output); CheckSettings(output);
         Console.WriteLine("PASS patch version, failed check preserves cached release, three window states rendered without clipped buttons");
+    }
+    static void CheckSettings(string output)
+    {
+        var file = Path.Combine(output, "settings-check.json"); if (File.Exists(file)) File.Delete(file);
+        BotPlus.Shared.BotPlusSettings.Load(file);
+        if (BotPlus.Shared.BotPlusSettings.ThemeMode != "follow" || BotPlus.Shared.BotPlusSettings.HiddenPanels.Count != 0) throw new Exception("Defaults must follow Revit with every panel visible");
+        BotPlus.Shared.BotPlusSettings.Save("dark", ["ОВ", "Настройки", "Марки"], file);
+        BotPlus.Shared.BotPlusSettings.Load(file);
+        if (BotPlus.Shared.BotPlusSettings.ThemeMode != "dark" || !BotPlus.Shared.BotPlusSettings.HiddenPanels.SetEquals(["ОВ", "Марки"])) throw new Exception("Settings round trip lost data or hid the Settings panel");
+        File.WriteAllText(file, "{broken"); BotPlus.Shared.BotPlusSettings.Load(file);
+        if (BotPlus.Shared.BotPlusSettings.ThemeMode != "follow") throw new Exception("Broken settings file must fall back to defaults");
+        File.Delete(file);
+    }
+    static void RenderSettings(string output)
+    {
+        foreach (var dark in new[] { false, true })
+        {
+            BotPlus.Shared.BotPlusTheme.Override = dark;
+            var window = new SettingsWindow(); var content = (FrameworkElement)window.Content;
+            content.Measure(new Size(520, 400)); content.Arrange(new Rect(0, 0, 520, 400)); content.UpdateLayout();
+            var bitmap = new RenderTargetBitmap(520, 400, 96, 96, PixelFormats.Pbgra32);
+            var back = new Border { Width = 520, Height = 400, Background = window.Background, Child = null }; back.Measure(new Size(520, 400)); back.Arrange(new Rect(0, 0, 520, 400)); bitmap.Render(back); bitmap.Render(content);
+            var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using var stream = File.Create(Path.Combine(output, "settings-" + (dark ? "dark" : "light") + ".png")); encoder.Save(stream); window.Close();
+        }
+        BotPlus.Shared.BotPlusTheme.Override = null;
     }
     static void Render(string name, string output, string expected)
     {

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Windows;
+using BotPlus.Shared;
 using System.Windows.Controls;
 using System.Windows.Interop;
 
@@ -23,7 +24,7 @@ internal sealed class ImportSelectionWindow:Window
     public ImportSelectionWindow(IntPtr owner,string path)
     {
         Title="BotPlus Ac2Revit — что переносить";Width=630;Height=680;MinHeight=500;MinWidth=530;WindowStartupLocation=WindowStartupLocation.CenterOwner;
-        new WindowInteropHelper(this){Owner=owner};
+        new WindowInteropHelper(this){Owner=owner};BotPlusTheme.Apply(this);
         string sourcePath=path;Manifest? axes=null;
         if(PipelineRunner.IsPipeline(path))
         {
@@ -44,7 +45,7 @@ internal sealed class ImportSelectionWindow:Window
         var cancel=new Button{Content="Отмена",IsCancel=true,Margin=new Thickness(10,0,0,0),Padding=new Thickness(18,7,18,7)};
         actions.Children.Add(run);actions.Children.Add(cancel);
         var top=new StackPanel();DockPanel.SetDock(top,Dock.Top);root.Children.Add(top);
-        top.Children.Add(new TextBlock{Text="Выберите элементы модели",FontSize=21,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,10)});
+        top.Children.Add(new TextBlock{Text="Выберите элементы модели",FontSize=14,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,10)});
         top.Children.Add(new TextBlock{Text="Уровни, необходимые материалы и типы подготовятся автоматически. Снятие флажка не удаляет ранее созданные элементы.",TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,10)});
         var toggles=new StackPanel{Orientation=Orientation.Horizontal,Margin=new Thickness(0,0,0,8)};top.Children.Add(toggles);
         foreach(var (text,value) in new[]{("Выбрать всё",true),("Снять всё",false)})
@@ -53,7 +54,7 @@ internal sealed class ImportSelectionWindow:Window
         foreach(string kind in ImportSelection.KnownKinds)
         {
             int count=counts.GetValueOrDefault(kind);if(count==0 || exportAllowed!=null && !exportAllowed.Contains(kind))continue;
-            var box=new CheckBox{Content=$"{Label(kind)} — {count:N0}",IsChecked=true,Margin=new Thickness(3,5,3,5),FontSize=15};
+            var box=new CheckBox{Content=$"{Label(kind)} — {count:N0}",IsChecked=true,Margin=new Thickness(3,5,3,5)};
             boxes[kind]=box;list.Children.Add(box);box.Checked+=(_,_)=>Refresh();box.Unchecked+=(_,_)=>Refresh();
         }
         run.Click+=(_,_)=>{Selection=Current();DialogResult=true;};Refresh();

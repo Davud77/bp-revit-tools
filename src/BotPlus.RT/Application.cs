@@ -33,9 +33,9 @@ public sealed class Application : IExternalApplication
             var tags=application.CreateRibbonPanel("BotPlus RT","Марки");
             tags.AddItem(new PushButtonData("BotPlusMatchTags","Сопоставить",typeof(Application).Assembly.Location,typeof(MatchTagCommand).FullName!){ToolTip="Выберите эталонную марку, затем остальные марки и нажмите «Готово». Переносит тип, ориентацию, выноску и положение относительно оборудования."});
             tags.AddItem(new PushButtonData("BotPlusCopyTags","Копировать\nмарки",typeof(Application).Assembly.Location,typeof(CopyTagCommand).FullName!){ToolTip="Выберите эталонную марку и оборудование. Создаёт марки с тем же относительным положением; существующие марки этого типа пропускает."});
-            var service = application.CreateRibbonPanel("BotPlus RT", "Сервис");
-            service.AddItem(new PushButtonData("BotPlusRTService", "Сервис", typeof(Application).Assembly.Location,
-                typeof(ServiceCommand).FullName!){AvailabilityClassName=typeof(HostAvailable).FullName!});
+            var service = application.CreateRibbonPanel("BotPlus RT", "Настройки");
+            service.AddItem(new PushButtonData("BotPlusRTSettings", "Настройки", typeof(Application).Assembly.Location,
+                typeof(SettingsCommand).FullName!){ToolTip="Тема окон, состав панелей ленты и сведения о плагине.",AvailabilityClassName=typeof(HostAvailable).FullName!});
             service.AddItem(new PushButtonData("BotPlusRTUpdates","Обновления",typeof(Application).Assembly.Location,typeof(UpdateCommand).FullName!){AvailabilityClassName=typeof(HostAvailable).FullName!});
             RibbonStyle.Apply(application);
             StartupUpdates.Attach(application);

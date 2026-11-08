@@ -2,6 +2,7 @@ using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using System.Windows;
+using BotPlus.Shared;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Threading;
@@ -112,9 +113,9 @@ internal sealed class ImportProgress : IDisposable
     bool closing;
     public ImportProgress(IntPtr owner)
     {
-        var content=new StackPanel{Background=System.Windows.Media.Brushes.White};content.Children.Add(overallLabel);content.Children.Add(overallBar);content.Children.Add(label);content.Children.Add(bar);
+        var content=new StackPanel();content.Children.Add(overallLabel);content.Children.Add(overallBar);content.Children.Add(label);content.Children.Add(bar);
         window=new Window{Title="BotPlus RT — Сборка модели Archicad",Width=580,Height=230,ResizeMode=ResizeMode.NoResize,
-            WindowStartupLocation=WindowStartupLocation.CenterOwner,Content=content,ShowInTaskbar=false,Background=System.Windows.Media.Brushes.White};
+            WindowStartupLocation=WindowStartupLocation.CenterOwner,Content=content,ShowInTaskbar=false};BotPlusTheme.Apply(window);
         new WindowInteropHelper(window){Owner=owner};
         window.Closing+=(_,e)=>{if(!closing)e.Cancel=true;};window.Show();
     }

@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using BotPlus.Shared;
 using Microsoft.Win32;
 
 namespace Ac2Revit;
@@ -24,7 +25,7 @@ internal sealed class ExchangeWindow : Window
     readonly TextBox template=new(){MinHeight=28,VerticalContentAlignment=VerticalAlignment.Center};
     readonly Button browse=new(){Content="Шаблон…",Padding=new Thickness(10,3,10,3)};
     readonly TextBox log=new(){IsReadOnly=true,AcceptsReturn=true,TextWrapping=TextWrapping.Wrap,
-        VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Background=new SolidColorBrush(Color.FromRgb(245,247,250)),Padding=new Thickness(8)};
+        VerticalScrollBarVisibility=ScrollBarVisibility.Auto,Padding=new Thickness(8),FontFamily=new FontFamily("Consolas")};
     readonly Button run=new(){MinWidth=190,Padding=new Thickness(14,8,14,8),IsEnabled=false};
     readonly Button cancel=new(){Content="Закрыть",MinWidth=90,Padding=new Thickness(14,8,14,8),Margin=new Thickness(8,0,0,0)};
     readonly ProgressBar progress=new(){Height=4,Margin=new Thickness(0,8,0,8)};
@@ -49,7 +50,7 @@ internal sealed class ExchangeWindow : Window
         build=buildAfter;this.hasProject=hasProject;this.resumeSession=resumeSession;
         Title="BotPlus Ac2Revit — "+(resumeSession.Length>0?"Продолжить сеанс":build?"Перенос модели":"Экспорт из Archicad");
         Width=850;Height=Math.Min(920,SystemParameters.WorkArea.Height-24);MinWidth=720;MinHeight=Math.Min(720,Height);WindowStartupLocation=WindowStartupLocation.CenterOwner;
-        new WindowInteropHelper(this){Owner=owner};
+        new WindowInteropHelper(this){Owner=owner};BotPlusTheme.Apply(this);log.SetResourceReference(BackgroundProperty,"BP.Input");
         var root=new DockPanel{Margin=new Thickness(20)};Content=root;
         var bottom=new StackPanel();DockPanel.SetDock(bottom,Dock.Bottom);root.Children.Add(bottom);
         bottom.Children.Add(progress);
@@ -57,11 +58,11 @@ internal sealed class ExchangeWindow : Window
         bottom.Children.Add(buttons);buttons.Children.Add(run);buttons.Children.Add(cancel);
         run.Content=resumeSession.Length>0?"Подготовить и собрать":build?"Экспортировать и собрать":"Экспортировать";
         var top=new StackPanel();var scroll=new ScrollViewer{Content=top,VerticalScrollBarVisibility=ScrollBarVisibility.Auto,MaxHeight=Math.Max(350,Height-230)};DockPanel.SetDock(scroll,Dock.Top);root.Children.Add(scroll);
-        top.Children.Add(new TextBlock{Text=resumeSession.Length>0?"Сохранённые JSON + IFC → модель Revit":"Открытый Archicad → JSON + IFC → модель Revit",FontSize=20,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,12)});
+        top.Children.Add(new TextBlock{Text=resumeSession.Length>0?"Сохранённые JSON + IFC → модель Revit":"Открытый Archicad → JSON + IFC → модель Revit",FontSize=14,FontWeight=FontWeights.SemiBold,Margin=new Thickness(0,0,0,12)});
         var ports=new StackPanel{Orientation=Orientation.Horizontal,Margin=new Thickness(0,0,0,12)};top.Children.Add(ports);
         ports.Children.Add(new TextBlock{Text="Tapir · 127.0.0.1 : ",VerticalAlignment=VerticalAlignment.Center});ports.Children.Add(port);
         connect.Margin=new Thickness(10,0,0,0);ports.Children.Add(connect);
-        top.Children.Add(new Border{Background=new SolidColorBrush(Color.FromRgb(235,244,252)),Padding=new Thickness(12),Child=source,Margin=new Thickness(0,0,0,12)});
+        top.Children.Add(new Border{Padding=new Thickness(12),Child=source,Margin=new Thickness(0,0,0,12)}.Themed(Border.BackgroundProperty,"BP.Panel").Themed(Border.BorderBrushProperty,"BP.Border"));
         exportMode.Items.Add("JSON + IFC — комбинированный перенос");exportMode.Items.Add("Только JSON — параметры и нативные адаптеры");exportMode.Items.Add("Только IFC — сохранить файл для обмена");exportMode.SelectedIndex=0;
         top.Children.Add(exportMode);
         var scope=new Expander{Header="Элементы экспорта — по умолчанию все",Content=categories,IsExpanded=true,Margin=new Thickness(0,8,0,4)};top.Children.Add(scope);

@@ -1,6 +1,7 @@
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using BotPlus.Shared;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Windows;
@@ -32,7 +33,7 @@ internal sealed class UpdateWindow : Window
     readonly TextBlock stage = new() { Margin = new Thickness(0, 8, 0, 4) };
     readonly TextBox log = new() { IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto, FontFamily = new FontFamily("Consolas"), FontSize = 11,
-        Padding = new Thickness(10), Background = Brushes.White, BorderBrush = Brushes.LightGray };
+        Padding = new Thickness(10) };
     readonly Button check = MakeButton("Проверить обновления"), download = MakeButton("Скачать обновление"), install = MakeButton("Запустить установщик");
     readonly ProgressBar progress = new() { Height = 6, Maximum = 100 };
     readonly CancellationTokenSource cancellation = new();
@@ -41,35 +42,35 @@ internal sealed class UpdateWindow : Window
     string? file;
     bool busy, closed;
 
-    static Button MakeButton(string text) => new() { Content = text, Padding = new Thickness(14, 8, 14, 8), Margin = new Thickness(0, 0, 8, 0) };
+    static Button MakeButton(string text) => new() { Content = text, Padding = new Thickness(14, 4, 14, 4), Margin = new Thickness(0, 0, 8, 0) };
     public UpdateWindow()
     {
         Title = "Обновления BotPlus RT"; Width = 740; Height = 580; MinWidth = 660; MinHeight = 480;
         MaxHeight = SystemParameters.WorkArea.Height - 24; WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        FontFamily = new FontFamily("Segoe UI"); FontSize = 13; Background = new SolidColorBrush(Color.FromRgb(245, 247, 250));
-        var panel = new Grid { Margin = new Thickness(24), Background = Background }; Content = panel;
+        BotPlusTheme.Apply(this);
+        var panel = new Grid { Margin = new Thickness(18) }; Content = panel;
         for (int i = 0; i < 7; i++) panel.RowDefinitions.Add(new RowDefinition { Height = i == 5 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
         void Add(UIElement element, int row) { Grid.SetRow(element, row); panel.Children.Add(element); }
-        Add(new TextBlock { Text = "Обновления BotPlus RT", FontSize = 23, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 18) }, 0);
-        var versions = new Grid { Background = Brushes.White, Margin = new Thickness(0, 0, 0, 16) };
+        Add(new TextBlock { Text = "Обновления BotPlus RT", FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 18) }, 0);
+        var versions = new Grid { Margin = new Thickness(0, 0, 0, 16) }.Themed(System.Windows.Controls.Panel.BackgroundProperty, "BP.Panel");
         versions.ColumnDefinitions.Add(new ColumnDefinition()); versions.ColumnDefinitions.Add(new ColumnDefinition());
         void Card(string title, TextBlock value, int column)
         {
             var card = new StackPanel { Margin = new Thickness(16, 12, 16, 12) };
-            card.Children.Add(new TextBlock { Text = title, Foreground = Brushes.DimGray });
-            value.FontSize = 25; value.FontWeight = FontWeights.SemiBold; card.Children.Add(value);
+            card.Children.Add(new TextBlock { Text = title }.Themed(TextBlock.ForegroundProperty, "BP.Muted"));
+            value.FontSize = 20; value.FontWeight = FontWeights.SemiBold; card.Children.Add(value);
             Grid.SetColumn(card, column); versions.Children.Add(card);
         }
         Card("Установленная версия", new TextBlock { Text = UpdateSession.Display(UpdateSession.Current) }, 0);
         Card("Последняя версия на GitHub", latest, 1); Add(versions, 1);
         var summary = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
-        summary.Children.Add(status); checkedAt.Foreground = Brushes.DimGray; checkedAt.Margin = new Thickness(0, 6, 0, 0); summary.Children.Add(checkedAt); Add(summary, 2);
+        summary.Children.Add(status); checkedAt.SetResourceReference(TextBlock.ForegroundProperty, "BP.Muted"); checkedAt.Margin = new Thickness(0, 6, 0, 0); summary.Children.Add(checkedAt); Add(summary, 2);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
         foreach (var button in new[] { check, download, install }) buttons.Children.Add(button); Add(buttons, 3);
         var activity = new StackPanel { Margin = new Thickness(0, 0, 0, 12) }; activity.Children.Add(stage); activity.Children.Add(progress); Add(activity, 4);
         var tabs = new TabControl(); tabs.Items.Add(new TabItem { Header = "Журнал обновления", Content = log }); Add(tabs, 5);
         var footer = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
-        footer.Children.Add(new TextBlock { Text = "Перед установкой сохраните модели и закройте Revit.", TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray });
+        footer.Children.Add(new TextBlock { Text = "Перед установкой сохраните модели и закройте Revit.", TextWrapping = TextWrapping.Wrap }.Themed(TextBlock.ForegroundProperty, "BP.Muted"));
         var openLog = new Button { Content = "Открыть файл журнала", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 0) };
         openLog.Click += (_, _) => { try { UpdateSession.Log("INFO", "Открытие журнала."); Process.Start(new ProcessStartInfo(UpdateSession.LogPath) { UseShellExecute = true }); } catch (Exception error) { Log("ERROR", error.Message); } };
         footer.Children.Add(openLog); Add(footer, 6);

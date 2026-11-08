@@ -71,7 +71,7 @@ public static class OpeningValidation
             var package=HoleExchange.Export(reopened.Project!,reopened.Holes);File.WriteAllText(Path.Combine(folder,"Задания.json"),HoleJson.Write(package));
             var reference=StudyReference(app,referenceFolder);
             doc.Close(false);doc=null!;var crossings=CrossingValidation.Run(app,template,folder);var active=ui.OpenAndActivateDocument(Path.Combine(folder,"Пересечения MEP.rvt"));
-            var controller=new HoleController(ui);App.Controllers.Add(controller);controller.Show();
+            var controller=new HoleController(ui);App.Controllers.Add(controller);controller.Show(false);
             return new{status="complete",output,holes=5,approved=4,cuts=4,repeatWithoutDuplicates=true,reopenVerified=true,insufficientDepthRejected=true,externalMoveDetected=true,crossings,reference,messages};
         }
         finally{if(doc is {IsValidObject:true})doc.Close(false);}

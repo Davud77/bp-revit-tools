@@ -10,9 +10,11 @@ internal sealed class HoleMonitor:IExternalEventHandler
     static readonly HashSet<Document> dirty=[];
     static ExternalEvent? external;
     internal static void Start(UIControlledApplication app)
-    {external=ExternalEvent.Create(new HoleMonitor());app.ControlledApplication.DocumentChanged+=Changed;app.ControlledApplication.DocumentOpened+=Opened;}
+    {external=ExternalEvent.Create(new HoleMonitor());app.ControlledApplication.DocumentChanged+=Changed;app.ControlledApplication.DocumentOpened+=Opened;app.Idling+=OnIdle;}
+    static void OnIdle(object? sender,Autodesk.Revit.UI.Events.IdlingEventArgs e)
+    {if(sender is UIApplication ui)foreach(var controller in App.Controllers.ToArray())try{controller.SyncSelection(ui);}catch(Exception error){System.Diagnostics.Trace.WriteLine(error);}}
     internal static void Stop(UIControlledApplication app)
-    {app.ControlledApplication.DocumentChanged-=Changed;app.ControlledApplication.DocumentOpened-=Opened;external?.Dispose();external=null;tracked.Clear();dirty.Clear();}
+    {app.ControlledApplication.DocumentChanged-=Changed;app.ControlledApplication.DocumentOpened-=Opened;app.Idling-=OnIdle;external?.Dispose();external=null;tracked.Clear();dirty.Clear();}
     static void Opened(object? sender,DocumentOpenedEventArgs e)=>Track(e.Document);
     internal static void Track(Document doc)
     {var data=HoleStore.Read(doc);if(data.Project==null)return;tracked[doc]=data.Holes.Select(h=>HoleMarkers.Marker(doc,h)?.Id.Value??-1).Where(id=>id>0).ToHashSet();}

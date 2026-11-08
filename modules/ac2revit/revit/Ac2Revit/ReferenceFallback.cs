@@ -6,7 +6,7 @@ namespace Ac2Revit;
 public static class ReferenceFallback
 {
     public static Report Run(Document doc,string meshManifest,Func<string,string> workspacePath,Action<int,int>? progress=null,
-        BuiltInCategory category=BuiltInCategory.OST_Walls,string recordKind="WallGeometry",bool uniqueMarks=false)
+        BuiltInCategory category=BuiltInCategory.OST_Walls,string recordKind="WallGeometry",bool uniqueMarks=false,IReadOnlySet<string>? existingKeys=null)
     {
         using var json=JsonDocument.Parse(File.ReadAllText(meshManifest));var root=json.RootElement;
         string project=root.GetProperty("projectId").GetString()!,ifcHash=root.GetProperty("ifcSha256").GetString()!;
@@ -14,13 +14,15 @@ public static class ReferenceFallback
         var records=(root.TryGetProperty("elements",out var recordsProperty)?recordsProperty:root.GetProperty("walls")).EnumerateArray().ToList();
         var keys=records.Select(r=>r.GetProperty("sourceGuid").GetString()!).ToList();
         if(keys.Count!=keys.Distinct(StringComparer.OrdinalIgnoreCase).Count())throw new InvalidDataException("Duplicate source GUIDs");
-        var existing=Storage.Index(doc,project);var geometry=new Geometry(doc,root.GetProperty("coordinates").Read<CoordinateInfo>().Transform);
+        // A caller running many batches passes the source keys it already holds: indexing reads the tag of every
+        // imported element, which took ~45 s per batch on the finished Hippodrome model.
+        IReadOnlySet<string> existing=existingKeys??new HashSet<string>(Storage.Index(doc,project).Keys,StringComparer.OrdinalIgnoreCase);var geometry=new Geometry(doc,root.GetProperty("coordinates").Read<CoordinateInfo>().Transform);
         var report=new Report{ProjectId=project,Mode="referenceFallbackCopy"};int done=0;
         if(!DirectShape.IsValidCategoryId(new ElementId(category),doc))throw new InvalidDataException("Category does not support DirectShape: "+category);
         foreach(var record in records)
         {
             string key=record.GetProperty("sourceGuid").GetString()!;
-            if(existing.ContainsKey(key))throw new InvalidDataException("Fallback would duplicate source element "+key);
+            if(existing.Contains(key))throw new InvalidDataException("Fallback would duplicate source element "+key);
         }
         // Verification is per element and outside any transaction; creation is batched: one transaction and one
         // regeneration for a whole batch (11 157 objects of the Hippodrome took ~1 s each, mostly Commit/Regenerate,

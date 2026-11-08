@@ -47,4 +47,5 @@
     <Error Condition="!Exists('$(RevitInstallDir)\RevitAPI.dll')" Text="Revit 2026 API not found. Set -p:RevitInstallDir=path-to-Revit-2026." />
   </Target>
 
+  <ItemGroup><Compile Include="../../../src/Shared/BotPlusUi.cs" Link="Shared/BotPlusUi.cs" /></ItemGroup>
 </Project>

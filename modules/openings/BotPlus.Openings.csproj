@@ -9,4 +9,5 @@
     <Reference Include="RevitAPI"><HintPath>$(RevitInstallDir)\RevitAPI.dll</HintPath><Private>false</Private><ExternallyResolved>true</ExternallyResolved></Reference>
     <Reference Include="RevitAPIUI"><HintPath>$(RevitInstallDir)\RevitAPIUI.dll</HintPath><Private>false</Private><ExternallyResolved>true</ExternallyResolved></Reference>
   </ItemGroup>
+  <ItemGroup><Compile Include="../../src/Shared/BotPlusUi.cs" Link="Shared/BotPlusUi.cs" /></ItemGroup>
 </Project>

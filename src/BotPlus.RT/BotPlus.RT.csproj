@@ -4,7 +4,7 @@
     <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.6.5</Version>
+    <Version>1.9.3</Version>
     <RevitInstallDir Condition="'$(RevitInstallDir)' == ''">C:\Program Files\Autodesk\Revit 2026</RevitInstallDir>
   </PropertyGroup>
   <ItemGroup>
@@ -16,4 +16,5 @@
     <ProjectReference Include="../../modules/ov/HeatLossViewer/HeatLossViewer.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../../modules/openings/BotPlus.Openings.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
+  <ItemGroup><Compile Include="../Shared/BotPlusUi.cs" Link="Shared/BotPlusUi.cs" /></ItemGroup>
 </Project>

@@ -22,7 +22,7 @@ internal sealed class HoleEditor:Window
     internal HoleEditor(HoleGeometry geometry,IReadOnlyList<LevelChoice> choices,string levelId,string section,bool hasShaft=false)
     {
         initial=Geometry=geometry;Title="Задание отверстия";Width=470;Height=690;MaxHeight=SystemParameters.WorkArea.Height-30;ResizeMode=ResizeMode.CanResize;
-        WindowStartupLocation=WindowStartupLocation.CenterOwner;FontFamily=new System.Windows.Media.FontFamily("Segoe UI");FontSize=13;
+        WindowStartupLocation=WindowStartupLocation.CenterOwner;BotPlusTheme.Apply(this);
         var root=new DockPanel{Margin=new Thickness(18)};Content=root;
         var actions=new StackPanel{Orientation=Orientation.Horizontal,HorizontalAlignment=HorizontalAlignment.Right,Margin=new Thickness(0,14,0,0)};
         var save=new Button{Content="Сохранить задание",Padding=new Thickness(14,7,14,7),IsDefault=true};var cancel=new Button{Content="Отмена",Padding=new Thickness(14,7,14,7),Margin=new Thickness(8,0,0,0),IsCancel=true};
@@ -35,7 +35,7 @@ internal sealed class HoleEditor:Window
         Number("x","Центр X, мм (внутренние координаты)",geometry.X);Number("y","Центр Y, мм (внутренние координаты)",geometry.Y);Number("z","Центр / ось от уровня, мм",geometry.Z-(Level?.Elevation??0));
         Number("w","Ширина, мм",geometry.Width);Number("h","Высота / второй размер, мм",geometry.Height);Number("d","Диаметр, мм",geometry.Diameter);Number("depth","Глубина, мм",geometry.Depth);
         Number("yaw","Поворот в плане, градусы",geometry.Yaw*180/Math.PI);Field("Причина изменения / комментарий",comment);shaft.Visibility=hasShaft?Visibility.Visible:Visibility.Collapsed;shaft.Margin=new Thickness(0,10,0,0);panel.Children.Add(shaft);
-        var error=new TextBlock{Foreground=System.Windows.Media.Brushes.Firebrick,TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,8,0,0)};panel.Children.Add(error);
+        var error=new TextBlock{TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,8,0,0)};error.SetResourceReference(TextBlock.ForegroundProperty,"BP.Error");panel.Children.Add(error);
         save.Click+=(_,_)=>
         {
             try

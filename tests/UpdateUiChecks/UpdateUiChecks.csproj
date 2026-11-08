@@ -7,6 +7,8 @@
     <Compile Include="../../src/BotPlus.RT/UpdateCommand.cs" Link="UpdateCommand.cs" />
     <Compile Include="../../src/BotPlus.RT/UpdateSession.cs" Link="UpdateSession.cs" />
     <Compile Include="../../src/BotPlus.RT/ReleaseClient.cs" Link="ReleaseClient.cs" />
+    <Compile Include="../../src/Shared/BotPlusUi.cs" Link="BotPlusUi.cs" />
+    <Compile Include="../../src/BotPlus.RT/SettingsWindow.cs" Link="SettingsWindow.cs" />
     <Reference Include="RevitAPI"><HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPI.dll</HintPath><Private>false</Private><ExternallyResolved>true</ExternallyResolved></Reference>
     <Reference Include="RevitAPIUI"><HintPath>C:\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll</HintPath><Private>false</Private><ExternallyResolved>true</ExternallyResolved></Reference>
   </ItemGroup>
