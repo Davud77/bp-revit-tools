@@ -41,17 +41,17 @@ internal sealed class SettingsWindow : Window
         theme.Children.Add(Hint("Тема действует во всех модулях: MCP, Ac2Revit, ОВ, Отверстия, Марки и в окне обновлений. Уже открытые окна изменятся при следующем открытии."));
         tabs.Items.Add(new TabItem { Header = "Тема", Content = theme });
 
-        // Лента.
+        // Модули.
         var ribbon = new StackPanel { Margin = new Thickness(8, 6, 8, 8) };
-        ribbon.Children.Add(Heading("Панели на вкладке BotPlus RT"));
-        ribbon.Children.Add(new TextBlock { Text = "Снимите флажок у панелей, которые не нужны.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) });
+        ribbon.Children.Add(Heading("Модули BotPlus RT"));
+        ribbon.Children.Add(new TextBlock { Text = "Снимите флажок у модулей, которые не нужны.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 6) });
         foreach (var name in BotPlusSettings.Panels)
         {
             var box = new CheckBox { Content = name, IsChecked = !BotPlusSettings.HiddenPanels.Contains(name), Margin = new Thickness(0, 4, 0, 4) };
             panels[name] = box; ribbon.Children.Add(box);
         }
-        ribbon.Children.Add(Hint("Панель «Настройки» скрыть нельзя, чтобы к ленте всегда можно было вернуться. Изменения применяются сразу после нажатия «ОК»."));
-        tabs.Items.Add(new TabItem { Header = "Лента", Content = ribbon });
+        ribbon.Children.Add(Hint("После нажатия «ОК» лента обновится. Перезапустите Revit, чтобы применить новый состав модулей. Панель «Настройки» доступна всегда."));
+        tabs.Items.Add(new TabItem { Header = "Модули", Content = ribbon });
 
         // О плагине.
         var about = new StackPanel { Margin = new Thickness(8, 6, 8, 8) };

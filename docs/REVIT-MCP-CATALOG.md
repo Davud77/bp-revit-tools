@@ -209,7 +209,7 @@ store_room_data
 | Autodesk APS Revit Automation MCP | Пример серверной обработки облачных моделей через Autodesk Automation API. [Репозиторий Autodesk](https://github.com/autodesk-platform-services/aps-sample-mcp-server-revit-automation) |
 | `schauh11/revit-mcp-server` | Нативный чат внутри Revit 2026 и WebSocket. У проекта есть каталог операций, но подключение внешнего Codex к стандартному MCP endpoint требует отдельной проверки. [Репозиторий](https://github.com/schauh11/revit-mcp-server) |
 | Оригинальный `revit-mcp` и его `revit-mcp-plugin` / `revit-mcp-commandset` | Архивная база семейства Sparx. Это три компонента одной интеграции. [Архивный репозиторий](https://github.com/mcp-servers-for-revit/revit-mcp) |
-| OOXGN RevitMCP | Форк исходного MCP-модуля BotPlus RT. Отдельные пакет, имя сервера и порт, общий исходный набор инструментов. [Сравнение в BotPlus RT](UPSTREAM-MCP.md) |
+| OOXGN RevitMCP | Форк исходного MCP-модуля BotPlus RT. Отдельные пакет, имя сервера и порт, общий исходный набор инструментов. [Сравнение в BotPlus RT](REVIT-MCP-AUDIT.md#ooxgn) |
 
 ## Подключение к Code Mode
 

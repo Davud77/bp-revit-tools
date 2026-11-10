@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, rename, rm, writeFile, readdir, readFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, writeFile, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -20,10 +20,9 @@ function run(command, args) {
   const result = spawnSync(command, args, { stdio: 'inherit', windowsHide: true });
   if (result.status !== 0) throw result.error ?? new Error(`${command} failed: ${result.status}`);
 }
-run(process.execPath, [path.join(repo, 'modules/codex-mcp/installer/package.mjs'), path.join(repo, 'modules/codex-mcp'), stage]);
-await mkdir(path.join(stage, 'modules/codex-mcp'), { recursive: true });
-await rename(path.join(stage, 'plugin'), path.join(stage, 'modules/codex-mcp/plugin'));
+run(process.execPath, [path.join(repo, 'scripts/package-mcp.mjs'), repo, stage]);
 await cp(path.join(repo, 'installer/configure-mcp.mjs'), path.join(stage, 'configure-mcp.mjs'));
+await cp(path.join(repo, 'LICENSE'), path.join(stage, 'LICENSE'));
 await mkdir(path.join(stage, 'project-templates'), { recursive: true });
 await cp(templateManifest, path.join(stage, 'project-templates/templates.json'));
 for (const { file } of projectTemplates)
@@ -44,7 +43,6 @@ await cp(path.join(repo, 'modules/ac2revit/revit/assets'), path.join(ac, 'dist/R
 // Private RTE preferences are deliberately replaced with the portable default.
 await writeFile(path.join(ac, 'config/exchange-settings.json'), '{"projectTemplate":""}\n');
 run(python, [path.join(repo, 'scripts/package-python.py'), path.join(ac, 'runtime/python')]);
-await cp(path.join(repo, 'README.md'), path.join(stage, 'README.md'));
 const tapir = JSON.parse(await readFile(path.join(repo, 'installer/tapir/releases.json'), 'utf8'));
 await mkdir(path.join(stage, 'tapir'), { recursive: true });
 for (const asset of tapir.assets) {
@@ -54,16 +52,11 @@ for (const asset of tapir.assets) {
 }
 await cp(path.join(repo, 'installer/tapir/releases.json'), path.join(stage, 'tapir/releases.json'));
 await cp(path.join(repo, 'installer/tapir/LICENSE'), path.join(stage, 'tapir/LICENSE'));
-await cp(path.join(repo, 'USAGE.md'), path.join(stage, 'USAGE.md'));
-await cp(path.join(repo, 'ROADMAP.md'), path.join(stage, 'ROADMAP.md'));
-await mkdir(path.join(stage, 'docs'), { recursive: true });
-await mkdir(path.join(stage, 'docs/assets'), { recursive: true });
-await cp(path.join(repo, 'docs/assets/botplus-rt-ribbon.png'), path.join(stage, 'docs/assets/botplus-rt-ribbon.png'));
-for (const name of await readdir(path.join(repo, 'docs')))
-  if (name.endsWith('.md')) await cp(path.join(repo, 'docs', name), path.join(stage, 'docs', name));
-await mkdir(path.join(stage, 'modules/ov/docs'), { recursive: true });
-await cp(path.join(repo, 'modules/ov/docs/POTERI.md'), path.join(stage, 'modules/ov/docs/POTERI.md'));
-await cp(path.join(repo, 'docs/UPSTREAM-MCP.md'), path.join(stage, 'UPSTREAM-MCP.md'));
+for (const file of ['USAGE.md', 'docs/OPENINGS.md', 'docs/ANNOTATIONS.md', 'modules/ov/docs/POTERI.md']) {
+  const destination = path.join(stage, file);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await cp(path.join(repo, file), destination);
+}
 const hashes = {};
 async function walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -76,7 +69,6 @@ async function walk(dir) {
     else hashes[relative] = createHash('sha256').update(await readFile(file)).digest('hex');
   }
 }
-await rm(path.join(stage, 'release.json'));
 // The four distributable Ac2Revit families/templates are intentionally allowed.
 await walk(stage);
 await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version, target: 'Revit 2026 / Windows x64', modules: ['MCP', 'Ac2Revit', 'ОВ', 'Отверстия', 'Марки'], node: process.version, files: hashes }, null, 2));

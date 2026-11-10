@@ -1,11 +1,12 @@
-import { cp, mkdir, writeFile, readFile, readdir } from 'node:fs/promises';
+import { cp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 const [repo, stage] = process.argv.slice(2);
-if (!repo || !stage) throw new Error('Usage: package.mjs repo stage');
-const noticeCache = path.resolve(repo, '../../Выходные данные/Сборочные данные/licenses');
+if (!repo || !stage) throw new Error('Usage: package-mcp.mjs repo stage');
+const noticeCache = path.join(repo, 'Выходные данные/Сборочные данные/licenses');
+const mcp = path.join(repo, 'modules/codex-mcp');
 async function notice(name, url) {
   const file = path.join(noticeCache, name);
   const hash = data => createHash('sha256').update(data).digest('hex');
@@ -24,9 +25,9 @@ async function notice(name, url) {
   return data;
 }
 await mkdir(stage, { recursive: true });
-await cp(path.join(repo, 'server', 'src'), path.join(stage, 'server', 'src'), { recursive: true });
-await cp(path.join(repo, 'server', 'package.json'), path.join(stage, 'server', 'package.json'));
-const require = createRequire(path.join(repo, 'server', 'package.json'));
+await cp(path.join(mcp, 'server', 'src'), path.join(stage, 'server', 'src'), { recursive: true });
+await cp(path.join(mcp, 'server', 'package.json'), path.join(stage, 'server', 'package.json'));
+const require = createRequire(path.join(mcp, 'server', 'package.json'));
 const copied = new Set();
 async function copyPackage(name, resolver = require) {
   if (copied.has(name)) return; copied.add(name);
@@ -41,7 +42,7 @@ async function copyPackage(name, resolver = require) {
   const childResolver = createRequire(path.join(dir, 'package.json'));
   for (const dependency of Object.keys(pkg.dependencies ?? {})) await copyPackage(dependency, childResolver);
 }
-const pkg = JSON.parse(await readFile(path.join(repo, 'server', 'package.json'), 'utf8'));
+const pkg = JSON.parse(await readFile(path.join(mcp, 'server', 'package.json'), 'utf8'));
 for (const name of Object.keys(pkg.dependencies)) await copyPackage(name);
 await mkdir(path.join(stage, 'node'), { recursive: true });
 await cp(process.execPath, path.join(stage, 'node', 'node.exe'));
@@ -50,18 +51,7 @@ await mkdir(path.join(stage, 'licenses'), { recursive: true });
 for (const name of ['LICENSE.TXT', 'THIRD-PARTY-NOTICES.TXT']) {
   await writeFile(path.join(stage, 'licenses', 'dotnet-' + name), await notice('dotnet-v8.0.0-' + name, `https://raw.githubusercontent.com/dotnet/runtime/v8.0.0/${name}`));
 }
-await cp(path.join(repo, 'installer', 'configure-mcp.mjs'), path.join(stage, 'configure-mcp.mjs'));
-await cp(path.join(repo, 'LICENSE'), path.join(stage, 'LICENSE'));
-await cp(path.join(repo, 'installer', 'INSTALLATION.md'), path.join(stage, 'INSTALLATION.md'));
-await mkdir(path.join(stage, 'plugin'), { recursive: true });
-await cp(path.join(repo, '../../Выходные данные/Сборочные данные/dotnet/BP.Revit.AI', 'bin', 'Release', 'net8.0-windows', 'BP.Revit.AI.dll'), path.join(stage, 'plugin', 'BP.Revit.AI.dll'));
-async function verify(dir) {
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) throw new Error('Payload must not contain symlinks');
-    if (/^(RevitAPI(UI)?\.dll|bridge\.token|settings\.json)$/i.test(entry.name) || /\.(rvt|rfa|rte|rft)$/i.test(entry.name)) throw new Error('Private or Autodesk file in payload');
-    if (entry.isDirectory()) await verify(path.join(dir, entry.name));
-  }
-}
-await verify(stage);
-await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: pkg.version, node: process.version, packages: [...copied], target: 'Revit 2026 / Windows x64' }, null, 2));
+const plugin = path.join(stage, 'modules/codex-mcp/plugin');
+await mkdir(plugin, { recursive: true });
+await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/BP.Revit.AI/bin/Release/net8.0-windows/BP.Revit.AI.dll'), path.join(plugin, 'BP.Revit.AI.dll'));
 process.stdout.write(JSON.stringify({ packaged: true, node: process.version, packages: copied.size }) + '\n');

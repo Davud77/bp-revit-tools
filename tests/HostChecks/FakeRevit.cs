@@ -6,12 +6,25 @@ namespace Autodesk.Revit.UI
         Result OnStartup(UIControlledApplication application);
         Result OnShutdown(UIControlledApplication application);
     }
-    public class UIControlledApplication { public void CreateRibbonTab(string name) { } public RibbonPanel CreateRibbonPanel(string tab,string name)=>new(); }
+    public class UIControlledApplication
+    {
+        public List<string> Panels { get; } = [];
+        public void CreateRibbonTab(string name) { }
+        public RibbonPanel CreateRibbonPanel(string tab, string name) { Panels.Add(name); return new(); }
+    }
     public class RibbonPanel { public void AddItem(PushButtonData data) { } }
     public class PushButtonData { public string AvailabilityClassName {get;set;}=""; public string ToolTip {get;set;}=""; public PushButtonData(string id,string text,string assembly,string type) { } }
     public static class TaskDialog { public static void Show(string title, string message) => State.Errors.Add(message); }
 }
 namespace Autodesk.Revit.Exceptions { public class ArgumentException : System.ArgumentException { } }
+namespace BotPlus.Shared
+{
+    internal static class BotPlusSettings
+    {
+        internal static HashSet<string> HiddenPanels { get; } = [];
+        internal static void Load() { }
+    }
+}
 
 public static class State
 {

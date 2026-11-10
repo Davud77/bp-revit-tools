@@ -11,7 +11,7 @@ namespace BotPlus.RT.Setup;
 
 static partial class Deployment
 {
-    public const string Version = "1.9.4";
+    public const string Version = "1.9.6";
     const string AddinId = "DE07865F-0FBF-4CC3-B71E-AC2B149113E6";
     const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BotPlus.RT";
     static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotPlus.RT");
@@ -93,13 +93,13 @@ static partial class Deployment
         if (archicadVersion is int version)
         { Step(76, $"Установка Tapir для Archicad {version}"); InstallTapir(version, archicadDir); }
         else Log("Установка Tapir пропущена по выбору пользователя.");
+        Step(77, "Установка шаблонов ADSK для Revit");
+        ConfigureProjectTemplates(Release, install: true);
         Step(78, "Подготовка примеров MCP-конфигураций");
         RunNode(Release, "--examples");
         // Clients already connected to an older release follow the update; new connections are still made from the ribbon.
         Step(80, "Перевод подключённых MCP-клиентов на версию " + Version);
         RunNode(Release, "--retarget", "--codex", "--claude");
-        Step(82, "Добавление шаблонов BotPlus RT в список «Новый проект»");
-        ConfigureProjectTemplates(Release);
         Step(84, "Регистрация единственной надстройки BotPlus RT для Revit");
 
         var assembly = SecurityElement.Escape(Path.Combine(Release, "BotPlus.RT.dll"));
@@ -141,7 +141,7 @@ static partial class Deployment
         var release = state["release"]!.GetValue<string>(); RequireChild(release, App);
         progress?.Report(new(20, "Удаление MCP-подключений")); Log("Удаление MCP-подключений");
         RunNode(release, "--remove", "--codex", "--claude");
-        ConfigureProjectTemplates(null);
+        ConfigureProjectTemplates(release, install: false);
         if (File.Exists(Manifest))
         {
             var xml = System.Xml.Linq.XDocument.Load(Manifest);
