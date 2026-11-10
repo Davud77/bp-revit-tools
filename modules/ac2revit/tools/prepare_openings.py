@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 from prepare_column_bodies import body_products
+from ifc_styles import StyleAccumulator
 from prepare_extruded_columns import recognise_part
 from source_ifc import SourceIfcIndex
 from ac2r.jsonio import file_sha256, write_json
@@ -36,7 +37,7 @@ def prepare(out,limit=0,manifest_path=None,ifc_path=None,ifc_model=None,frame=No
     geometry_cache={}
     def mesh(obj):
         if obj.id() in geometry_cache:return geometry_cache[obj.id()]
-        points,faces,parts,cursor=[],[],[],0
+        points,faces,parts,cursor=[],[],[],0;styles=StyleAccumulator()
         for item in body_products(obj):
             shape=ifcopenshell.geom.create_shape(settings,item)
             v=apply_frame(np.array(shape.geometry.verts).reshape(-1,3),frame);f=np.array(shape.geometry.faces,dtype=int).reshape(-1,3)
@@ -45,10 +46,12 @@ def prepare(out,limit=0,manifest_path=None,ifc_path=None,ifc_model=None,frame=No
             edges=collections.Counter(tuple(sorted((int(a),int(b)))) for face in f for a,b in zip(face,np.roll(face,-1)))
             parts.append({'ifcStepId':item.id(),'firstFace':sum(len(x) for x in faces),'faceCount':len(f),
                           'approximateVolumeM3':volume,'closedEdgeCheck':all(n==2 for n in edges.values())})
+            styles.add(shape.geometry,len(f))
             points.append(v);faces.append(f+cursor);cursor+=len(v)
         v,f=np.concatenate(points),np.concatenate(faces)
         result={'vertices':[dict(zip('xyz',p)) for p in v.tolist()],'faces':f.tolist(),'parts':parts,
                 'boundsMinMeters':v.min(axis=0).tolist(),'boundsMaxMeters':v.max(axis=0).tolist()}
+        styles.apply(result)
         geometry_cache[obj.id()]=result;return result
     def rectangle(obj,wall):
         g=mesh(obj);d=wall['raw']['details'];a,b=d['begCoordinate'],d['endCoordinate']

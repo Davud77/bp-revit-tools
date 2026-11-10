@@ -1,7 +1,7 @@
 using Autodesk.Revit.UI;
 
 var assembly = typeof(BotPlus.RT.Application).Assembly.Location;
-foreach (var file in new[] { "modules/codex-mcp/plugin/WEAM.Revit.AI.dll", "modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "modules/ov/HeatLossViewer.dll", "modules/openings/BotPlus.Openings.dll" })
+foreach (var file in new[] { "modules/codex-mcp/plugin/BP.Revit.AI.dll", "modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "modules/ov/HeatLossViewer.dll", "modules/openings/BotPlus.Openings.dll" })
 {
     var target = Path.Combine(Path.GetDirectoryName(assembly)!, file);
     Directory.CreateDirectory(Path.GetDirectoryName(target)!);

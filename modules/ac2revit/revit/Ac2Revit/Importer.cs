@@ -708,8 +708,7 @@ public sealed class Importer
                 result = zone; break;
             default: throw new InvalidDataException("No adapter for " + e.Kind);
         }
-        var mark = result.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
-        if (mark != null && !mark.IsReadOnly && mark.StorageType == StorageType.String) mark.Set(e.Mark);
+        SourceMark.Set(result, e.Mark);
         return result;
     }
     static double Area(List<Edge> edges) => SourcePlanarGeometry.SignedArea(edges);

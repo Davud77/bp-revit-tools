@@ -6,7 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal sealed class BridgeService
 {
@@ -56,7 +56,7 @@ internal sealed class BridgeService
 
     private static string LoadOrCreateToken()
     {
-        var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WEAM.Revit.AI");
+        var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BP.Revit.AI");
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "bridge.token");
         if (File.Exists(path))
@@ -193,5 +193,5 @@ internal sealed class BridgeService
 internal sealed class RevitRequestHandler : IExternalEventHandler
 {
     public void Execute(UIApplication application) => BridgeService.ProcessPending(application);
-    public string GetName() => "WEAM.Revit.AI local MCP bridge";
+    public string GetName() => "BP.Revit.AI local MCP bridge";
 }

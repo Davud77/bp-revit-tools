@@ -5,7 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal static partial class RevitTools
 {
@@ -105,7 +105,7 @@ internal static partial class RevitTools
         SimulationDepth++;
         try
         {
-            using var group = new TransactionGroup(document, "WEAM AI: предпросмотр");
+            using var group = new TransactionGroup(document, "BP AI: предпросмотр");
             if (group.Start() != TransactionStatus.Started) throw new InvalidOperationException("Cannot start preview group.");
             try
             {
@@ -133,7 +133,7 @@ internal static partial class RevitTools
                 throw new InvalidOperationException($"Deletion includes {dependencies} dependent elements. Review the preview and explicitly pass allowDependentDeletion=true.");
         }
         var details = plan.Preview.GetRawText();
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = summary,
             MainContent = $"Проект: {document.Title}\n\nПроверенный план: {plan.Id}\nИзменения применяются одной транзакцией Revit.",
@@ -144,7 +144,7 @@ internal static partial class RevitTools
         if (isCancelled?.Invoke() == true || !ConfirmOperation(dialog) || isCancelled?.Invoke() == true)
             return new { applied = false, cancelled = true };
         GetOperationPlan(document, plan.Id, kind);
-        using var group = new TransactionGroup(document, "WEAM AI: подтверждённая операция");
+        using var group = new TransactionGroup(document, "BP AI: подтверждённая операция");
         if (group.Start() != TransactionStatus.Started) throw new InvalidOperationException("Cannot start apply group.");
         try
         {
@@ -191,7 +191,7 @@ internal static partial class RevitTools
     private static JsonElement ExecuteOperationTransaction(Document document, JsonElement args, string summary,
         Func<Document, JsonElement, object> operation, Func<bool>? isCancelled)
     {
-        using var transaction = new Transaction(document, "WEAM AI: " + summary);
+        using var transaction = new Transaction(document, "BP AI: " + summary);
         if (transaction.Start() != TransactionStatus.Started) throw new InvalidOperationException("Cannot start Revit transaction.");
         var failures = new OperationFailures();
         transaction.SetFailureHandlingOptions(transaction.GetFailureHandlingOptions()

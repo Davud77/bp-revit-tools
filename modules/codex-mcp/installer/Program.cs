@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace WEAM.Revit.AI.Setup;
+namespace BP.Revit.AI.Setup;
 
 internal static class Program
 {
@@ -14,7 +14,7 @@ internal static class Program
             if (args.Contains("--uninstall"))
             {
                 // Windows cannot remove a running executable. Run outside the owned directory.
-                var temp = Path.Combine(Path.GetTempPath(), "WEAM-Uninstall-" + Guid.NewGuid().ToString("N"));
+                var temp = Path.Combine(Path.GetTempPath(), "BP-Uninstall-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(temp);
                 var runner = Path.Combine(temp, "Uninstall.exe");
                 File.Copy(Environment.ProcessPath!, runner);
@@ -47,7 +47,7 @@ internal static class Program
         catch (Exception ex)
         {
             Deployment.Log("ERROR: " + ex.Message);
-            if (!silent) MessageBox.Show(ex.Message, "WEAM.Revit.AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!silent) MessageBox.Show(ex.Message, "BP.Revit.AI", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
         finally
@@ -60,7 +60,7 @@ internal static class Program
     {
         var dir = Path.GetDirectoryName(Environment.ProcessPath!)!;
         var temp = Path.GetFullPath(Path.GetTempPath());
-        if (!dir.StartsWith(temp, StringComparison.OrdinalIgnoreCase) || !Path.GetFileName(dir).StartsWith("WEAM-Uninstall-")) return;
+        if (!dir.StartsWith(temp, StringComparison.OrdinalIgnoreCase) || !Path.GetFileName(dir).StartsWith("BP-Uninstall-")) return;
         var script = $"Wait-Process -Id {Environment.ProcessId} -ErrorAction SilentlyContinue; Remove-Item -LiteralPath '{dir.Replace("'", "''")}' -Recurse -Force";
         var start = new ProcessStartInfo("powershell.exe") { UseShellExecute = false, CreateNoWindow = true };
         start.ArgumentList.Add("-NoProfile"); start.ArgumentList.Add("-EncodedCommand");

@@ -45,7 +45,7 @@ public static class NativeTerrain
             }).ToList();
             var terrain=Toposolid.Create(doc,loops,vertices,type.Id,level.Id);doc.Regenerate();
             foreach(var joined in JoinGeometryUtils.GetJoinedElements(doc,terrain))JoinGeometryUtils.UnjoinGeometry(doc,terrain,doc.GetElement(joined));
-            terrain.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(record.Mark);
+            SourceMark.Set(terrain,record.Mark);
             if(first==null)first=terrain;
             else Storage.Tag(terrain,manifest.Source.ProjectId,"mesh-part:"+record.SourceGuid+":"+number,record.ContentHash,record.Raw.GetRawText());
             number++;

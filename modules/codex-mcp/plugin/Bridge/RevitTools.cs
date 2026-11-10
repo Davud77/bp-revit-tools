@@ -6,7 +6,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal static partial class RevitTools
 {
@@ -106,6 +106,57 @@ internal static partial class RevitTools
                 "export_view_image" => ExportViewImage(application, args),
                 "list_sheet_resources" => ListSheetResources(application),
                 "read_documentation" => ReadDocumentation(application, args),
+                "list_views" => ListInventoryViews(application, args),
+                "list_schedules" => ListInventorySchedules(application, args),
+                "read_schedule" => ReadSchedule(application, args),
+                "list_schedule_categories" => ListScheduleCategories(application, args),
+                "list_schedule_fields" => ListScheduleFields(application, args),
+                "preview_schedule_fields" => PreviewScheduleFields(application, args),
+                "preview_create_schedule" => PreviewCreateSchedule(application, args),
+                "apply_create_schedule" => ApplyCreateSchedule(application, args, isCancelled),
+                "get_model_warnings" => ReadModelWarnings(application, args),
+                "list_worksets" => ListInventoryWorksets(application, args),
+                "read_mep_connectors" => ReadMepConnectors(application, args),
+                "list_mep_systems" => ListMepSystems(application, args),
+                "read_mep_system" => ReadMepSystem(application, args),
+                "list_mep_routing_preferences" => ListMepRoutingPreferences(application, args),
+                "preview_connect_mep" => PreviewConnectMep(application, args),
+                "apply_connect_mep" => ApplyConnectMep(application, args, isCancelled),
+                "preview_disconnect_mep" => PreviewDisconnectMep(application, args),
+                "apply_disconnect_mep" => ApplyDisconnectMep(application, args, isCancelled),
+                "list_raceway_types" => ListRacewayTypes(application),
+                "preview_create_raceways" => PreviewCreateRaceways(application, args),
+                "apply_create_raceways" => ApplyCreateRaceways(application, args, isCancelled),
+                "list_model_links" => ListModelLinks(application, args),
+                "list_link_elements" => ListLinkElements(application, args),
+                "check_element_intersections" => CheckElementIntersections(application, args, isCancelled),
+                "list_project_parameters" => ListProjectParameters(application, args),
+                "list_view_filters" => ListViewFilters(application, args),
+                "list_levels" => ListExtensionLevels(application, args),
+                "list_grids" => ListExtensionGrids(application, args),
+                "preview_set_element_worksets" => PreviewSetElementWorksets(application, args),
+                "apply_set_element_worksets" => ApplySetElementWorksets(application, args, isCancelled),
+                "preview_create_empty_sheets" => PreviewCreateEmptySheets(application, args),
+                "apply_create_empty_sheets" => ApplyCreateEmptySheets(application, args, isCancelled),
+                "preview_place_sheet_items" => PreviewPlaceSheetItems(application, args),
+                "apply_place_sheet_items" => ApplyPlaceSheetItems(application, args, isCancelled),
+                "preview_duplicate_views" => PreviewDuplicateViews(application, args),
+                "apply_duplicate_views" => ApplyDuplicateViews(application, args, isCancelled),
+                "preview_update_views" => PreviewUpdateViews(application, args),
+                "apply_update_views" => ApplyUpdateViews(application, args, isCancelled),
+                "export_schedule_csv" => ExportScheduleCsv(application, args),
+                "preview_configure_schedule" => PreviewConfigureSchedule(application, args),
+                "apply_configure_schedule" => ApplyConfigureSchedule(application, args, isCancelled),
+                "preview_configure_view_filters" => PreviewConfigureViewFilters(application, args),
+                "apply_configure_view_filters" => ApplyConfigureViewFilters(application, args, isCancelled),
+                "list_view_family_types" => ListViewFamilyTypes(application, args),
+                "preview_create_3d_views" => PreviewCreate3dViews(application, args),
+                "apply_create_3d_views" => ApplyCreate3dViews(application, args, isCancelled),
+                "preview_transform_elements" => PreviewTransformElements(application, args),
+                "apply_transform_elements" => ApplyTransformElements(application, args, isCancelled),
+                "list_dwg_export_setups" => ListDwgExportSetups(application),
+                "export_views_dwg" => ExportViewsDwg(application, args, isCancelled),
+                "export_project_ifc" => ExportProjectIfc(application, args, isCancelled),
                 "list_documentation_resources" => ListDocumentationResources(application, args),
                 "preview_copy_documentation_resources" => PreviewCopyDocumentationResources(application, args),
                 "apply_copy_documentation_resources" => ApplyCopyDocumentationResources(application, args, isCancelled),
@@ -588,7 +639,7 @@ internal static partial class RevitTools
         var plan = GetPlan(JsonTools.GetString(args, "planId"), "parameter");
         var preview = string.Join("\n", plan.ElementIds.Take(10).Select(id => $"Element {id}: {plan.OriginalValues.GetValueOrDefault(id)} → {plan.Value}"));
         if (plan.ElementIds.Count > 10) preview += $"\n… и ещё {plan.ElementIds.Count - 10} элементов";
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Изменить параметр «{plan.ParameterName}» у {plan.ElementIds.Count} элементов?",
             MainContent = preview,
@@ -598,7 +649,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, changedCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, changedCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: изменение параметра");
+        using var transaction = new Transaction(document, "BP AI: изменение параметра");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -660,7 +711,7 @@ internal static partial class RevitTools
         var document = RequireDocument(app);
         var plan = GetPlan(JsonTools.GetString(args, "planId"), "levels");
         var list = string.Join("\n", plan.Levels.Select(level => $"{level.Name}: {level.ElevationMeters.ToString("0.###", CultureInfo.InvariantCulture)} м"));
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Создать {plan.Levels.Count} уровней?",
             MainContent = list,
@@ -670,7 +721,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, createdCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, createdCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: создание уровней");
+        using var transaction = new Transaction(document, "BP AI: создание уровней");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -777,7 +828,7 @@ internal static partial class RevitTools
         var preview = string.Join("\n", plan.Walls.Take(10).Select((wall, index) =>
             $"{index + 1}. {wall.WallTypeName}, {wall.BaseLevelName}: ({wall.StartXMeters:0.###}, {wall.StartYMeters:0.###}) → ({wall.EndXMeters:0.###}, {wall.EndYMeters:0.###}) м; H={wall.HeightMeters:0.###} м"));
         if (plan.Walls.Count > 10) preview += $"\n… и ещё {plan.Walls.Count - 10} стен";
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Создать {plan.Walls.Count} стен?",
             MainContent = preview,
@@ -787,7 +838,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, createdCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, createdCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: создание стен");
+        using var transaction = new Transaction(document, "BP AI: создание стен");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -940,7 +991,7 @@ internal static partial class RevitTools
         var preview = string.Join("\n", plan.FamilyInstances.Take(10).Select((instance, index) =>
             $"{index + 1}. {instance.FamilyName}: {instance.TypeName}, {instance.LevelName}: ({instance.XMeters:0.###}, {instance.YMeters:0.###}, {instance.OffsetMeters:0.###}) м; поворот {instance.RotationDegrees:0.###}°"));
         if (plan.FamilyInstances.Count > 10) preview += $"\n… и ещё {plan.FamilyInstances.Count - 10} экземпляров";
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Разместить {plan.FamilyInstances.Count} экземпляров семейств?",
             MainContent = preview,
@@ -950,7 +1001,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, createdCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, createdCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: размещение семейств");
+        using var transaction = new Transaction(document, "BP AI: размещение семейств");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -1062,7 +1113,7 @@ internal static partial class RevitTools
 
         var preview = string.Join("\n", plan.Floors.Select((floor, index) =>
             $"{index + 1}. {floor.FloorTypeName}, {floor.LevelName}: {floor.AreaSquareMeters:0.###} м², вершин {floor.Vertices.Count}, смещение {floor.HeightOffsetMeters:0.###} м{(floor.Structural ? ", конструктивное" : "")}"));
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Создать {plan.Floors.Count} перекрытий?",
             MainContent = preview,
@@ -1072,7 +1123,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, createdCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, createdCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: создание перекрытий");
+        using var transaction = new Transaction(document, "BP AI: создание перекрытий");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -1276,7 +1327,7 @@ internal static partial class RevitTools
 
         var preview = string.Join("\n", plan.Grids.Select(grid =>
             $"{grid.Name}: ({grid.StartXMeters:0.###}, {grid.StartYMeters:0.###}) → ({grid.EndXMeters:0.###}, {grid.EndYMeters:0.###}) м, отметка {grid.ElevationMeters:0.###} м"));
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Создать {plan.Grids.Count} координационных осей?",
             MainContent = preview,
@@ -1286,7 +1337,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, createdCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, createdCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: создание координационных осей");
+        using var transaction = new Transaction(document, "BP AI: создание координационных осей");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -1373,7 +1424,7 @@ internal static partial class RevitTools
         if (view.GetCategoryHidden(category.Id) != change.WasHidden)
             throw new InvalidOperationException("The category visibility changed after the preview. Prepare a new preview.");
 
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"{(change.Hidden ? "Скрыть" : "Показать")} категорию «{change.CategoryName}»?",
             MainContent = $"Вид: {change.ViewName}\nТекущее состояние: {(change.WasHidden ? "скрыта" : "видна")}\nНовое состояние: {(change.Hidden ? "скрыта" : "видна")}",
@@ -1383,7 +1434,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, changed = false };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, changed = false, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: видимость категории");
+        using var transaction = new Transaction(document, "BP AI: видимость категории");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -1468,7 +1519,7 @@ internal static partial class RevitTools
         var preview = string.Join("\n", plan.Beams.Take(10).Select((beam, index) =>
             $"{index + 1}. {beam.FamilyName}: {beam.TypeName}, {beam.LevelName}: ({beam.Start.X:0.###}, {beam.Start.Y:0.###}, {beam.Start.Z:0.###}) → ({beam.End.X:0.###}, {beam.End.Y:0.###}, {beam.End.Z:0.###}) м"));
         if (plan.Beams.Count > 10) preview += $"\n… и ещё {plan.Beams.Count - 10} балок";
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Создать {plan.Beams.Count} балок?",
             MainContent = preview,
@@ -1478,7 +1529,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, createdCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, createdCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: создание балок");
+        using var transaction = new Transaction(document, "BP AI: создание балок");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -1583,7 +1634,7 @@ internal static partial class RevitTools
             throw new InvalidOperationException("The ceiling plan belongs to a different Revit document. Prepare a new preview in the active document.");
         var preview = string.Join("\n", plan.Ceilings.Select((ceiling, index) =>
             $"{index + 1}. {ceiling.CeilingTypeName}, {ceiling.LevelName}: {ceiling.AreaSquareMeters:0.###} м², вершин {ceiling.Vertices.Count}, смещение {ceiling.HeightOffsetMeters:0.###} м"));
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Создать {plan.Ceilings.Count} потолков?",
             MainContent = preview,
@@ -1593,7 +1644,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, createdCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, createdCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: создание потолков");
+        using var transaction = new Transaction(document, "BP AI: создание потолков");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -1717,7 +1768,7 @@ internal static partial class RevitTools
 
         var preview = string.Join("\n", plan.Rooms.Select((room, index) =>
             $"{index + 1}. {room.Number} {room.Name} — {room.LevelName}, точка ({room.XMeters:0.###}, {room.YMeters:0.###}) м"));
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Создать {plan.Rooms.Count} помещений?",
             MainContent = preview + "\n\nТочки должны находиться внутри замкнутых границ помещений.",
@@ -1727,7 +1778,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, createdCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, createdCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: создание помещений");
+        using var transaction = new Transaction(document, "BP AI: создание помещений");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try
@@ -1841,7 +1892,7 @@ internal static partial class RevitTools
         if (conflicts.Count > 0) throw new InvalidOperationException($"These view names were created after the preview: {string.Join(", ", conflicts)}. Prepare a new preview.");
 
         var preview = string.Join("\n", plan.PlanViews.Select(item => $"{item.ViewName}: {item.ViewFamily}, уровень {item.LevelName}, тип {item.ViewTypeName}"));
-        var dialog = new TaskDialog("WEAM.Revit.AI")
+        var dialog = new TaskDialog("BP.Revit.AI")
         {
             MainInstruction = $"Создать {plan.PlanViews.Count} планов?",
             MainContent = preview,
@@ -1851,7 +1902,7 @@ internal static partial class RevitTools
         if (!ConfirmOperation(dialog)) return new { applied = false, cancelled = true, createdCount = 0 };
         if (isCancelled?.Invoke() == true) return new { applied = false, cancelled = true, createdCount = 0, reason = "MCP client cancelled while confirmation was open." };
 
-        using var transaction = new Transaction(document, "WEAM AI: создание планов");
+        using var transaction = new Transaction(document, "BP AI: создание планов");
         ValidateLegacyPlan(plan, document);
         BeginCheckedTransaction(transaction);
         try

@@ -52,6 +52,14 @@ public static class SupplementalBodiesStage
             if(data["ifcToSource"]?["hash"]?.GetValue<string>()!=frameHash || data["ifcSha256"]?.GetValue<string>()!=referenceSha)throw new InvalidDataException("Supplemental IFC frame/hash mismatch");
             int batchBodies=data["elements"]!.AsArray().Count;
             var missing=data["elements"]!.AsArray().Where(r=>r!=null && !known.Contains(r["sourceGuid"]!.GetValue<string>())).Select(r=>r!.DeepClone()).ToArray();
+            if(sourceKind=="Roof" && missing.Length>0)
+            {
+                using var roofDoc=JsonDocument.Parse(new JsonArray(missing.Select(m=>m!.DeepClone()).ToArray()).ToJsonString());
+                var native=NativeRoofs.Run(doc,project,referenceSha,manifest,roofDoc.RootElement.EnumerateArray().ToList(),report);
+                foreach(var key in native)known.Add(key);
+                missing=missing.Where(r=>!native.Contains(r!["sourceGuid"]!.GetValue<string>())).ToArray();
+                if(native.Count>0)Checkpoints.Save(doc);
+            }
             data["elements"]=new JsonArray(missing);
             string input=Path.Combine(folder,$"{batchNumber++:0000}.json");File.WriteAllText(input,data.ToJsonString());
             bool committed=false;

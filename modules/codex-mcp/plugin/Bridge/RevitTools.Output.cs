@@ -2,7 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using System.Text.Json;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal static partial class RevitTools
 {
@@ -58,7 +58,7 @@ internal static partial class RevitTools
         ValidateLegacyPlan(plan, doc);
         if (doc.IsWorkshared || !string.Equals(doc.PathName, plan.Value, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The project path or worksharing status changed after preview.");
-        var dialog = new TaskDialog("WEAM.Revit.AI") { MainInstruction = "Сохранить текущий проект?", MainContent = doc.PathName,
+        var dialog = new TaskDialog("BP.Revit.AI") { MainInstruction = "Сохранить текущий проект?", MainContent = doc.PathName,
             CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No, DefaultButton = TaskDialogResult.No };
         if (cancelled?.Invoke() == true || !ConfirmOperation(dialog) || cancelled?.Invoke() == true)
             return new { applied = false, cancelled = true };

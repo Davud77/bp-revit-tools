@@ -5,7 +5,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.9.3</Version>
+    <Version>1.9.4</Version>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
@@ -15,6 +15,6 @@
     <ApplicationIcon>setup.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <EmbeddedResource Include="$(PayloadPath)" LogicalName="WEAM.Payload.zip" />
+    <EmbeddedResource Include="$(PayloadPath)" LogicalName="BP.Payload.zip" />
   </ItemGroup>
 </Project>

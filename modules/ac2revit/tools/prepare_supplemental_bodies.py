@@ -14,6 +14,7 @@ sys.path.insert(0,str(ROOT/'exporter'))
 from ac2r.jsonio import write_json, file_sha256, canonical_digest
 from prepare_column_bodies import prepare as prepare_bodies, body_products
 from source_ifc import SourceIfcIndex
+from ifc_styles import styles_of_shape
 
 
 def prepare(args,ifc_model=None):
@@ -67,7 +68,7 @@ def prepare(args,ifc_model=None):
                     if iterator.initialize():
                         while True:
                             shape=iterator.get()
-                            meshes[shape.id]=(np.array(shape.geometry.verts).reshape(-1,3),np.array(shape.geometry.faces,dtype=int).reshape(-1,3))
+                            triangles=np.array(shape.geometry.faces,dtype=int).reshape(-1,3);meshes[shape.id]=(np.array(shape.geometry.verts).reshape(-1,3),triangles,styles_of_shape(shape.geometry,len(triangles)))
                             if not iterator.next():break
                     del iterator
                 result=prepare_bodies(args.manifest,args.ifc,folder,kind=kind,keys=source_keys,ifc_model=model,frame=frame,manifest=m,identities=identities,ifc_sha=ifc_sha,meshes=meshes)

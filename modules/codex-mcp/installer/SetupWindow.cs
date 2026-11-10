@@ -1,4 +1,4 @@
-namespace WEAM.Revit.AI.Setup;
+namespace BP.Revit.AI.Setup;
 
 sealed class SetupWindow : Form
 {
@@ -11,14 +11,14 @@ sealed class SetupWindow : Form
 
     public SetupWindow(bool uninstall)
     {
-        Text = "WEAM.Revit.AI — " + (uninstall ? "удаление" : "установка");
+        Text = "BP.Revit.AI — " + (uninstall ? "удаление" : "установка");
         ClientSize = new Size(610, 460); FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false; StartPosition = FormStartPosition.CenterScreen;
         Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
         Font = new Font("Segoe UI", 10);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, RowCount = 10 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        layout.Controls.Add(new Label { Text = "WEAM.Revit.AI 0.9.12", Font = new Font(Font.FontFamily, 19, FontStyle.Bold), AutoSize = true });
+        layout.Controls.Add(new Label { Text = "BP.Revit.AI 0.9.12", Font = new Font(Font.FontFamily, 19, FontStyle.Bold), AutoSize = true });
         layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(560, 0), Text = uninstall
             ? "Удаление надстройки и её MCP-подключения. Ваши модели, снимки и настройки сохранятся. Закройте Revit и AI-клиент."
             : "Управляйте Revit через MCP. Установка для текущего пользователя; Node.js и зависимости включены. Требуется установленный Autodesk Revit 2026 x64." });

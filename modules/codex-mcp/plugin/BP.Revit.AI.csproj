@@ -4,15 +4,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>WEAM.Revit.AI</AssemblyName>
-    <RootNamespace>WEAM.Revit.AI</RootNamespace>
+    <AssemblyName>BP.Revit.AI</AssemblyName>
+    <RootNamespace>BP.Revit.AI</RootNamespace>
     <Version>0.9.12</Version>
     <AssemblyVersion>0.9.12.0</AssemblyVersion>
     <Revit2026Dir Condition="'$(Revit2026Dir)' == ''">C:\Program Files\Autodesk\Revit 2026</Revit2026Dir>
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Assets\weam-ai.png" />
     <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
     <Reference Include="RevitAPI">
       <HintPath>$(Revit2026Dir)\RevitAPI.dll</HintPath>

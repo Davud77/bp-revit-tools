@@ -144,7 +144,7 @@ public static class CutBeamReplacer
                     var curve=((LocationCurve)instance.Location).Curve;
                     if(curve.GetEndPoint(0).DistanceTo(a)>Geometry.Feet(1e-6) || curve.GetEndPoint(1).DistanceTo(b)>Geometry.Feet(1e-6))throw new InvalidDataException("Cut beam axis moved");
                     NativeGeometry.DeleteMeshOnly(doc,(DirectShape)index[key]);
-                    instance.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(record.S("mark"));
+                    SourceMark.Set(instance,record.S("mark"));
                     Storage.Tag(instance,project,key,"native-cut-beam:"+Json.Hash(record),raw.GetRawText());
                     if(t.Commit()!=TransactionStatus.Committed)throw new InvalidDataException("Native beam cut rolled back");index[key]=instance;
                     report.Add(key,"Beam","replaced",$"Native framing with {cuts.Count} exact void solids; both Boolean difference directions <= 1e-6 m3. Fixed source cuts require regeneration after source changes.",instance.UniqueId);

@@ -131,7 +131,7 @@ internal sealed class ImportProgress : IDisposable
             "beamBodies"=>"Геометрия балок", "rectangularBeams"=>"Прямоугольные балки", "nativeCutBeams"=>"Подрезки балок",
             "openingsAndFillings" or "openingCuts"=>"Проёмы", "fillingDoor"=>"Двери", "fillingWindow"=>"Окна",
             "roomSeparators"=>"Границы помещений", "wallJoinsAndRooms"=>"Сопряжения и помещения", "wallTopology"=>"Сопряжения стен",
-            "zoneAreas"=>"Площади помещений", "roomBoundaryAudit"=>"Проверка границ помещений", "views"=>"Планы и 3D-вид",
+            "zoneAreas"=>"Площади помещений", "roomBoundaryAudit"=>"Проверка границ помещений", "views"=>"Планы и 3D-вид", "surfacePaint"=>"Цвета поверхностей",
             "serviceCuts"=>"Служебные вырезы", "nativeDimensions"=>"Нативные размеры", "nativeTerrain"=>"Рельеф Mesh → Toposolid", "columnCompletion"=>"Дополнение колонн", "gridLabels"=>"Подписи осей",
             "roomSeparatorRecheck"=>"Проверка границ помещений", "separatorAudit"=>"Аудит разделителей", "hatchAudit"=>"Аудит штриховок", "sourceCoverage"=>"Проверка полноты переноса",
             "memoryCheckpoint"=>"Сохранение и повторное открытие RVT",

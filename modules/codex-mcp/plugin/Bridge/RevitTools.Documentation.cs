@@ -2,7 +2,7 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using System.Text.Json;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal static partial class RevitTools
 {
@@ -207,12 +207,7 @@ internal static partial class RevitTools
     private static object DocSchedule(Document doc, ViewSchedule schedule)
     {
         var d = schedule.Definition;
-        var fields = d.GetFieldOrder().Select(id => {
-            var f = d.GetField(id);
-            return new { id = id.IntegerValue, name = f.GetName(), f.ColumnHeading, f.IsHidden,
-                fieldType = f.FieldType.ToString(), parameterId = f.ParameterId.Value,
-                widthMm = SheetMm(f.SheetColumnWidth), displayType = f.DisplayType.ToString() };
-        }).ToArray();
+        var fields = d.GetFieldOrder().Select(id => DescribeScheduleField(d.GetField(id))).ToArray();
         using var table = schedule.GetTableData();
         using var body = table.GetSectionData(SectionType.Body);
         var cells = new List<string[]>();
@@ -227,4 +222,8 @@ internal static partial class RevitTools
                     : f.IsIntegerValue ? f.GetIntegerValue() : f.IsElementIdValue ? f.GetElementIdValue().Value : null }).ToArray(),
             rows = body.NumberOfRows, columns = body.NumberOfColumns, truncated, cells };
     }
+
+    private static object DescribeScheduleField(ScheduleField field) => new { id = field.FieldId.IntegerValue,
+        name = field.GetName(), field.ColumnHeading, field.IsHidden, fieldType = field.FieldType.ToString(),
+        parameterId = field.ParameterId.Value, widthMm = SheetMm(field.SheetColumnWidth), displayType = field.DisplayType.ToString() };
 }

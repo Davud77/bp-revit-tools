@@ -4,7 +4,7 @@
 
 | Источник | Новый модуль | Базовый commit |
 | --- | --- | --- |
-| `revit_mcp/outputs/WEAM.Revit.AI` | `modules/codex-mcp` | `9dd73ddf73b6a3312914db67e1a542f1eac7f294` + все локальные изменения |
+| Исходный каталог MCP | `modules/codex-mcp` | `9dd73ddf73b6a3312914db67e1a542f1eac7f294` + все локальные изменения |
 | `AchicadToRevit` | `modules/ac2revit` | `85525b2473f1a957d1cca7345a00e1622032a422` |
 | `HeatLossViewer` | `modules/ov` | локальный проект без Git |
 

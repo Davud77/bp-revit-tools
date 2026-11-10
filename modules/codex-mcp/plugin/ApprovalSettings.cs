@@ -1,12 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal static class ApprovalSettings
 {
     public static string SettingsPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WEAM.Revit.AI", "settings.json");
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BP.Revit.AI", "settings.json");
 
     // Read for each operation so switching mode never requires a restart.
     public static bool AutoConfirm => ReadAutoConfirm(SettingsPath);

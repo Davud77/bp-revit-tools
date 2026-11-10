@@ -13,6 +13,7 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'exporter'))
 from source_ifc import SourceIfcIndex
+from ifc_styles import StyleAccumulator, styles_of_shape
 from ac2r.jsonio import file_sha256, write_json
 from ifc_coordinates import infer_frame, apply_frame
 
@@ -47,13 +48,16 @@ def prepare(manifest_path,ifc_path,out,kind='Column',keys=None,ifc_model=None,fr
         try:
             matches=identities.matches(e)
             if len(matches)!=1:raise ValueError('IFC Tag match missing/ambiguous')
-            obj=matches[0];vertices,faces,parts,cursor=[],[],[],0
+            obj=matches[0];vertices,faces,parts,cursor=[],[],[],0;styles=StyleAccumulator()
             for part in body_products(obj,source_owner=identities.source_guid,owner_key=key.upper()):
                 if meshes is not None and part.id() in meshes:
-                    raw_points,triangles=meshes[part.id()]
+                    raw_points,triangles=meshes[part.id()][:2]
+                    if len(meshes[part.id()])>2:styles.add_computed(*meshes[part.id()][2])
+                    else:styles.add_computed([],[-1]*len(triangles))
                 else:
                     shape=ifcopenshell.geom.create_shape(settings,part)
                     raw_points=np.array(shape.geometry.verts).reshape(-1,3);triangles=np.array(shape.geometry.faces,dtype=int).reshape(-1,3)
+                    styles.add(shape.geometry,len(triangles))
                 points=apply_frame(raw_points,frame)
                 if len(points)==0 or len(triangles)==0 or not np.isfinite(points).all():raise ValueError('Empty/nonfinite body')
                 tri=points[triangles]-points[0]
@@ -70,6 +74,7 @@ def prepare(manifest_path,ifc_path,out,kind='Column',keys=None,ifc_model=None,fr
                  'ifcClass':obj.is_a(),
                  'rawSource':e['raw'],'representation':'tessellatedNetIFC',
                  'materialKey':d.get('buildingMaterialId',{}).get('guid','')}
+            styles.apply(row)
             rows.append(row);check.update(status='extracted',ifcGlobalId=obj.GlobalId,parts=len(parts),triangles=len(triangles),
                                           allPartsClosed=all(p['closedEdgeCheck'] for p in parts))
         except Exception as exc:check.update(status='error',error=str(exc))

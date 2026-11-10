@@ -35,7 +35,7 @@ try {
 $payload = Join-Path $stage 'payload'
 New-Item -ItemType Directory -Force $stage,$OutputDirectory | Out-Null
 & (Join-Path $PSScriptRoot 'installer\prepare-tapir.ps1')
-node (Join-Path $PSScriptRoot 'scripts\package.mjs') $PSScriptRoot $payload $BuildPython
+node (Join-Path $PSScriptRoot 'scripts\package.mjs') $PSScriptRoot $payload $BuildPython $version
 if ($LASTEXITCODE -ne 0) { throw 'Packaging failed.' }
 # Include the complete corresponding source for AGPL distribution.
 $source = Join-Path $stage 'source'

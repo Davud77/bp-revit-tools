@@ -1,6 +1,6 @@
 using Autodesk.Revit.UI;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal static partial class RevitTools
 {

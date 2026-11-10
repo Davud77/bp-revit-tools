@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal sealed class BridgeRequest
 {

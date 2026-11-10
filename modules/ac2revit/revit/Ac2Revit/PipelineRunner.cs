@@ -82,7 +82,7 @@ public static class PipelineRunner
         Dictionary<string,long> WallIdentities()=>Storage.Index(doc,project).Where(p=>wallKeys.Contains(p.Key) && (p.Value is Wall or DirectShape)).ToDictionary(p=>p.Key,p=>p.Value.Id.Value,StringComparer.OrdinalIgnoreCase);
         var wallsBefore=WallIdentities();
         var config=ImportConfig.Load(Resolve(plan.Mapping));var report=new Report{ProjectId=project,Mode=preview?"pipelinePreview":"pipeline"};
-        string[] order=["resources","site","prepareHatchMapping","hatchMapping","grids","gridLabels","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","roomSeparators","wallJoinsAndRooms","roomBoundaryAudit","views","serviceCuts","elementHatches","nativeDimensions","roomSeparatorRecheck","separatorAudit","hatchAudit","sourceCoverage"];
+        string[] order=["resources","site","prepareHatchMapping","hatchMapping","grids","gridLabels","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","roomSeparators","surfacePaint","wallJoinsAndRooms","roomBoundaryAudit","views","serviceCuts","elementHatches","nativeDimensions","roomSeparatorRecheck","separatorAudit","hatchAudit","sourceCoverage"];
         if(preview){foreach(var stage in order)report.Add(stage,"PipelineStage","planned");return report;}
         if(plan.EnforceSourceSnapshot)
         {
@@ -301,6 +301,9 @@ public static class PipelineRunner
         Stage("nativeTerrain",()=>ImportMissing(Resolve(plan.SourceManifest),new HashSet<string>{"Mesh"},config));
         if(plan.SupplementalBodiesPlan.Length>0)Stage("supplementalBodies",()=>SupplementalBodiesStage.Run(doc,Resolve(plan.SupplementalBodiesPlan),Path.Combine(output,"supplemental-inputs"),progress,selection?.Included));
         if(plan.RoomSeparators.Length>0)Stage("roomSeparators",()=>RoomSeparatorStage.Run(doc,manifest,Resolve(plan.SourceManifest),Resolve(plan.RoomSeparators),Path.Combine(output,"room-separators"),progress));
+        // Faces are painted before joins and rooms exist: with them in the model every commit recomputes them
+        // (hours on a large project), and the paint survives the later joins.
+        Stage("surfacePaint",()=>SurfacePaintStage.Run(doc,manifest,project,progress));
         // Spatial elements are deliberately rebuilt only after every physical
         // stage above has returned, including all native cuts and wall fillings.
         if(plan.RebuildRooms && trialLimit==0)

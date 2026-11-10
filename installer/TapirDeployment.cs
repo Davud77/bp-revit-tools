@@ -38,7 +38,7 @@ static partial class Deployment
     public static void InstallTapir(int version, string? directory, bool allowElevation = true)
     {
         string target = TapirTarget(version, directory);
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!;
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BP.Payload.zip")!;
         using var archive = new ZipArchive(stream);
         using var manifest = JsonDocument.Parse(Entry(archive, "tapir/releases.json").Open());
         var asset = manifest.RootElement.GetProperty("assets").EnumerateArray().Single(a => a.GetProperty("version").GetInt32() == version);

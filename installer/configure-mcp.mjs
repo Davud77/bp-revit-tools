@@ -5,7 +5,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
-const name = 'weam_revit_ai';
+const name = 'bp_revit_ai';
 const options = root => ({ command: path.join(root, 'node', 'node.exe'), args: [path.join(root, 'server', 'src', 'index.js')] });
 
 // Replace only a top-level key in the selected table, including multiline arrays.
@@ -37,15 +37,45 @@ function editKey(block, key, value) {
   return block.slice(0, match.index) + `${key} = ${value}` + block.slice(end);
 }
 
+function packagedEntry(entry, ownPrefix) {
+  if (typeof entry.command !== 'string' || !isChild(entry.command, ownPrefix) ||
+      !Array.isArray(entry.args) || entry.args.length !== 1 || typeof entry.args[0] !== 'string') return false;
+  const release = path.dirname(path.dirname(entry.command));
+  const expected = options(release);
+  return path.relative(expected.command, entry.command) === '' && path.relative(expected.args[0], entry.args[0]) === '';
+}
+
+function retargetCodexName(text, ownPrefix) {
+  const candidates = [];
+  for (const section of text.matchAll(/^\[mcp_servers\.([\w-]+)\][^\n]*\n/gm)) {
+    const remainder = text.slice(section.index + section[0].length);
+    const nextHeader = remainder.search(/^\[/m);
+    const block = nextHeader === -1 ? remainder : remainder.slice(0, nextHeader);
+    const command = /^command\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')/m.exec(block)?.[1];
+    const args = /^args\s*=/m.exec(block);
+    if (!command || !args) continue;
+    const start = args.index + args[0].length;
+    try {
+      const entry = { command: command.startsWith('"') ? JSON.parse(command) : command.slice(1, -1),
+        args: JSON.parse(block.slice(start, assignmentEnd(block, start))) };
+      if (packagedEntry(entry, ownPrefix)) candidates.push(section[1]);
+    } catch { /* Only unambiguous packaged entries can be renamed. */ }
+  }
+  if (candidates.length !== 1) return text;
+  return text.replace(new RegExp(`^\\[mcp_servers\\.${candidates[0]}(?=[.\\]])`, 'gm'), `[mcp_servers.${name}`);
+}
+
 // mode: false — add or repair; true — remove own entry; 'retarget' — move an existing own entry to this release only.
 export function editCodex(text, root, mode = false) {
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
-  const normalized = text.replaceAll('\r\n', '\n');
-  const table = /^\[mcp_servers\.weam_revit_ai\][^\n]*\n?/m.exec(normalized);
+  let normalized = text.replaceAll('\r\n', '\n');
+  const ownPrefix = path.dirname(path.dirname(root)); // Application directory, any installed version.
+  const header = /^\[mcp_servers\.bp_revit_ai\][^\n]*\n?/m;
+  if (mode === 'retarget' && !header.test(normalized)) normalized = retargetCodexName(normalized, ownPrefix);
+  const table = header.exec(normalized);
   const next = table ? /^\[/m.exec(normalized.slice(table.index + table[0].length)) : null;
   const end = table ? (next ? table.index + table[0].length + next.index : normalized.length) : normalized.length;
   let block = table ? normalized.slice(table.index, end) : `[mcp_servers.${name}]\n`;
-  const ownPrefix = path.dirname(path.dirname(root)); // Application directory, any installed version.
   if (mode) {
     const command = /^command\s*=\s*("(?:\\.|[^"\\])*"|'[^']*')/m.exec(block)?.[1];
     const decoded = command?.startsWith('"') ? JSON.parse(command) : command?.slice(1, -1);
@@ -72,12 +102,23 @@ export function editClaude(text, root, mode = false) {
   if (value === null || Array.isArray(value) || typeof value !== 'object') throw new Error('Некорректная конфигурация Claude; файл сохранён.');
   const servers = value.mcpServers ?? {};
   if (servers === null || Array.isArray(servers) || typeof servers !== 'object') throw new Error('Некорректный mcpServers Claude; файл сохранён.');
-  const owned = typeof servers[name]?.command === 'string' && isChild(servers[name].command, path.dirname(path.dirname(root)));
+  const ownPrefix = path.dirname(path.dirname(root));
+  let renamed = false;
+  if (mode === 'retarget' && !Object.hasOwn(servers, name)) {
+    const candidates = Object.keys(servers).filter(key => servers[key] && packagedEntry(servers[key], ownPrefix));
+    if (candidates.length === 1) {
+      const [previous] = candidates;
+      servers[name] = servers[previous];
+      delete servers[previous];
+      renamed = true;
+    }
+  }
+  const owned = typeof servers[name]?.command === 'string' && isChild(servers[name].command, ownPrefix);
   if (mode && !owned) return text;
   const before = JSON.stringify(servers[name]);
   if (mode === true) delete servers[name];
   else servers[name] = { ...servers[name], ...options(root) };
-  if (mode === 'retarget' && JSON.stringify(servers[name]) === before) return text; // already on this release
+  if (mode === 'retarget' && !renamed && JSON.stringify(servers[name]) === before) return text;
   value.mcpServers = servers;
   return JSON.stringify(value, null, 2) + '\n';
 }

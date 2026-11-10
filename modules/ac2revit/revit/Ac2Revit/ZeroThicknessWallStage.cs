@@ -45,7 +45,7 @@ public static class ZeroThicknessWallStage
                     var shape=DirectShape.CreateElement(doc,new ElementId(BuiltInCategory.OST_Walls));shape.SetShape(objects);
                     shape.ApplicationId=ApplicationId;shape.ApplicationDataId=record.SourceGuid;
                     shape.Name=WallCompletion.Incomplete+" — исходная нулевая толщина";
-                    shape.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(record.Mark);
+                    SourceMark.Set(shape,record.Mark);
                     shape.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(WallCompletion.Incomplete+": толщина в Archicad 0 м. Поверхность по исходной оси и высоте; объём не добавлен. Профиль после подрезок, проёмы и слои не подтверждены. Границы зон переносятся отдельными нативными линиями. GUID "+record.SourceGuid);
                     Storage.Tag(shape,manifest.Source.ProjectId,record.SourceGuid,hash,record.Raw.GetRawText());doc.Regenerate();Verify(shape,points);
                     if(transaction.Commit()!=TransactionStatus.Committed)throw new InvalidOperationException("Zero-thickness sheet rolled back");

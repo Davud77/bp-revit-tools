@@ -56,7 +56,7 @@ public static class WallCompletion
                     surface.ApplicationId="Ac2Revit.NominalWallFallback";surface.ApplicationDataId=record.SourceGuid;
                     surface.Name=Incomplete+" — приближённая поверхность тонкой стены";
                     surface.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Incomplete+": исходная толщина "+width.ToString("G9",System.Globalization.CultureInfo.InvariantCulture)+" м меньше геометрического допуска Revit. Только номинальная срединная поверхность; объём, слои, подрезки, проёмы и Room Bounding не перенесены. GUID "+record.SourceGuid);
-                    surface.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(record.Mark);
+                    SourceMark.Set(surface,record.Mark);
                     Storage.Tag(surface,project,record.SourceGuid,"nominal-wall-sheet:"+record.ContentHash,record.Raw.GetRawText());doc.Regenerate();ZeroThicknessWallStage.Verify(surface,sheet);
                     if(t.Commit()!=TransactionStatus.Committed)throw new InvalidOperationException("Thin-wall surface rolled back");
                     report.Add(record.SourceGuid,"WallGeometry","approximate",Incomplete+": nominal mid-surface only; source thickness below Revit geometry tolerance, no volume or room-boundary guarantee",surface.UniqueId);continue;
@@ -68,7 +68,7 @@ public static class WallCompletion
                 shape.ApplicationId="Ac2Revit.NominalWallFallback";shape.ApplicationDataId=record.SourceGuid;
                 shape.Name=Incomplete+" — приближённая номинальная геометрия";
                 shape.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Incomplete+": номинальная призма; профиль, подрезки, слои и привязки не подтверждены. GUID "+record.SourceGuid);
-                shape.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(record.Mark);
+                SourceMark.Set(shape,record.Mark);
                 Storage.Tag(shape,project,record.SourceGuid,"nominal-wall:"+record.ContentHash,record.Raw.GetRawText());doc.Regenerate();
                 if(t.Commit()!=TransactionStatus.Committed)throw new InvalidOperationException("Nominal wall transaction failed");
                 report.Add(record.SourceGuid,"WallGeometry","approximate",Incomplete+": nominal prism; exact source form unavailable",shape.UniqueId);

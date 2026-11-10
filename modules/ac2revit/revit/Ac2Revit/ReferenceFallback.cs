@@ -28,6 +28,7 @@ public static class ReferenceFallback
         // regeneration for a whole batch (11 157 objects of the Hippodrome took ~1 s each, mostly Commit/Regenerate,
         // and the undo history forced 55 reopenings). A rolled-back batch is retried element by element.
         var prepared=new List<Prepared>();
+        var styleMaterials=IfcSurfaceStyles.Ensure(doc,records);
         foreach(var record in records)
         {
             string key=record.GetProperty("sourceGuid").GetString()!;
@@ -36,12 +37,14 @@ public static class ReferenceFallback
             {
                 var points=record.GetProperty("vertices").Read<List<Point>>().Select(geometry.Xyz).ToList();
                 var faces=record.GetProperty("faces").Read<List<List<int>>>();
+                var styles=IfcSurfaceStyles.Read(record,faces.Count);
                 if(points.Count<3 || faces.Count==0)throw new InvalidDataException("Empty reference mesh");
-                stage="buildFaces";using var builder=new TessellatedShapeBuilder();builder.OpenConnectedFaceSet(false);
+                stage="buildFaces";int faceNumber=0;using var builder=new TessellatedShapeBuilder();builder.OpenConnectedFaceSet(false);
                 foreach(var indices in faces)
                 {
                     if(indices.Count!=3 || indices.Any(i=>i<0||i>=points.Count))throw new InvalidDataException("Invalid triangle indices");
-                    using var face=new TessellatedFace(indices.Select(i=>points[i]).ToList(),ElementId.InvalidElementId);
+                    var style=styles==null?-1:styles.Value.Faces[faceNumber++];
+                    using var face=new TessellatedFace(indices.Select(i=>points[i]).ToList(),style<0?ElementId.InvalidElementId:styleMaterials[styles!.Value.Styles[style]]);
                     if(!builder.DoesFaceHaveEnoughLoopsAndVertices(face))throw new InvalidDataException("Revit rejected reference triangle");
                     builder.AddFace(face);
                 }
@@ -115,7 +118,7 @@ public static class ReferenceFallback
                 shape.ApplicationId="Ac2Revit.IFC.ReferenceFallback";shape.ApplicationDataId=item.Key;shape.SetShape(item.Objects);
                 shape.Name=SourceLabel.Format(record.S("mark",recordKind))+" — геометрия IFC";
                 shape.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set("IFC geometry fallback; source "+item.Key+"; "+record.GetProperty("reason").GetString()+(uniqueMarks?"; Исходная марка: "+record.S("mark"):""));
-                if(record.TryGetProperty("mark",out var mark))shape.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(mark.GetString());
+                if(record.TryGetProperty("mark",out var mark))SourceMark.Set(shape,mark.GetString());
                 Storage.Tag(shape,project,item.Key,"ifc-mesh:"+ifcHash,record.GetRawText());shapes[shape.Id]=item;
             }
             doc.Regenerate();

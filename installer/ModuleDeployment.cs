@@ -9,8 +9,14 @@ static partial class Deployment
 {
     static readonly HashSet<string> LegacyClasses = new(StringComparer.OrdinalIgnoreCase)
     {
-        "WEAM.Revit.AI.PluginApplication", "Ac2Revit.App", "HeatLossViewer.App"
+        "BP.Revit.AI.PluginApplication", "Ac2Revit.App", "HeatLossViewer.App"
     };
+
+    static readonly Guid StandaloneMcpId = new("F0BB1CE2-6DA1-4F67-AB04-4C05F06397C4");
+
+    static bool IsLegacyAddIn(XElement addIn) =>
+        LegacyClasses.Contains(addIn.Element("FullClassName")?.Value ?? "") ||
+        (Guid.TryParse(addIn.Element("AddInId")?.Value, out var id) && id == StandaloneMcpId);
 
     static IEnumerable<string> LegacyManifests(string baseDir)
     {
@@ -20,7 +26,7 @@ static partial class Deployment
             XDocument xml;
             try { xml = XDocument.Load(file); }
             catch (System.Xml.XmlException) { continue; }
-            if (xml.Descendants("AddIn").Any(a => LegacyClasses.Contains(a.Element("FullClassName")?.Value ?? "")))
+            if (xml.Descendants("AddIn").Any(IsLegacyAddIn))
                 yield return file;
         }
     }
@@ -35,7 +41,7 @@ static partial class Deployment
             throw new InvalidOperationException("Удалите прежние установки для всех пользователей, затем повторите: " + string.Join(", ", conflicts));
         foreach (var file in LegacyManifests(Path.GetDirectoryName(Manifest)!))
         {
-            if (XDocument.Load(file).Descendants("AddIn").Any(a => !LegacyClasses.Contains(a.Element("FullClassName")?.Value ?? "")))
+            if (XDocument.Load(file).Descendants("AddIn").Any(a => !IsLegacyAddIn(a)))
                 throw new InvalidOperationException("Общая регистрация содержит сторонние плагины. Разделите её перед установкой: " + file);
         }
     }
@@ -140,7 +146,7 @@ static partial class Deployment
         Directory.CreateDirectory(destination);
         if (Directory.EnumerateFileSystemEntries(destination).Any())
             throw new InvalidOperationException("Для проверки нужна пустая папка.");
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!;
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BP.Payload.zip")!;
         using var archive = new ZipArchive(stream);
         foreach (var entry in archive.Entries)
         {
@@ -150,9 +156,10 @@ static partial class Deployment
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             entry.ExtractToFile(target);
         }
-        foreach (var file in new[] { "BotPlus.RT.dll", "modules/codex-mcp/plugin/WEAM.Revit.AI.dll",
+        foreach (var file in new[] { "BotPlus.RT.dll", "modules/codex-mcp/plugin/BP.Revit.AI.dll",
             "modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "modules/ov/HeatLossViewer.dll", "modules/openings/BotPlus.Openings.dll",
             "node/node.exe", "server/src/index.js", "modules/ac2revit/runtime/python/python.exe" })
             if (!File.Exists(Path.Combine(destination, file))) throw new FileNotFoundException(file);
+        ReadProjectTemplates(destination);
     }
 }

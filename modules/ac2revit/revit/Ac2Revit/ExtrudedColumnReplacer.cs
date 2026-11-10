@@ -100,7 +100,7 @@ public static class ExtrudedColumnReplacer
                         doc.Regenerate();Verify(instance,column,0);
                         report.Add(column.SourceGuid,"ColumnFlex","verified","Top offset +0.5 m changes actual solid height and volume; original geometry restored.");
                     }
-                    instance.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(column.Mark);
+                    SourceMark.Set(instance,column.Mark);
                     var oldId=old.Id;
                     var dependentElements=old.GetDependentElements(null).Select(id=>doc.GetElement(id)).Where(e=>e!=null).ToList();
                     var dependents=dependentElements.ToDictionary(e=>e.Id.Value,e=>e.GetType().Name);

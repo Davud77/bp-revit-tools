@@ -11,7 +11,7 @@ namespace BotPlus.RT.Setup;
 
 static partial class Deployment
 {
-    public const string Version = "1.9.3";
+    public const string Version = "1.9.4";
     const string AddinId = "DE07865F-0FBF-4CC3-B71E-AC2B149113E6";
     const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BotPlus.RT";
     static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotPlus.RT");
@@ -48,7 +48,7 @@ static partial class Deployment
 
     public static string ReadLicense()
     {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!;
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BP.Payload.zip")!;
         using var archive = new ZipArchive(stream);
         using var reader = new StreamReader(Entry(archive, "LICENSE").Open());
         return reader.ReadToEnd();
@@ -71,7 +71,7 @@ static partial class Deployment
 
         Step(10, "Распаковка файлов приложения в " + Release);
         Directory.CreateDirectory(Release);
-        using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!)
+        using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BP.Payload.zip")!)
         using (var archive = new ZipArchive(stream))
         {
             var files = archive.Entries.Where(e => !IsDirectory(e)).ToList();
@@ -98,6 +98,8 @@ static partial class Deployment
         // Clients already connected to an older release follow the update; new connections are still made from the ribbon.
         Step(80, "Перевод подключённых MCP-клиентов на версию " + Version);
         RunNode(Release, "--retarget", "--codex", "--claude");
+        Step(82, "Добавление шаблонов BotPlus RT в список «Новый проект»");
+        ConfigureProjectTemplates(Release);
         Step(84, "Регистрация единственной надстройки BotPlus RT для Revit");
 
         var assembly = SecurityElement.Escape(Path.Combine(Release, "BotPlus.RT.dll"));
@@ -125,13 +127,13 @@ static partial class Deployment
     {
         Log("Начало удаления BotPlus RT"); progress?.Report(new(0, "Проверка открытых приложений"));
         CheckRevitClosed();
-        if (!File.Exists(Path.Combine(App, "installation.json"))) throw new InvalidOperationException("Не найдена установка WEAM.Revit.AI, управляемая установщиком.");
+        if (!File.Exists(Path.Combine(App, "installation.json"))) throw new InvalidOperationException("Не найдена установка BotPlus RT, управляемая установщиком.");
         foreach (var process in Process.GetProcessesByName("node"))
         {
             try
             {
                 if (process.MainModule?.FileName?.StartsWith(App + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) == true)
-                    throw new InvalidOperationException("Закройте AI-клиент, использующий MCP WEAM, перед удалением.");
+                    throw new InvalidOperationException("Закройте AI-клиент, использующий MCP BP, перед удалением.");
             }
             catch (System.ComponentModel.Win32Exception) { }
         }
@@ -139,6 +141,7 @@ static partial class Deployment
         var release = state["release"]!.GetValue<string>(); RequireChild(release, App);
         progress?.Report(new(20, "Удаление MCP-подключений")); Log("Удаление MCP-подключений");
         RunNode(release, "--remove", "--codex", "--claude");
+        ConfigureProjectTemplates(null);
         if (File.Exists(Manifest))
         {
             var xml = System.Xml.Linq.XDocument.Load(Manifest);
@@ -189,11 +192,16 @@ static partial class Deployment
         File.Copy(file, Path.Combine(dir, Path.GetFileName(file) + "." + Guid.NewGuid().ToString("N") + ".bak"));
     }
 
-    static void AtomicWithBackup(string file, string text)
+    static void AtomicWithBackup(string file, string text, Encoding? encoding = null)
     {
         if (File.Exists(file) && File.ReadAllText(file) == text) return;
         Directory.CreateDirectory(Path.GetDirectoryName(file)!); Backup(file);
         var temp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        File.WriteAllText(temp, text, Utf8); File.Move(temp, file, true);
+        try
+        {
+            File.WriteAllText(temp, text, encoding ?? Utf8);
+            File.Move(temp, file, true);
+        }
+        finally { File.Delete(temp); }
     }
 }

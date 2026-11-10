@@ -33,7 +33,7 @@ public abstract class FakeModule(string name) : Autodesk.Revit.UI.IExternalAppli
         return Autodesk.Revit.UI.Result.Succeeded;
     }
 }
-namespace WEAM.Revit.AI { public sealed class PluginApplication() : FakeModule("mcp"); }
+namespace BP.Revit.AI { public sealed class PluginApplication() : FakeModule("mcp"); }
 namespace Ac2Revit { public sealed class App() : FakeModule("ac2revit"); }
 namespace HeatLossViewer { public sealed class App() : FakeModule("ov"); }
 namespace BotPlus.Openings { public sealed class App() : FakeModule("openings"); }

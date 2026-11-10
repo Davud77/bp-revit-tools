@@ -247,7 +247,7 @@ def prepare_pipeline(session, manifest_path, ifc_path, assets):
             'rebuildRooms': True, 'nativeCutBeams': True, 'roomAuditLimit': 20,
             'requireCompleteSeparatorCoverage': False, 'enforceSourceSnapshot': True}
     for key, value in list(plan.items()):
-        if isinstance(value, str) and key != 'pipelineFormat':
+        if isinstance(value, str) and value and key != 'pipelineFormat':
             path = Path(value).resolve()
             if not path.is_file(): raise FileNotFoundError(path)
             plan[key] = os.path.relpath(path, session)

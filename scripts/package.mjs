@@ -1,10 +1,21 @@
-import { cp, mkdir, rename, rm, writeFile, readdir, readFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, rename, rm, writeFile, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
-const [repo, stage, python] = process.argv.slice(2);
-if (!repo || !stage || !python) throw new Error('Usage: package.mjs repo stage python');
+const [repo, stage, python, version] = process.argv.slice(2);
+if (!repo || !stage || !python || !version) throw new Error('Usage: package.mjs repo stage python version');
+const templateManifest = path.join(repo, 'installer/project-templates.json');
+const templateSource = path.join(repo, 'Входные данные/Шаблоны');
+const projectTemplates = JSON.parse(await readFile(templateManifest, 'utf8'));
+const allowedTemplates = new Set();
+if (!(await lstat(templateSource)).isDirectory()) throw new Error('Project templates require a physical directory: ' + templateSource);
+for (const { file } of projectTemplates) {
+  if (!/^[^/\\,:=]+\.rte$/i.test(file)) throw new Error('Invalid project template filename: ' + file);
+  const source = path.join(templateSource, file);
+  if (!(await lstat(source)).isFile()) throw new Error('Project template must be a regular file: ' + source);
+  allowedTemplates.add('project-templates/' + file);
+}
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: 'inherit', windowsHide: true });
   if (result.status !== 0) throw result.error ?? new Error(`${command} failed: ${result.status}`);
@@ -13,6 +24,10 @@ run(process.execPath, [path.join(repo, 'modules/codex-mcp/installer/package.mjs'
 await mkdir(path.join(stage, 'modules/codex-mcp'), { recursive: true });
 await rename(path.join(stage, 'plugin'), path.join(stage, 'modules/codex-mcp/plugin'));
 await cp(path.join(repo, 'installer/configure-mcp.mjs'), path.join(stage, 'configure-mcp.mjs'));
+await mkdir(path.join(stage, 'project-templates'), { recursive: true });
+await cp(templateManifest, path.join(stage, 'project-templates/templates.json'));
+for (const { file } of projectTemplates)
+  await cp(path.join(templateSource, file), path.join(stage, 'project-templates', file));
 await cp(path.join(repo, 'docs/INSTALLATION.md'), path.join(stage, 'INSTALLATION.md'));
 await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/BotPlus.RT/bin/Release/net8.0-windows/BotPlus.RT.dll'), path.join(stage, 'BotPlus.RT.dll'));
 await mkdir(path.join(stage, 'modules/ov'), { recursive: true });
@@ -54,13 +69,15 @@ async function walk(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const file = path.join(dir, entry.name);
     if (entry.isSymbolicLink()) throw new Error(`Symlink in payload: ${file}`);
-    if (/^(RevitAPI(UI)?\.dll|bridge\.token|settings\.json)$/i.test(entry.name) || /\.(rvt|rte|ifc|pln|bpn)$/i.test(entry.name)) throw new Error(`Private file: ${file}`);
+    const relative = path.relative(stage, file).replaceAll('\\', '/');
+    if (/^(RevitAPI(UI)?\.dll|bridge\.token|settings\.json)$/i.test(entry.name) || /\.(rvt|ifc|pln|bpn)$/i.test(entry.name) ||
+        (/\.rte$/i.test(entry.name) && !allowedTemplates.has(relative))) throw new Error(`Private file: ${file}`);
     if (entry.isDirectory()) await walk(file);
-    else hashes[path.relative(stage, file).replaceAll('\\', '/')] = createHash('sha256').update(await readFile(file)).digest('hex');
+    else hashes[relative] = createHash('sha256').update(await readFile(file)).digest('hex');
   }
 }
 await rm(path.join(stage, 'release.json'));
 // The four distributable Ac2Revit families/templates are intentionally allowed.
 await walk(stage);
-await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version: '1.9.3', target: 'Revit 2026 / Windows x64', modules: ['MCP', 'Ac2Revit', 'ОВ', 'Отверстия', 'Марки'], node: process.version, files: hashes }, null, 2));
+await writeFile(path.join(stage, 'release.json'), JSON.stringify({ version, target: 'Revit 2026 / Windows x64', modules: ['MCP', 'Ac2Revit', 'ОВ', 'Отверстия', 'Марки'], node: process.version, files: hashes }, null, 2));
 console.log(`BotPlus RT payload: ${Object.keys(hashes).length} files`);

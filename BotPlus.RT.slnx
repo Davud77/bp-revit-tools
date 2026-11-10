@@ -6,7 +6,7 @@
   </Folder>
   <Folder Name="/modules/codex-mcp/" />
   <Folder Name="/modules/codex-mcp/plugin/">
-    <Project Path="modules/codex-mcp/plugin/WEAM.Revit.AI.csproj" />
+    <Project Path="modules/codex-mcp/plugin/BP.Revit.AI.csproj" />
   </Folder>
   <Folder Name="/modules/ov/">
     <Project Path="modules/ov/HeatLossViewer/HeatLossViewer.csproj" />

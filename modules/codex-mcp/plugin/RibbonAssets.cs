@@ -1,22 +1,28 @@
-using System.Reflection;
 using System.Windows;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal static class RibbonAssets
 {
-    public static BitmapImage Icon(int pixels)
+    public static DrawingImage Icon(int pixels)
     {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Revit.AI.Assets.weam-ai.png")
-            ?? throw new InvalidOperationException("Embedded WEAM icon is missing.");
-        var image = new BitmapImage();
-        image.BeginInit();
-        image.CacheOption = BitmapCacheOption.OnLoad;
-        image.DecodePixelWidth = pixels;
-        image.StreamSource = stream;
-        image.EndInit();
+        var group = new DrawingGroup { Transform = new ScaleTransform(pixels / 32d, pixels / 32d) };
+        using (var drawing = group.Open())
+        {
+            var outline = new Pen(new SolidColorBrush(Color.FromRgb(76, 96, 117)), 1.4);
+            drawing.DrawRoundedRectangle(new SolidColorBrush(Color.FromRgb(233, 242, 248)), outline,
+                new Rect(7, 7, 18, 18), 2, 2);
+            for (var pin = 11; pin <= 21; pin += 5)
+            {
+                drawing.DrawLine(outline, new Point(pin, 3), new Point(pin, 7));
+                drawing.DrawLine(outline, new Point(pin, 25), new Point(pin, 29));
+                drawing.DrawLine(outline, new Point(3, pin), new Point(7, pin));
+                drawing.DrawLine(outline, new Point(25, pin), new Point(29, pin));
+            }
+            drawing.DrawEllipse(new SolidColorBrush(Color.FromRgb(51, 145, 210)), null, new Point(16, 16), 4, 4);
+        }
+        var image = new DrawingImage(group);
         image.Freeze();
         return image;
     }

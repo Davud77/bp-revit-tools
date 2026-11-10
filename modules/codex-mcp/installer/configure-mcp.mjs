@@ -5,7 +5,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 
-const name = 'weam_revit_ai';
+const name = 'bp_revit_ai';
 const options = root => ({ command: path.join(root, 'node', 'node.exe'), args: [path.join(root, 'server', 'src', 'index.js')] });
 
 // Replace only a top-level key in the selected table, including multiline arrays.
@@ -40,7 +40,7 @@ function editKey(block, key, value) {
 export function editCodex(text, root, remove = false) {
   const newline = text.includes('\r\n') ? '\r\n' : '\n';
   const normalized = text.replaceAll('\r\n', '\n');
-  const table = /^\[mcp_servers\.weam_revit_ai\][^\n]*\n?/m.exec(normalized);
+  const table = /^\[mcp_servers\.bp_revit_ai\][^\n]*\n?/m.exec(normalized);
   const next = table ? /^\[/m.exec(normalized.slice(table.index + table[0].length)) : null;
   const end = table ? (next ? table.index + table[0].length + next.index : normalized.length) : normalized.length;
   let block = table ? normalized.slice(table.index, end) : `[mcp_servers.${name}]\n`;

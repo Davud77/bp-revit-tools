@@ -56,6 +56,14 @@ public static class RuntimeJobs
             var job = JsonSerializer.Deserialize<Job>(File.ReadAllText(sourceInbox), Json.Options) ?? throw new InvalidDataException("Empty runtime job");
             File.Move(sourceInbox, Path.Combine(Path.GetDirectoryName(sourceInbox)!, "job-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+".json"));
             resultPath = WorkspacePath(job.ResultPath);
+            if(job.Operation=="surfacePaintCopy")
+            {
+                var output=WorkspacePath(job.OutputRvt);File.Copy(WorkspacePath(job.SourceRvt),output,false);
+                var document=ui.OpenAndActivateDocument(output).Document;var paintManifest=Manifest.Load(WorkspacePath(job.ManifestPath));
+                var paintReport=SurfacePaintStage.Run(document,paintManifest,paintManifest.Source.ProjectId,(phase,done,total)=>File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="running",phase,done,total,seconds=timer.Elapsed.TotalSeconds},Json.Options)));
+                paintReport.Save(WorkspacePath(job.ReportPath));document.Save();
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",output,seconds=timer.Elapsed.TotalSeconds,outcomes=paintReport.Items.GroupBy(i=>i.Status).ToDictionary(g=>g.Key,g=>g.Count())},Json.Options));return;
+            }
             if(job.Operation=="dimension163SourceValidation")
             {
                 var output=WorkspacePath(job.OutputRvt);File.Copy(WorkspacePath(job.SourceRvt),output,false);

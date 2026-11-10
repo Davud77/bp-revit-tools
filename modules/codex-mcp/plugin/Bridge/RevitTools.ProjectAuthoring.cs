@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal static partial class RevitTools
 {
@@ -116,7 +116,7 @@ internal static partial class RevitTools
         var doc = RequireDocument(app);
         var plan = GetPlan(JsonTools.GetString(args, "planId"), "saveProject");
         ValidateLegacyPlan(plan, doc);
-        var dialog = new TaskDialog("WEAM.Revit.AI") { MainInstruction = "Сохранить проект под новым именем?", MainContent = plan.Value,
+        var dialog = new TaskDialog("BP.Revit.AI") { MainInstruction = "Сохранить проект под новым именем?", MainContent = plan.Value,
             CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No, DefaultButton = TaskDialogResult.No };
         if (cancelled?.Invoke() == true || !ConfirmOperation(dialog) || cancelled?.Invoke() == true) return new { applied = false, cancelled = true };
         ValidateLegacyPlan(plan, doc);

@@ -118,7 +118,7 @@ public static class RectangularBeamReplacer
                     doc.Regenerate();Verify(instance,beam,.5);flex.RollBack();doc.Regenerate();Verify(instance,beam,0);
                     report.Add(beam.SourceGuid,"BeamFlex","verified","Actual curve extension +0.5 m verified in bounds and volume, then rolled back.");
                 }
-                instance.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(beam.Mark);
+                SourceMark.Set(instance,beam.Mark);
                 var oldId=old.Id;
                 var bookkeeping=old.GetDependentElements(null).Select(id=>doc.GetElement(id)).Where(e=>e!=null && e.GetType()==typeof(Element) && e.Category==null && string.IsNullOrEmpty(e.Name)
                     && !e.ViewSpecific && Storage.Read(e)==null && e.Parameters.Cast<Parameter>().All(p=>p.IsReadOnly) && e.get_BoundingBox(null)==null).Select(e=>e.Id).ToHashSet();

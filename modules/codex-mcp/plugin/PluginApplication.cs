@@ -1,7 +1,7 @@
 using Autodesk.Revit.UI;
 using System.Reflection;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 public sealed class PluginApplication : IExternalApplication
 {
@@ -17,15 +17,15 @@ public sealed class PluginApplication : IExternalApplication
 
             var panel = application.CreateRibbonPanel(tabName, "MCP");
             var button = new PushButtonData(
-                "WeamRevitAiConnection",
+                "BpMcpConnection",
                 "MCP",
                 Assembly.GetExecutingAssembly().Location,
                 typeof(Commands.ShowConnectionCommand).FullName!);
             button.Image = RibbonAssets.Icon(16);
             button.LargeImage = RibbonAssets.Icon(32);
-            button.ToolTip = "Подключение и восстановление локального MCP-моста WEAM AI";
+            button.ToolTip = "Подключение и восстановление локального MCP-моста BP AI";
             panel.AddItem(button);
-            var autoConfirmButton = new PushButtonData("WeamAutoConfirm", "Авто\nподтверждение",
+            var autoConfirmButton = new PushButtonData("BpAutoConfirm", "Авто\nподтверждение",
                 Assembly.GetExecutingAssembly().Location,
                 typeof(Commands.ToggleAutoConfirmCommand).FullName!);
             autoConfirmButton.Image = RibbonAssets.AutoConfirmIcon(16);
@@ -41,7 +41,7 @@ public sealed class PluginApplication : IExternalApplication
         catch (Exception exception)
         {
             application.ControlledApplication.DocumentChanged -= RevitTools.OnDocumentChanged;
-            TaskDialog.Show("WEAM.Revit.AI", $"Не удалось запустить локальный мост:\n{exception.Message}");
+            TaskDialog.Show("BP.Revit.AI", $"Не удалось запустить локальный мост:\n{exception.Message}");
             BridgeService.Stop();
             return Result.Failed;
         }

@@ -1,6 +1,6 @@
 param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'))
 $ErrorActionPreference = 'Stop'
-$project = [xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'plugin\WEAM.Revit.AI.csproj') -Raw)
+$project = [xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot 'plugin\BP.Revit.AI.csproj') -Raw)
 $version = [string]$project.Project.PropertyGroup.Version
 if ($version -ne '0.9.12') { throw 'Update installer version constants before building a new release.' }
 & (Join-Path $PSScriptRoot 'build.ps1')
@@ -28,16 +28,16 @@ foreach ($relative in $sourceFiles) {
     New-Item -ItemType Directory -Force -Path (Split-Path $destination -Parent) | Out-Null
     Copy-Item -LiteralPath $inputFile -Destination $destination
 }
-$sourceArchive = Join-Path $OutputDirectory "WEAM.Revit.AI-$version-source.zip"
+$sourceArchive = Join-Path $OutputDirectory "BP.Revit.AI-$version-source.zip"
 Compress-Archive -Path (Join-Path $source '*') -DestinationPath $sourceArchive -Force
 New-Item -ItemType Directory -Path (Join-Path $payload 'source') -Force | Out-Null
 Copy-Item -LiteralPath $sourceArchive -Destination (Join-Path $payload 'source')
 $payloadArchive = Join-Path $stageRoot 'payload.zip'
 Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $payloadArchive -CompressionLevel Optimal
-dotnet publish (Join-Path $PSScriptRoot 'installer\WEAM.Revit.AI.Setup.csproj') -c Release -o (Join-Path $stageRoot 'publish') "-p:PayloadPath=$payloadArchive" --verbosity quiet
+dotnet publish (Join-Path $PSScriptRoot 'installer\BP.Revit.AI.Setup.csproj') -c Release -o (Join-Path $stageRoot 'publish') "-p:PayloadPath=$payloadArchive" --verbosity quiet
 if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
-$setup = Join-Path $OutputDirectory "WEAM.Revit.AI-$version-Setup.exe"
-Copy-Item -LiteralPath (Join-Path $stageRoot 'publish\WEAM.Revit.AI.Setup.exe') -Destination $setup -Force
+$setup = Join-Path $OutputDirectory "BP.Revit.AI-$version-Setup.exe"
+Copy-Item -LiteralPath (Join-Path $stageRoot 'publish\BP.Revit.AI.Setup.exe') -Destination $setup -Force
 $hashLines = foreach ($file in $setup,$sourceArchive) { '{0}  {1}' -f (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(),(Split-Path $file -Leaf) }
 [IO.File]::WriteAllLines((Join-Path $OutputDirectory 'SHA256SUMS.txt'), $hashLines)
 Write-Host "Installer: $setup"

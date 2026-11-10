@@ -28,7 +28,7 @@ public static class NominalColumnStage
                     if(index.GetValueOrDefault(row.LevelKey) is not Level level)throw new InvalidDataException("Source column level missing");
                     transaction.Start();NativeGeometry.Configure(transaction,report,row.SourceGuid,"NominalColumn");
                     var column=adapter.Create(row,level,materials);
-                    column.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(row.Mark);
+                    SourceMark.Set(column,row.Mark);
                     column.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set("НЕПОЛНОЦЕННАЯ КОЛОННА: нативная прямоугольная призма по размерам и положению API. Номинальные габариты/объём проверены; фактическая форма после подрезок и соединений не подтверждена IFC. GUID "+row.SourceGuid);
                     Storage.Tag(column,manifest.Source.ProjectId,row.SourceGuid,"nominal-column:"+row.ContentHash,row.Raw.GetRawText());
                     if(transaction.Commit()!=TransactionStatus.Committed)throw new InvalidOperationException("Nominal column rolled back");

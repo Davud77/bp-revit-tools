@@ -88,6 +88,7 @@ class StepIndex:
         refs, indptr = array.array('q'), array.array('q', [0])
         self.type_names, type_codes = [], {}
         self.guids, self.tags, self.inverse = {}, {}, []
+        self.styled = []  # (IfcStyledItem id, styled geometry item id): colours live on the item, not under it
         with self.path.open('rb') as stream:
             for start, text in statements(stream):
                 m = ENTITY.match(text.lstrip())
@@ -101,6 +102,10 @@ class StepIndex:
                 plain = STRING.sub(b"''", body)
                 ids.append(eid); offsets.append(start); lengths.append(len(text)); codes.append(code)
                 refs.extend(int(r) for r in REF.findall(plain)); indptr.append(len(refs))
+                if name == b'IFCSTYLEDITEM':
+                    args = split_arguments(body)
+                    if args and args[0].startswith(b'#'):
+                        self.styled.append((eid, int(args[0][1:])))
                 if name in products or name in INVERSE:
                     args = split_arguments(body)
                     if name in products:
@@ -166,18 +171,36 @@ class StepIndex:
                 relations.add(rel)
                 if relating and relating not in products: products.add(relating); queue.append(relating)
         frontier = self.positions(sorted(products | relations))
-        while len(frontier):
-            frontier = frontier[~selected[frontier]]
+        while True:
+            while len(frontier):
+                frontier = frontier[~selected[frontier]]
+                if not len(frontier):
+                    break
+                selected[frontier] = True
+                starts, ends = self.indptr[frontier], self.indptr[frontier + 1]
+                counts = ends - starts
+                if counts.sum() == 0:
+                    break
+                gather = np.repeat(starts - np.concatenate([[0], np.cumsum(counts)[:-1]]), counts) + np.arange(counts.sum())
+                frontier = np.unique(self.positions(np.unique(self.refs[gather])))
+            # IfcStyledItem points at the geometry it colours, so it is found from the other side.
+            frontier = self._styles_of_selected(selected)
             if not len(frontier):
                 break
-            selected[frontier] = True
-            starts, ends = self.indptr[frontier], self.indptr[frontier + 1]
-            counts = ends - starts
-            if counts.sum() == 0:
-                break
-            gather = np.repeat(starts - np.concatenate([[0], np.cumsum(counts)[:-1]]), counts) + np.arange(counts.sum())
-            frontier = np.unique(self.positions(np.unique(self.refs[gather])))
         return selected
+
+    def _styles_of_selected(self, selected):
+        """Style records of selected geometry items that are not selected yet (IfcStyledItem is an inverse reference)."""
+        if not self.styled:
+            return np.array([], dtype=np.int64)
+        if not hasattr(self, '_styled_arrays'):
+            self._styled_arrays = (np.array([s for s, _ in self.styled], dtype=np.int64), np.array([i for _, i in self.styled], dtype=np.int64))
+        own_ids, item_ids = self._styled_arrays
+        last = len(self.ids) - 1
+        own = np.minimum(np.searchsorted(self.ids, own_ids), last)
+        item = np.minimum(np.searchsorted(self.ids, item_ids), last)
+        wanted = (self.ids[own] == own_ids) & (self.ids[item] == item_ids) & selected[item] & ~selected[own]
+        return own[wanted]
 
     def write_parts(self, parts, folder):
         """parts: {name: selected bool mask}. One pass over the source writes every part."""

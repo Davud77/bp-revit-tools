@@ -4,7 +4,7 @@ using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.UI;
 using System.Text.Json;
 
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 
 internal static partial class RevitTools
 {

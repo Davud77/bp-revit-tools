@@ -3,7 +3,7 @@
 )
 
 $ErrorActionPreference = 'Stop'
-$projectPath = Join-Path $PSScriptRoot 'plugin\WEAM.Revit.AI.csproj'
+$projectPath = Join-Path $PSScriptRoot 'plugin\BP.Revit.AI.csproj'
 
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw 'Не найден dotnet. Установите .NET 8 SDK, затем повторите запуск.'
@@ -43,8 +43,8 @@ if ($desktopEntry -notmatch '^Microsoft\.WindowsDesktop\.App\s+(\d+\.\d+\.\d+)\s
 $desktopDirectory = Join-Path $Matches[2] $Matches[1]
 
 $pluginDirectory = Join-Path $PSScriptRoot 'plugin'
-$outputDirectory = Join-Path $PSScriptRoot '../../Выходные данные/Сборочные данные/dotnet/WEAM.Revit.AI/bin/Release/net8.0-windows'
-$outputAssembly = Join-Path $outputDirectory 'WEAM.Revit.AI.dll'
+$outputDirectory = Join-Path $PSScriptRoot '../../Выходные данные/Сборочные данные/dotnet/BP.Revit.AI/bin/Release/net8.0-windows'
+$outputAssembly = Join-Path $outputDirectory 'BP.Revit.AI.dll'
 $runtimeReferences = foreach ($file in Get-ChildItem -LiteralPath $runtimeDirectory -Filter '*.dll') {
     try {
         [void][System.Reflection.AssemblyName]::GetAssemblyName($file.FullName)
@@ -71,9 +71,8 @@ $compilerArguments = @(
     "-reference:$(Join-Path $Revit2026Dir 'RevitAPIUI.dll')"
     "-reference:$(Join-Path $desktopDirectory 'PresentationCore.dll')"
     "-reference:$(Join-Path $desktopDirectory 'WindowsBase.dll')"
-    "-resource:$(Join-Path $pluginDirectory 'Assets\weam-ai.png'),WEAM.Revit.AI.Assets.weam-ai.png"
 ) + @($runtimeReferences) + $fallbackFiles + $sourceFiles
-$responsePath = Join-Path ([System.IO.Path]::GetTempPath()) 'WEAM.Revit.AI-csc-fallback.rsp'
+$responsePath = Join-Path ([System.IO.Path]::GetTempPath()) 'BP.Revit.AI-csc-fallback.rsp'
 $responseLines = $compilerArguments | ForEach-Object {
     if ($_ -match '\s|,') { '"' + $_.Replace('"', '\"') + '"' } else { $_ }
 }

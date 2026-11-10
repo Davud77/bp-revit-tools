@@ -107,7 +107,7 @@ public sealed class MeshRecord
     public bool Closed { get; set; }
 }
 public sealed class LevelRecord { public string Key { get; set; } = ""; public string Name { get; set; } = ""; public double Elevation { get; set; } }
-public sealed class TypeRecord { public string Key { get; set; } = ""; public string Kind { get; set; } = ""; public string Name { get; set; } = ""; public List<LayerRecord> Layers { get; set; } = []; }
+public sealed class TypeRecord { public string Key { get; set; } = ""; public string Kind { get; set; } = ""; public string Name { get; set; } = ""; public string SourceCompositeGuid { get; set; } = ""; public List<LayerRecord> Layers { get; set; } = []; }
 public sealed class LayerRecord { public double Width { get; set; } public string Function { get; set; } = ""; public string MaterialKey { get; set; } = ""; }
 public sealed class ElementRecord
 {

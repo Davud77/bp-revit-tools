@@ -1,7 +1,7 @@
-using WEAM.Revit.AI;
+using BP.Revit.AI;
 using System.Text.Json;
 
-var directory = Path.Combine(Path.GetTempPath(), "weam-settings-tests-" + Guid.NewGuid().ToString("N"));
+var directory = Path.Combine(Path.GetTempPath(), "bp-settings-tests-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(directory);
 var path = Path.Combine(directory, "settings.json");
 var checks = 0;

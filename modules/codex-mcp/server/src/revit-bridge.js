@@ -9,10 +9,11 @@ const TIMEOUT_MS = 310_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 async function loadToken() {
-  if (process.env.WEAM_REVIT_AI_TOKEN) return process.env.WEAM_REVIT_AI_TOKEN.trim();
+  const override = process.env.BP_REVIT_AI_TOKEN;
+  if (override) return override.trim();
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData) throw new Error('LOCALAPPDATA is not set; cannot locate the Revit bridge token.');
-  const tokenPath = path.join(localAppData, 'WEAM.Revit.AI', 'bridge.token');
+  const tokenPath = path.join(localAppData, 'BP.Revit.AI', 'bridge.token');
   try {
     return (await readFile(tokenPath, 'utf8')).trim();
   } catch {
@@ -71,7 +72,7 @@ export function createRevitClient({ port = PORT, timeoutMs = TIMEOUT_MS, tokenLo
         finish(new Error(`Invalid response from Revit: ${error.message}`));
       }
     });
-    socket.on('error', error => finish(new Error(`Cannot connect to Revit at ${HOST}:${port}. Open Revit and confirm the WEAM AI add-in loaded. ${error.message}`)));
+    socket.on('error', error => finish(new Error(`Cannot connect to Revit at ${HOST}:${port}. Open Revit and confirm the BP AI add-in loaded. ${error.message}`)));
     socket.on('end', () => {
       if (!settled) finish(new Error('Revit closed the bridge connection before returning a response.'));
     });

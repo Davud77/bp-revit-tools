@@ -54,7 +54,7 @@ await cp(path.join(repo, 'installer', 'configure-mcp.mjs'), path.join(stage, 'co
 await cp(path.join(repo, 'LICENSE'), path.join(stage, 'LICENSE'));
 await cp(path.join(repo, 'installer', 'INSTALLATION.md'), path.join(stage, 'INSTALLATION.md'));
 await mkdir(path.join(stage, 'plugin'), { recursive: true });
-await cp(path.join(repo, '../../Выходные данные/Сборочные данные/dotnet/WEAM.Revit.AI', 'bin', 'Release', 'net8.0-windows', 'WEAM.Revit.AI.dll'), path.join(stage, 'plugin', 'WEAM.Revit.AI.dll'));
+await cp(path.join(repo, '../../Выходные данные/Сборочные данные/dotnet/BP.Revit.AI', 'bin', 'Release', 'net8.0-windows', 'BP.Revit.AI.dll'), path.join(stage, 'plugin', 'BP.Revit.AI.dll'));
 async function verify(dir) {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     if (entry.isSymbolicLink()) throw new Error('Payload must not contain symlinks');

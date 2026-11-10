@@ -1,7 +1,7 @@
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using System.Text.Json;
-namespace WEAM.Revit.AI;
+namespace BP.Revit.AI;
 internal static partial class RevitTools
 {
     private static object PreviewFinishSheet(UIApplication app,JsonElement args)=>PreviewOperation(app,args,"finishSheet","Оформление листа",FinishSheet);
@@ -67,7 +67,7 @@ internal static partial class RevitTools
                         ?? throw new ArgumentException("textTypeId must identify an existing native text type.");
                 else
                 {
-                    var h=BuildingNumber(n,"heightMm",1.8,7);var name="WEAM — Arial "+h.ToString(System.Globalization.CultureInfo.InvariantCulture)+" мм";
+                    var h=BuildingNumber(n,"heightMm",1.8,7);var name="BP — Arial "+h.ToString(System.Globalization.CultureInfo.InvariantCulture)+" мм";
                     var types=new FilteredElementCollector(doc).OfClass(typeof(TextNoteType)).Cast<TextNoteType>().ToArray();
                     type=types.FirstOrDefault(t=>t.Name==name)!;
                     if(type is null){type=(TextNoteType)types.First().Duplicate(name);type.get_Parameter(BuiltInParameter.TEXT_SIZE).Set(SheetUnits(h));type.get_Parameter(BuiltInParameter.TEXT_FONT).Set("Arial");}

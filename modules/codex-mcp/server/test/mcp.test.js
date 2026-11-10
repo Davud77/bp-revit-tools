@@ -11,6 +11,8 @@ import { registerRoofTools } from '../src/roof-tools.js';
 import { registerMepTools } from '../src/mep-tools.js';
 import { registerStructureTools } from '../src/structure-tools.js';
 import { registerResourceTools } from '../src/resource-tools.js';
+import { registerInventoryTools } from '../src/inventory-tools.js';
+import { registerExtensionTools } from '../src/extension-tools.js';
 
 test('MCP initialize/list and C# dispatcher expose matching tool contracts', async t => {
   const child = spawn(process.execPath, [fileURLToPath(new URL('../src/index.js', import.meta.url))], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
@@ -37,7 +39,8 @@ test('MCP initialize/list and C# dispatcher expose matching tool contracts', asy
     pending.set(id, response => { clearTimeout(timeout); pending.delete(id); resolve(response); });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
   });
-  const initialized = await rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'weam-tests', version: '1' } });
+  const initialized = await rpc('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'bp-tests', version: '1' } });
+  assert.equal(initialized.result.serverInfo.name, 'bp-revit-ai');
   assert.equal(initialized.result.serverInfo.version, '0.9.12');
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
   const listed = await rpc('tools/list', {});
@@ -45,7 +48,7 @@ test('MCP initialize/list and C# dispatcher expose matching tool contracts', asy
   const names = tools.map(tool => tool.name);
   assert.equal(new Set(names).size, names.length);
   const source = await readFile(new URL('../../plugin/Bridge/RevitTools.cs', import.meta.url), 'utf8');
-  const routed = [...source.slice(0, source.indexOf('private static object Ping')).matchAll(/"([a-z_]+)"\s*=>/g)].map(match => match[1]);
+  const routed = [...source.slice(0, source.indexOf('private static object Ping')).matchAll(/"([a-z0-9_]+)"\s*=>/g)].map(match => match[1]);
   const local = ['store_project_data', 'store_room_data', 'query_stored_data'];
   assert.deepEqual(names.filter(name => !local.includes(name)).sort(), [...new Set(routed)].sort());
   for (const name of ['preview_place_hosted_families', 'apply_create_dimensions', 'preview_tag_rooms', 'apply_color_by_parameter'])
@@ -55,6 +58,8 @@ test('MCP initialize/list and C# dispatcher expose matching tool contracts', asy
   assert.ok(documentation, 'Reference capture needs a native documentation reader');
   assert.equal(documentation.annotations.readOnlyHint, true);
   assert.equal(documentation.inputSchema.properties.limit.maximum, 10);
+  assert.ok(tools.find(tool => tool.name === 'preview_connect_mep').inputSchema.properties.connectors);
+  assert.ok(tools.find(tool => tool.name === 'preview_transform_elements').inputSchema.properties.mode);
   const oversized = await rpc('tools/call', { name: 'read_documentation', arguments: { offset: 0, limit: 11 } });
   assert.ok(oversized.error || oversized.result?.isError, 'Oversized capture must be rejected before bridge access');
   assert.equal(deletion.inputSchema.properties.allowDependentDeletion.default, false);
@@ -64,9 +69,37 @@ test('MCP initialize/list and C# dispatcher expose matching tool contracts', asy
 });
 
 const contracts = new Map();
-for (const registrar of [registerHostedTools, registerAnnotationTools, registerGraphicsTools, registerSheetTools, registerRoofTools, registerMepTools, registerStructureTools, registerResourceTools])
+for (const registrar of [registerHostedTools, registerAnnotationTools, registerGraphicsTools, registerSheetTools, registerRoofTools, registerMepTools, registerStructureTools, registerResourceTools, registerInventoryTools, registerExtensionTools])
   registrar((name, description, schema, annotations) => contracts.set(name, { schema, annotations }));
 const parse = (name, args) => contracts.get(name).schema.safeParse(args).success;
+
+test('network and model operations expose unambiguous inputs', () => {
+  const first = { elementId: 10, connectorId: 0 };
+  const second = { elementId: 11, connectorId: 1 };
+  assert.ok(parse('preview_connect_mep', { mode: 'union', connectors: [first, second] }));
+  assert.ok(parse('preview_connect_mep', { mode: 'takeoff', connectors: [first], hostElementId: 12 }));
+  assert.equal(parse('preview_connect_mep', { mode: 'tee', connectors: [first, second] }), false);
+  assert.equal(parse('preview_connect_mep', { mode: 'direct', connectors: [first, { ...first, connectorId: 2 }] }), false);
+  assert.equal(parse('preview_connect_mep', { mode: 'direct', connectors: [first, second], hostElementId: 12 }), false);
+  const origin = { xMeters: 0, yMeters: 0, zMeters: 0 };
+  assert.ok(parse('preview_transform_elements', { mode: 'copy', elementIds: [10], translation: origin }));
+  assert.equal(parse('preview_transform_elements', { mode: 'rotate', elementIds: [10], translation: origin, degrees: 90 }), false);
+  assert.equal(parse('check_element_intersections', { firstIds: [10], secondIds: [11, 11], mode: 'bounds' }), false);
+  assert.ok(parse('preview_configure_schedule', { scheduleId: 7, filters: [] }));
+  assert.equal(parse('preview_configure_schedule', { scheduleId: 7,
+    filters: [{ fieldId: 0, comparison: 'contains', value: { kind: 'integer', value: 1 } }] }), false);
+});
+
+test('schedule inventory bounds cell pages and keeps signed parameter identities', () => {
+  assert.ok(parse('read_schedule', { scheduleId: 12, section: 'header', rowLimit: 50, columnLimit: 20 }));
+  for (const args of [{ rowLimit: 51 }, { columnLimit: 21 }, { rowOffset: -1 }, { section: 'footer' }])
+    assert.equal(parse('read_schedule', { scheduleId: 12, ...args }), false);
+  assert.ok(parse('preview_schedule_fields', { categoryId: -2000160 }));
+  assert.equal(contracts.get('preview_schedule_fields').annotations.readOnlyHint, false);
+  assert.ok(parse('preview_create_schedule', { name: 'Rooms', categoryId: -2000160, fields: [{ parameterId: -1006900, fieldType: 'Instance' }] }));
+  assert.equal(parse('preview_create_schedule', { name: 'Rooms', categoryId: 0, fields: [] }), false);
+  assert.equal(parse('apply_create_schedule', { planId: '' }), false);
+});
 
 test('native tag positioning rejects duplicate and unbounded identities and coordinates', () => {
   const input={viewId:1,tags:[{tagId:2,headPosition:{xMeters:3,yMeters:4,zMeters:5}}]};

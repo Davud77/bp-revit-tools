@@ -60,7 +60,7 @@ public static class TerrainStage
                 foreach(var sample in samples)
                     if(!faces.Any(face=>face.Project(sample) is IntersectionResult hit && hit.Distance<=Geometry.Feet(.001)))
                         throw new InvalidDataException("Revit terrain surface differs from source by more than 1 mm");
-                terrain.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.Set(source.Mark);
+                SourceMark.Set(terrain,source.Mark);
                 Storage.Tag(terrain,project,key,"toposolid:"+root.S("ifcSha256"),row.GetRawText());
                 if(transaction.Commit()!=TransactionStatus.Committed)throw new InvalidDataException("Terrain creation rolled back");
                 report.Add(key,"Mesh","created","Native Toposolid; source boundary and surface samples verified within 1 mm",terrain.UniqueId);

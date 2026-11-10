@@ -1,10 +1,10 @@
 {
-  "name": "weam-revit-ai-mcp",
+  "name": "bp-revit-ai-mcp",
   "version": "0.9.12",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
-  "description": "Local MCP server for the WEAM.Revit.AI Revit 2026 add-in",
+  "description": "Local MCP server for the BP.Revit.AI Revit 2026 add-in",
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test test/*.test.js"

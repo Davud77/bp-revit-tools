@@ -5,19 +5,20 @@ using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Xml.Linq;
 using Microsoft.Win32;
 
-namespace WEAM.Revit.AI.Setup;
+namespace BP.Revit.AI.Setup;
 
 static class Deployment
 {
     public const string Version = "0.9.12";
     const string AddinId = "F0BB1CE2-6DA1-4F67-AB04-4C05F06397C4";
-    const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\WEAM.Revit.AI";
-    static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WEAM.Revit.AI");
+    const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BP.Revit.AI";
+    static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BP.Revit.AI");
     static readonly string App = Path.Combine(Data, "Application");
     static readonly string Release = Path.Combine(App, "versions", Version);
-    static readonly string Manifest = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Autodesk", "Revit", "Addins", "2026", "WEAM.Revit.AI.addin");
+    static readonly string Manifest = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Autodesk", "Revit", "Addins", "2026", "BP.Revit.AI.addin");
     static readonly Encoding Utf8 = new UTF8Encoding(false);
 
     public static void Log(string message)
@@ -42,9 +43,23 @@ static class Deployment
             throw new InvalidOperationException("Сохраните проекты и закройте все окна Revit, затем повторите установку или удаление.");
     }
 
+    static void CheckManifestConflict(string directory, string? allowedManifest = null)
+    {
+        if (!Directory.Exists(directory)) return;
+        foreach (var file in Directory.EnumerateFiles(directory, "*.addin"))
+        {
+            if (string.Equals(file, allowedManifest, StringComparison.OrdinalIgnoreCase)) continue;
+            XDocument manifest;
+            try { manifest = XDocument.Load(file); }
+            catch (System.Xml.XmlException) { continue; }
+            if (manifest.Descendants("AddInId").Any(id => Guid.TryParse(id.Value, out var value) && value == Guid.Parse(AddinId)))
+                throw new InvalidOperationException("Обнаружена другая регистрация MCP. Удалите её перед установкой: " + file);
+        }
+    }
+
     public static string ReadLicense()
     {
-        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!;
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BP.Payload.zip")!;
         using var archive = new ZipArchive(stream);
         using var reader = new StreamReader(archive.GetEntry("LICENSE")!.Open());
         return reader.ReadToEnd();
@@ -58,12 +73,11 @@ static class Deployment
             throw new InvalidOperationException("Не найден Revit 2026. Укажите его папку установки.");
         if (FileVersionInfo.GetVersionInfo(Path.Combine(revitDir, "RevitAPI.dll")).FileMajorPart != 26)
             throw new InvalidOperationException("Этот установщик поддерживает Revit 2026. Выбрана другая версия.");
-        var machineManifest = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Autodesk", "Revit", "Addins", "2026", "WEAM.Revit.AI.addin");
-        if (File.Exists(machineManifest) && File.ReadAllText(machineManifest).Contains(AddinId, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Обнаружена установка WEAM для всех пользователей. Удалите её перед установкой для текущего пользователя, чтобы не загрузить плагин дважды.");
+        CheckManifestConflict(Path.GetDirectoryName(Manifest)!, Manifest);
+        CheckManifestConflict(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Autodesk", "Revit", "Addins", "2026"));
 
         Directory.CreateDirectory(Release);
-        using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("WEAM.Payload.zip")!)
+        using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BP.Payload.zip")!)
         using (var archive = new ZipArchive(stream))
         {
             foreach (var entry in archive.Entries)
@@ -85,8 +99,8 @@ static class Deployment
         if (codex) clients.Add("--codex"); if (claude) clients.Add("--claude");
         if (clients.Count != 0) RunNode(Release, clients.ToArray());
 
-        var assembly = SecurityElement.Escape(Path.Combine(Release, "plugin", "WEAM.Revit.AI.dll"));
-        var xml = $"<?xml version=\"1.0\" encoding=\"utf-8\"?><RevitAddIns><AddIn Type=\"Application\"><Name>WEAM.Revit.AI</Name><Assembly>{assembly}</Assembly><AddInId>{AddinId}</AddInId><FullClassName>WEAM.Revit.AI.PluginApplication</FullClassName><VendorId>WEAM</VendorId><VendorDescription>WEAM.Revit.AI local MCP bridge</VendorDescription></AddIn></RevitAddIns>";
+        var assembly = SecurityElement.Escape(Path.Combine(Release, "plugin", "BP.Revit.AI.dll"));
+        var xml = $"<?xml version=\"1.0\" encoding=\"utf-8\"?><RevitAddIns><AddIn Type=\"Application\"><Name>BP.Revit.AI</Name><Assembly>{assembly}</Assembly><AddInId>{AddinId}</AddInId><FullClassName>BP.Revit.AI.PluginApplication</FullClassName><VendorId>BTPL</VendorId><VendorDescription>BP.Revit.AI local MCP bridge</VendorDescription></AddIn></RevitAddIns>";
         AtomicWithBackup(Manifest, xml);
         if (auto)
         {
@@ -96,11 +110,11 @@ static class Deployment
             json["autoConfirm"] = true;
             AtomicWithBackup(settings, json.ToJsonString());
         }
-        var setupCopy = Path.Combine(App, "WEAM.Revit.AI.Setup.exe");
+        var setupCopy = Path.Combine(App, "BP.Revit.AI.Setup.exe");
         if (!string.Equals(Environment.ProcessPath, setupCopy, StringComparison.OrdinalIgnoreCase)) File.Copy(Environment.ProcessPath!, setupCopy, true);
         using var uninstall = Registry.CurrentUser.CreateSubKey(RegistryKey);
-        uninstall.SetValue("DisplayName", "WEAM.Revit.AI для Revit 2026");
-        uninstall.SetValue("DisplayVersion", Version); uninstall.SetValue("Publisher", "WEAM");
+        uninstall.SetValue("DisplayName", "BP.Revit.AI для Revit 2026");
+        uninstall.SetValue("DisplayVersion", Version); uninstall.SetValue("Publisher", "BP");
         uninstall.SetValue("InstallLocation", App); uninstall.SetValue("DisplayIcon", setupCopy);
         uninstall.SetValue("UninstallString", '"' + setupCopy + "\" --uninstall");
         uninstall.SetValue("QuietUninstallString", '"' + setupCopy + "\" --uninstall --silent");
@@ -113,13 +127,13 @@ static class Deployment
     public static void Uninstall()
     {
         CheckRevitClosed();
-        if (!File.Exists(Path.Combine(App, "installation.json"))) throw new InvalidOperationException("Не найдена установка WEAM.Revit.AI, управляемая установщиком.");
+        if (!File.Exists(Path.Combine(App, "installation.json"))) throw new InvalidOperationException("Не найдена установка BP.Revit.AI, управляемая установщиком.");
         foreach (var process in Process.GetProcessesByName("node"))
         {
             try
             {
                 if (process.MainModule?.FileName?.StartsWith(App + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) == true)
-                    throw new InvalidOperationException("Закройте AI-клиент, использующий MCP WEAM, перед удалением.");
+                    throw new InvalidOperationException("Закройте AI-клиент, использующий MCP BP, перед удалением.");
             }
             catch (System.ComponentModel.Win32Exception) { }
         }

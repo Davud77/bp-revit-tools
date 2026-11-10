@@ -10,7 +10,7 @@ const pageSize = 500;
 
 function storageRoot() {
   const localAppData = process.env.LOCALAPPDATA;
-  return join(localAppData || join(homedir(), 'AppData', 'Local'), 'WEAM.Revit.AI', 'snapshots');
+  return join(localAppData || join(homedir(), 'AppData', 'Local'), 'BP.Revit.AI', 'snapshots');
 }
 
 function projectKey(projectInfo) {

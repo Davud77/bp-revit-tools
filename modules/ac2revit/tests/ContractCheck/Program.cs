@@ -162,6 +162,40 @@ var dim=new Ac2Revit.SourceDimension{Direction=new(){X=1},LinePosition=new(){Y=1
 bool failed=false;try{dim.Witnesses[1].Coordinate.X=0;dim.Validate();}catch(InvalidDataException){failed=true;}if(!failed)throw new Exception("Coincident native dimension witnesses accepted");
 Console.WriteLine("PASS monotonic stage progress, checkpoint reopen, explicit completion and dimension witness validation");
 
+{
+    var taken=new HashSet<string>();
+    string Next(string m){var v=SourceMarkRule.Unique(m,taken.Contains);taken.Add(v);return v;}
+    if(Next("Дв-04")!="Дв-04" || Next("Дв-04")!="Дв-04 (2)" || Next("Дв-04")!="Дв-04 (3)" || Next("Дв-05")!="Дв-05")throw new Exception("Repeated source marks are not made unique");
+    if(!SourceMarkRule.IsVariantOf("Дв-04 (12)","Дв-04") || !SourceMarkRule.IsVariantOf("Дв-04","Дв-04") || SourceMarkRule.IsVariantOf("Дв-04 (x)","Дв-04") || SourceMarkRule.IsVariantOf("Дв-040","Дв-04"))throw new Exception("Mark variant detection is wrong");
+    Console.WriteLine("PASS repeated Archicad IDs become unique Revit marks");
+}
+{
+    // Hip roof 10 x 6 m, slope 30 deg, eaves at z = 5; the surface is given only as the upward triangles of the mesh.
+    double s=Math.Tan(Math.PI/6),h=3*s;
+    var v=new List<(double X,double Y,double Z)>{(0,0,5),(10,0,5),(10,6,5),(0,6,5),(3,3,5+h),(7,3,5+h)};
+    var f=new List<int[]>{new[]{0,1,5},new[]{0,5,4},new[]{1,2,5},new[]{2,3,4},new[]{2,4,5},new[]{3,0,4}};
+    var outline=new List<RoofPlanner.P>{new(0,0),new(10,0),new(10,6),new(0,6),new(0,0)};
+    var plan=RoofPlanner.Build(v,f,outline,new List<IReadOnlyList<RoofPlanner.P>>());
+    Console.WriteLine("hip top area "+plan.TopArea+" expected "+(60/Math.Cos(Math.PI/6)));
+    if(plan.Outer.Count!=4 || plan.Outer.Any(e=>!e.Slope.HasValue || Math.Abs(e.Slope.Value-s)>1e-6) || Math.Abs(plan.EaveZ-5)>1e-9)throw new Exception("Hip roof edge slopes were not recovered");
+    // The outline can also be read from the mesh itself: the boundary of the upward triangles, collinear points merged.
+    var sil=RoofPlanner.Silhouette(v,f);
+    if(sil.Outer.Count!=4 || Math.Abs(RoofPlanner.SignedArea(sil.Outer)-60)>1e-6 || sil.Holes.Count!=0)throw new Exception("Roof silhouette is not the 10 x 6 m rectangle");
+    // The same outline given clockwise, as Archicad may write it, gives the same slopes.
+    var reversed=RoofPlanner.Build(v,f,outline.AsEnumerable().Reverse().ToList(),new List<IReadOnlyList<RoofPlanner.P>>());
+    if(reversed.Outer.Any(e=>!e.Slope.HasValue))throw new Exception("Clockwise outline lost its slopes");
+    // Gable roof: two sloped long eaves, the short ends run parallel to the roof gradient and define no slope.
+    var gv=new List<(double X,double Y,double Z)>{(0,0,5),(10,0,5),(10,3,5+h),(0,3,5+h),(10,6,5),(0,6,5)};
+    var gf=new List<int[]>{new[]{0,1,2},new[]{0,2,3},new[]{3,2,4},new[]{3,4,5}};
+    var gable=RoofPlanner.Build(gv,gf,outline,new List<IReadOnlyList<RoofPlanner.P>>());
+    if(gable.Outer.Count(e=>e.Slope.HasValue)!=2 || gable.Outer.Count(e=>!e.Slope.HasValue)!=2)throw new Exception("Gable ends must not define a slope");
+    // A corner raised out of the eave plane makes the adjacent planes oblique: those edges define no slope and the
+    // built roof is left to fail the comparison with the mesh instead of being forced.
+    var uneven=new List<(double X,double Y,double Z)>(v);uneven[1]=(10,0,5.5);
+    var skewed=RoofPlanner.Build(uneven,f,outline,new List<IReadOnlyList<RoofPlanner.P>>());
+    if(!skewed.Outer.Any(e=>!e.Slope.HasValue))throw new Exception("Oblique roof planes still define an edge slope");
+    Console.WriteLine("PASS roof planner recovers hip and gable edge slopes and leaves oblique planes unsloped");
+}
 if(args.Length==0)return;
 
 var manifest = Manifest.Load(args[0]);

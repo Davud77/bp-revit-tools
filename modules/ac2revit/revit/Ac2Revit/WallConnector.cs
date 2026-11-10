@@ -181,6 +181,8 @@ public sealed class WallConnector(Document doc, ImportConfig config, Report repo
             progress?.Invoke("wallCrossings",++cutDone,cutPlan.Length);
         }
         report.Add("wall-topology","WallJoin","joined",$"Committed allowed ends: {enabled}; verified native joined ends: {verified}; rejected native proposals: {rejected}; ends blocked by Revit: {failedEnds}; source boolean joins: {joined}; unavailable hosts: {unavailable}; ambiguous axis overlaps skipped: {ambiguous}; walls with source topology: {sourceKnown.Count}. Fallback tolerance: {config.WallJoinToleranceMeters} m.");
+        try{SlabWallJoin.Run(doc,imported,tol,report,progress);}
+        catch(Exception ex){if(!config.AllowPartial)throw;report.Add("slab-wall-joins","SlabWallJoin","skipped",ex.Message);}
     }
     sealed class JoinFailures(Report report,IReadOnlyDictionary<ElementId,string> ids) : IFailuresPreprocessor
     {

@@ -17,7 +17,7 @@ public sealed class Application : IExternalApplication
             string root = Path.GetDirectoryName(typeof(Application).Assembly.Location)!;
             foreach (var (file, type) in new[]
             {
-                ("modules/codex-mcp/plugin/WEAM.Revit.AI.dll", "WEAM.Revit.AI.PluginApplication"),
+                ("modules/codex-mcp/plugin/BP.Revit.AI.dll", "BP.Revit.AI.PluginApplication"),
                 ("modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "Ac2Revit.App"),
                 ("modules/ov/HeatLossViewer.dll", "HeatLossViewer.App"),
                 ("modules/openings/BotPlus.Openings.dll", "BotPlus.Openings.App")
