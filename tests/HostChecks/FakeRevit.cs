@@ -22,6 +22,7 @@ namespace BotPlus.Shared
     internal static class BotPlusSettings
     {
         internal static HashSet<string> HiddenPanels { get; } = [];
+        internal const string VkTab = "BP ВК";
         internal static void Load() { }
     }
 }
@@ -50,8 +51,10 @@ namespace BP.Revit.AI { public sealed class PluginApplication() : FakeModule("mc
 namespace Ac2Revit { public sealed class App() : FakeModule("ac2revit"); }
 namespace HeatLossViewer { public sealed class App() : FakeModule("ov"); }
 namespace BotPlus.Openings { public sealed class App() : FakeModule("openings"); }
+namespace BotPlus.Eom { public sealed class App() : FakeModule("eom"); }
 namespace BotPlus.RT { public sealed class SettingsCommand { } }
 namespace BotPlus.RT { public sealed class MatchTagCommand { } public sealed class CopyTagCommand { } }
+namespace BotPlus.RT { public sealed class ScheduleNumberingCommand { } public sealed class ScheduleNumberingAvailable { } }
 namespace BotPlus.RT { internal static class StartupUpdates { public static void Attach(Autodesk.Revit.UI.UIControlledApplication app){} public static void Detach(Autodesk.Revit.UI.UIControlledApplication app){} } }
 namespace BotPlus.RT { public sealed class HostAvailable{} }
 namespace BotPlus.RT { public sealed class UpdateCommand { } internal static class RibbonStyle { public static void Apply(Autodesk.Revit.UI.UIControlledApplication app){} } }

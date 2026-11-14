@@ -19,6 +19,9 @@
 | `HtmlTemplate.cs` | Безопасная вставка JSON и ресурсов в HTML |
 | `Viewer/` | Встроенные в DLL ресурсы HTML/Vanilla JS/Three.js |
 | `Viewer/Calculation.js` | Независимый расчёт в СИ без DOM/Revit/Three.js |
+| `Mep/EngineeringRules.cs`, `Mep/MepGeometry.cs` | Чистая логика апдейтера и геометрии соединений/вращения (проверки `tests/MepChecks`) |
+| `Mep/EngineeringParameters.cs`, `Mep/EngineeringRulesWindow.cs` | Хранение правил в проекте, запись параметров, IUpdater, окно правил |
+| `Mep/MepTools.cs`, `Mep/MepCommands.cs` | Коннекторы, окна и команды «Соединить» и «Вращать» ([описание](../../docs/MEP-SYSTEMS.md)) |
 
 Клиент расчёта получает `building.json`, проверяет `schemaVersion` и возвращает результаты, привязанные к `room.key`. Не следует связывать результаты только по `id`: один ElementId может встречаться в нескольких экземплярах связей.
 

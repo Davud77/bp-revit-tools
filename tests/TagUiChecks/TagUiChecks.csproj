@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/BotPlus.RT/TagOptionsBar.cs" Link="TagOptionsBar.cs" />
+    <Compile Include="../../src/BotPlus.RT/TagCopyOptions.cs" Link="TagCopyOptions.cs" />
+    <Compile Include="../../src/Shared/BotPlusUi.cs" Link="BotPlusUi.cs" />
+  </ItemGroup>
+</Project>

@@ -1,7 +1,14 @@
 # Add this block to your Codex MCP configuration after installing Node.js 20+
-# and running `npm install` in the server directory.
+# and running `pnpm install --frozen-lockfile` in the server directory.
+[features.code_mode]
+enabled = true
+
 [mcp_servers.bp_revit_ai]
 command = "node"
 args = ["C:\\path\\to\\BotPlus.RT\\server\\src\\index.js"]
 default_tools_approval_mode = "writes"
 tool_timeout_sec = 320
+# Compact server surface: 5 tools, exact schemas on demand, isolated JavaScript.
+env = { BP_REVIT_AI_TOOL_MODE = "code" }
+# Optional native Codex route, for composing this MCP with other servers:
+# omit_tools_from = ["direct", "deferred"]

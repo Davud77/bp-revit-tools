@@ -11,6 +11,9 @@
   <Folder Name="/modules/ov/">
     <Project Path="modules/ov/HeatLossViewer/HeatLossViewer.csproj" />
   </Folder>
+  <Folder Name="/modules/eom/">
+    <Project Path="modules/eom/BotPlus.Eom.csproj" />
+  </Folder>
   <Folder Name="/modules/openings/">
     <Project Path="modules/openings/BotPlus.Openings.csproj" />
   </Folder>

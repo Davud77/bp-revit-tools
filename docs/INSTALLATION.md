@@ -38,10 +38,10 @@
 
 ## Командная строка
 
-Укажите имя загруженного EXE. Ниже пример для 1.9.6.
+Укажите имя загруженного EXE. Ниже пример для 1.9.11.
 
 ```powershell
-$setup = '.\BotPlus.RT-1.9.6-Setup.exe'
+$setup = '.\BotPlus.RT-1.9.11-Setup.exe'
 & $setup --silent
 & $setup --silent --revit="D:\Autodesk\Revit 2026"
 & $setup --silent --tapir=29 --archicad="D:\Graphisoft\Archicad 29"

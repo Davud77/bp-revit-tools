@@ -14,7 +14,7 @@ using ColorConverter = System.Windows.Media.ColorConverter;
 using FontFamily = System.Windows.Media.FontFamily;
 using SystemColors = System.Windows.SystemColors;
 
-// Файл подключается ссылкой в каждый проект с окнами (BotPlus.RT, Ac2Revit, ОВ, Отверстия),
+// Файл подключается ссылкой в каждый проект с окнами (BotPlus.RT, Ac2Revit, ОВ, Отверстия, ЭОМ),
 // поэтому все типы internal: у каждой сборки своя копия, а настройки общие через файл.
 namespace BotPlus.Shared;
 
@@ -23,7 +23,11 @@ internal static class BotPlusSettings
 {
     internal const string Follow = "follow", Light = "light", Dark = "dark";
     /// <summary>Панели вкладки «BotPlus RT» в порядке следования. Настройки скрыть нельзя.</summary>
-    internal static readonly string[] Panels = ["MCP", "Ac2Revit", "ОВ", "Отверстия", "Марки"];
+    internal static readonly string[] Panels = ["MCP", "Ac2Revit", "ОВ", "Отверстия", "ВК", "ЭОМ", "Марки", "Спецификации"];
+    /// <summary>Модуль ЭОМ живёт на своей вкладке; все её панели включаются одной галочкой «ЭОМ».</summary>
+    internal const string EomTab = "BP ЭОМ и СС";
+    /// <summary>Отдельные вкладки модулей: ОВ (сведения, 3D, библиотека, радиаторы) и ВК (пока пустая).</summary>
+    internal const string OvTab = "BP ОВ", VkTab = "BP ВК";
     internal static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BotPlus RT", "settings.json");
 
     internal static string ThemeMode { get; private set; } = Follow;
@@ -90,12 +94,12 @@ internal static class BotPlusTheme
     {
         bool isDark = dark ?? DetectDark();
         string[] p = isDark
-            ? ["#2F2F2F", "#3A3A3A", "#262626", "#5C5C5C", "#ECECEC", "#A6A6A6", "#0696D7", "#484848", "#0B5C86", "#434343"]
+            ? ["#2C3340", "#3B4553", "#202934", "#566174", "#ECEFF4", "#A3ACBA", "#0696D7", "#465265", "#1B6A99", "#3B4553"]
             : ["#F0F0F0", "#FAFAFA", "#FFFFFF", "#ABABAB", "#1E1E1E", "#6B6B6B", "#0696D7", "#DCEBF5", "#BFE0F4", "#E6E6E6"];
         var r = element.Resources;
         r["BP.Bg"] = Brush(p[0]); r["BP.Panel"] = Brush(p[1]); r["BP.Input"] = Brush(p[2]); r["BP.Border"] = Brush(p[3]); r["BP.Text"] = Brush(p[4]); r["BP.Muted"] = Brush(p[5]);
         r["BP.Done"] = Brush(isDark ? "#1F4A31" : "#CDEBD6"); r["BP.Accent"] = Brush(p[6]); r["BP.Hover"] = Brush(p[7]); r["BP.Selected"] = Brush(p[8]); r["BP.Button"] = Brush(p[9]);
-        r["BP.Error"] = Brush(isDark ? "#FF8A80" : "#B3261E"); r["BP.Scroll"] = Brush(isDark ? "#6A6A6A" : "#B8B8B8"); r["BP.ScrollHot"] = Brush(isDark ? "#8A8A8A" : "#8F8F8F");
+        r["BP.Error"] = Brush(isDark ? "#FF8A80" : "#B3261E"); r["BP.Scroll"] = Brush(isDark ? "#5A6578" : "#B8B8B8"); r["BP.ScrollHot"] = Brush(isDark ? "#7A8599" : "#8F8F8F");
         // Системные кисти используют заводские шаблоны (поля ввода, выделение строк, меню).
         r[SystemColors.WindowBrushKey] = Brush(p[2]); r[SystemColors.WindowTextBrushKey] = Brush(p[4]);
         r[SystemColors.ControlBrushKey] = Brush(p[1]); r[SystemColors.ControlTextBrushKey] = Brush(p[4]);

@@ -38,7 +38,7 @@ internal sealed class SettingsWindow : Window
         theme.Children.Add(Heading("Тема окон модулей"));
         foreach (var option in new[] { follow, light, dark }) { option.GroupName = "theme"; theme.Children.Add(option); }
         (BotPlusSettings.ThemeMode switch { BotPlusSettings.Light => light, BotPlusSettings.Dark => dark, _ => follow }).IsChecked = true;
-        theme.Children.Add(Hint("Тема действует во всех модулях: MCP, Ac2Revit, ОВ, Отверстия, Марки и в окне обновлений. Уже открытые окна изменятся при следующем открытии."));
+        theme.Children.Add(Hint("Тема действует во всех модулях и окнах BotPlus RT, включая марки, спецификации и обновления. Уже открытые окна изменятся при следующем открытии."));
         tabs.Items.Add(new TabItem { Header = "Тема", Content = theme });
 
         // Модули.

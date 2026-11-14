@@ -11,7 +11,7 @@ namespace BotPlus.RT.Setup;
 
 static partial class Deployment
 {
-    public const string Version = "1.9.6";
+    public const string Version = "1.9.24";
     const string AddinId = "DE07865F-0FBF-4CC3-B71E-AC2B149113E6";
     const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BotPlus.RT";
     static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotPlus.RT");
@@ -103,7 +103,7 @@ static partial class Deployment
         Step(84, "Регистрация единственной надстройки BotPlus RT для Revit");
 
         var assembly = SecurityElement.Escape(Path.Combine(Release, "BotPlus.RT.dll"));
-        var xml = $"<?xml version=\"1.0\" encoding=\"utf-8\"?><RevitAddIns><AddIn Type=\"Application\"><Name>BotPlus RT</Name><Assembly>{assembly}</Assembly><AddInId>{AddinId}</AddInId><FullClassName>BotPlus.RT.Application</FullClassName><VendorId>BTPL</VendorId><VendorDescription>BotPlus RT: MCP, Ac2Revit, ОВ, Отверстия</VendorDescription></AddIn></RevitAddIns>";
+        var xml = $"<?xml version=\"1.0\" encoding=\"utf-8\"?><RevitAddIns><AddIn Type=\"Application\"><Name>BotPlus RT</Name><Assembly>{assembly}</Assembly><AddInId>{AddinId}</AddInId><FullClassName>BotPlus.RT.Application</FullClassName><VendorId>BTPL</VendorId><VendorDescription>BotPlus RT: MCP, Ac2Revit, ОВ, Отверстия, ЭОМ</VendorDescription></AddIn></RevitAddIns>";
         DisableLegacyManifests();
         AtomicWithBackup(Manifest, xml);
         Step(92, "Регистрация версии и удаления в Windows");

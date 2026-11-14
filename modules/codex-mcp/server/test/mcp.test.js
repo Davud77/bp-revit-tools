@@ -49,7 +49,7 @@ test('MCP initialize/list and C# dispatcher expose matching tool contracts', asy
   assert.equal(new Set(names).size, names.length);
   const source = await readFile(new URL('../../plugin/Bridge/RevitTools.cs', import.meta.url), 'utf8');
   const routed = [...source.slice(0, source.indexOf('private static object Ping')).matchAll(/"([a-z0-9_]+)"\s*=>/g)].map(match => match[1]);
-  const local = ['store_project_data', 'store_room_data', 'query_stored_data'];
+  const local = ['store_project_data', 'store_room_data', 'query_stored_data', 'search_tools', 'describe_tools', 'execute_code'];
   assert.deepEqual(names.filter(name => !local.includes(name)).sort(), [...new Set(routed)].sort());
   for (const name of ['preview_place_hosted_families', 'apply_create_dimensions', 'preview_tag_rooms', 'apply_color_by_parameter'])
     assert.ok(names.includes(name), `Missing tool ${name}`);

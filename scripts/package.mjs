@@ -33,6 +33,8 @@ await mkdir(path.join(stage, 'modules/ov'), { recursive: true });
 await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/HeatLossViewer/bin/Release/net8.0-windows/HeatLossViewer.dll'), path.join(stage, 'modules/ov/HeatLossViewer.dll'));
 await mkdir(path.join(stage, 'modules/openings'), { recursive: true });
 await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/BotPlus.Openings/bin/Release/net8.0-windows/BotPlus.Openings.dll'), path.join(stage, 'modules/openings/BotPlus.Openings.dll'));
+await mkdir(path.join(stage, 'modules/eom'), { recursive: true });
+await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/BotPlus.Eom/bin/Release/net8.0-windows/BotPlus.Eom.dll'), path.join(stage, 'modules/eom/BotPlus.Eom.dll'));
 const ac = path.join(stage, 'modules/ac2revit');
 await mkdir(path.join(ac, 'dist/Revit2026'), { recursive: true });
 await cp(path.join(repo, 'Выходные данные/Сборочные данные/dotnet/Ac2Revit/bin/Release/net8.0-windows/Ac2Revit.dll'), path.join(ac, 'dist/Revit2026/Ac2Revit.dll'));
@@ -52,7 +54,7 @@ for (const asset of tapir.assets) {
 }
 await cp(path.join(repo, 'installer/tapir/releases.json'), path.join(stage, 'tapir/releases.json'));
 await cp(path.join(repo, 'installer/tapir/LICENSE'), path.join(stage, 'tapir/LICENSE'));
-for (const file of ['USAGE.md', 'docs/OPENINGS.md', 'docs/ANNOTATIONS.md', 'modules/ov/docs/POTERI.md']) {
+for (const file of ['USAGE.md', 'docs/OPENINGS.md', 'docs/EOM.md', 'docs/ANNOTATIONS.md', 'modules/ov/docs/POTERI.md']) {
   const destination = path.join(stage, file);
   await mkdir(path.dirname(destination), { recursive: true });
   await cp(path.join(repo, file), destination);

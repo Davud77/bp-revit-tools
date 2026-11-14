@@ -6,4 +6,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup><Compile Include="../../src/BotPlus.RT/Application.cs" Link="Application.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/BotPlus.RT/TagCopyOptions.cs" Link="TagCopyOptions.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/BotPlus.RT/TagViewGeometry.cs" Link="TagViewGeometry.cs" /></ItemGroup>
 </Project>

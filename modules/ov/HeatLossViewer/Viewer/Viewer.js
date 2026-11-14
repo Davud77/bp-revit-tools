@@ -389,7 +389,7 @@ async function start3D() {
     }
   }
   theme3D=()=>{
-    scene.background.set(dark()?'#121211':'#f5f5f2');
+    scene.background.set(dark()?'#202934':'#f5f5f2');
     const colors=[dark()?'#383835':'#b9b9ad',dark()?'#292927':'#dadad2'];
     const attribute=grid.geometry.getAttribute('color');
     // Recreate grid colors on theme changes; preserve geometry placement.

@@ -14,18 +14,31 @@ import { registerStructureTools } from './structure-tools.js';
 import { registerResourceTools } from './resource-tools.js';
 import { registerInventoryTools } from './inventory-tools.js';
 import { registerExtensionTools } from './extension-tools.js';
+import { ToolCatalog } from './tool-catalog.js';
+import { registerCodeTools } from './code-tools.js';
+
+const catalog = new ToolCatalog();
+const toolMode = process.env.BP_REVIT_AI_TOOL_MODE ?? 'full';
+if (!['full', 'code'].includes(toolMode)) throw new Error('BP_REVIT_AI_TOOL_MODE must be full or code.');
+const deniedTools = new Set((process.env.BP_REVIT_AI_DENIED_TOOLS ?? '').split(',').map(s => s.trim()).filter(Boolean));
+const knownTools = new Set(['search_tools', 'describe_tools', 'execute_code']);
+const visible = name => toolMode === 'full' || ['revit_ping', 'get_project_info'].includes(name);
 
 const server = new McpServer({
   name: 'bp-revit-ai',
   version: '0.9.12'
 }, {
-  instructions: 'Работай с открытой моделью Revit через отдельные инструменты. Начинай с get_project_info. Каждая запись требует соответствующего preview, затем apply: Если revit_ping сообщает autoConfirm=true, apply выполняется без окна; иначе Revit запрашивает подтверждение с отказом по умолчанию. Старые планы недействительны после изменения документа или через 10 минут. Новые инструменты выполняют пробную транзакцию с откатом; ID созданных в preview объектов временные. При удалении зависимостей нужно явно передать allowDependentDeletion=true после просмотра списка. Для точных размеров и координат читай свойства, геометрию, типы и опоры: название типа не гарантирует его толщину. Не исполняй произвольный C#.'
+  instructions: 'Для многошаговых задач используй search_tools → describe_tools → execute_code. В JavaScript вызывай await tools.call(name,args), обрабатывай страницы и возвращай только нужный итог через return. toolNames — явный список нужных команд. Скрипт не является одной транзакцией. Начинай с get_project_info. Каждая запись требует соответствующего preview, затем apply: Если revit_ping сообщает autoConfirm=true, apply выполняется без окна; иначе Revit запрашивает подтверждение с отказом по умолчанию. Старые планы недействительны после изменения документа или через 10 минут. Новые инструменты выполняют пробную транзакцию с откатом; ID созданных в preview объектов временные. При удалении зависимостей нужно явно передать allowDependentDeletion=true после просмотра списка. Для точных размеров и координат читай свойства, геометрию, типы и опоры: название типа не гарантирует его толщину. Не исполняй произвольный C#.'
 });
 
 function register(name, description, inputSchema, annotations = { readOnlyHint: true, destructiveHint: false, openWorldHint: false }) {
+  knownTools.add(name);
+  if (deniedTools.has(name)) return;
   if (['preview_create_dimensions', 'preview_tag_walls', 'preview_tag_rooms', 'preview_element_graphics', 'preview_color_by_parameter'].includes(name))
     annotations = { ...annotations, readOnlyHint: false };
-  server.registerTool(name, {
+  catalog.add(name, description, inputSchema, annotations,
+    (args, context) => callRevit(name, args, { signal: context?.signal }));
+  if (visible(name)) server.registerTool(name, {
     description,
     inputSchema,
     annotations
@@ -208,7 +221,10 @@ registerInventoryTools(register);
 registerExtensionTools(register);
 
 function registerLocal(name, description, inputSchema, handler, annotations = { readOnlyHint: false, destructiveHint: false, openWorldHint: false }) {
-  server.registerTool(name, { description, inputSchema, annotations }, async args => {
+  knownTools.add(name);
+  if (deniedTools.has(name)) return;
+  catalog.add(name, description, inputSchema, annotations, handler);
+  if (visible(name)) server.registerTool(name, { description, inputSchema, annotations }, async args => {
     try {
       const result = await handler(args);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -226,5 +242,7 @@ registerLocal('query_stored_data', 'Искать в локально сохра�
   limit: z.number().int().min(1).max(200).default(50)
 }), queryStoredData, { readOnlyHint: true, destructiveHint: false, openWorldHint: false });
 
-console.error('BP.Revit.AI MCP server starting on stdio.');
+for (const name of deniedTools) if (!knownTools.has(name)) throw new Error(`Unknown denied tool: ${name}`);
+registerCodeTools(server, catalog, deniedTools);
+console.error(`BP.Revit.AI MCP server starting on stdio (${toolMode}).`);
 void serveStdio(() => server);

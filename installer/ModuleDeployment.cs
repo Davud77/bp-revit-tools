@@ -157,7 +157,7 @@ static partial class Deployment
             entry.ExtractToFile(target);
         }
         foreach (var file in new[] { "BotPlus.RT.dll", "modules/codex-mcp/plugin/BP.Revit.AI.dll",
-            "modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "modules/ov/HeatLossViewer.dll", "modules/openings/BotPlus.Openings.dll",
+            "modules/ac2revit/dist/Revit2026/Ac2Revit.dll", "modules/ov/HeatLossViewer.dll", "modules/openings/BotPlus.Openings.dll", "modules/eom/BotPlus.Eom.dll",
             "node/node.exe", "server/src/index.js", "modules/ac2revit/runtime/python/python.exe" })
             if (!File.Exists(Path.Combine(destination, file))) throw new FileNotFoundException(file);
         ReadProjectTemplates(destination);

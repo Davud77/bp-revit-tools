@@ -4,10 +4,10 @@
 
 ## BP.Revit.AI
 
-BP.Revit.AI использует ключ подключения `bp_revit_ai`. В исходниках зарегистрирован 151 инструмент. Ранее установленный модуль с базовыми 100 командами проверен через Code Mode в Revit 2026. Результаты проверки расширенного набора описаны отдельно. [Аудит реализаций](REVIT-MCP-AUDIT.md) · [Регистрация сервера](../modules/codex-mcp/server/src/index.js) · [Проверки](VALIDATION.md)
+BP.Revit.AI использует ключ подключения `bp_revit_ai`. Предметный набор — 151 инструмент. С 11.11.2026 полный сервер публикует также search_tools, describe_tools и execute_code: всего 154. Режим BP_REVIT_AI_TOOL_MODE=code публикует пять точек входа и выдаёт схемы предметных команд по запросу. [Реализованный Code Mode](../modules/codex-mcp/CODE-MODE.md). Результаты проверки расширенного набора описаны отдельно. [Аудит реализаций](REVIT-MCP-AUDIT.md) · [Регистрация сервера](../modules/codex-mcp/server/src/index.js) · [Проверки](VALIDATION.md)
 
 <details>
-<summary>Полный список из 151 команды MCP</summary>
+<summary>Предметный набор из 151 команды MCP, без трёх meta-инструментов Code Mode</summary>
 
 ```text
 activate_view
@@ -207,6 +207,7 @@ store_room_data
 | IfcMCP от IfcOpenShell | Анализ IFC независимо от открытой модели Revit. [Документация](https://docs.ifcopenshell.org/ifcmcp.html) |
 | `speckle-mcp`, Daviidro | Проекты, модели и версии в Speckle. Работает с опубликованными данными, которые могут происходить из Revit. [Репозиторий](https://github.com/Daviidro/speckle-mcp) |
 | Autodesk APS Revit Automation MCP | Пример серверной обработки облачных моделей через Autodesk Automation API. [Репозиторий Autodesk](https://github.com/autodesk-platform-services/aps-sample-mcp-server-revit-automation) |
+| Autodesk APS Revit MCP Tools Bundle | Нативный AppBundle исполнителя, Revit 2027 / .NET 10. Пять примеров: создание модели, связи, листы, комментарии стен и экспорт типов стен. Это не отдельный MCP-сервер. [Исходники](https://github.com/autodesk-platform-services/aps-sample-revit-mcp-tools-bundle) |
 | `schauh11/revit-mcp-server` | Нативный чат внутри Revit 2026 и WebSocket. У проекта есть каталог операций, но подключение внешнего Codex к стандартному MCP endpoint требует отдельной проверки. [Репозиторий](https://github.com/schauh11/revit-mcp-server) |
 | Оригинальный `revit-mcp` и его `revit-mcp-plugin` / `revit-mcp-commandset` | Архивная база семейства Sparx. Это три компонента одной интеграции. [Архивный репозиторий](https://github.com/mcp-servers-for-revit/revit-mcp) |
 | OOXGN RevitMCP | Форк исходного MCP-модуля BotPlus RT. Отдельные пакет, имя сервера и порт, общий исходный набор инструментов. [Сравнение в BotPlus RT](REVIT-MCP-AUDIT.md#ooxgn) |

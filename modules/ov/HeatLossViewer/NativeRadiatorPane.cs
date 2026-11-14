@@ -63,7 +63,7 @@ public sealed class NativeRadiatorPane : Grid, IDisposable
             bool dark = BotPlus.Shared.BotPlusTheme.DetectDark();
             browser.CoreWebView2.Profile.PreferredColorScheme = dark ? CoreWebView2PreferredColorScheme.Dark : CoreWebView2PreferredColorScheme.Light;
             await browser.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync("try{localStorage.setItem('heatloss-theme','" + (dark ? "dark" : "light") + "')}catch(e){}");
-            browser.DefaultBackgroundColor = dark ? System.Drawing.Color.FromArgb(13, 13, 13) : System.Drawing.Color.White;
+            browser.DefaultBackgroundColor = dark ? System.Drawing.Color.FromArgb(32, 41, 52) : System.Drawing.Color.White;
             browser.Source = page;
             await ready.Task.WaitAsync(TimeSpan.FromSeconds(45));
         }

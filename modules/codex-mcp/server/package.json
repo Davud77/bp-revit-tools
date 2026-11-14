@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
+    "quickjs-emscripten": "0.32.0",
     "zod": "^4.0.0"
   }
 }
