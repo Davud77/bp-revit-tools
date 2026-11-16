@@ -51,6 +51,10 @@ public sealed class EquipmentCommand : EomCommand
     }
 }
 
+/// <summary>
+/// Светотехнический расчёт по схеме nanoCAD BIM Электро: свойства помещений (прототип СП 52.13330 или вручную) → светильник из БД →
+/// расчёт методом Ки → расстановка сеткой. Свойства помещений хранятся в модели; выделенные в Revit помещения выделяются в окне.
+/// </summary>
 [Transaction(TransactionMode.Manual)]
 public sealed class LightingCommand : EomCommand
 {
@@ -59,22 +63,66 @@ public sealed class LightingCommand : EomCommand
         var doc = ui.Document;
         var rooms = Rooms.Collect(doc);
         if (rooms.Count == 0) { TaskDialog.Show("BotPlus ЭОМ", "В проекте и связях нет размещённых помещений."); return Result.Cancelled; }
-        var symbols = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_LightingFixtures).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
-            .Where(s => s.Family.FamilyPlacementType is FamilyPlacementType.OneLevelBased or FamilyPlacementType.OneLevelBasedHosted)
-            .Select(s => (s.Id, $"{s.FamilyName}: {s.Name}")).OrderBy(s => s.Item2).ToList();
-        if (LightingWindow.Show(rooms, symbols) is not { } placement) return Result.Cancelled;
-        var symbol = (FamilySymbol)doc.GetElement(placement.Symbol);
-        using var t = new Transaction(doc, "ЭОМ: авторасстановка светильников"); t.Start();
-        int total = 0; var problems = new List<string>();
-        foreach (var row in placement.Rows)
+        var ctx = new LightingContext(EomCatalog.Load(), PrototypeLibrary.Load(), FixtureTypes(doc));
+        var stored = EomStore.RoomLights(doc);
+        var rows = rooms.Select(r => stored.TryGetValue(r.Key, out var light) ? new LightRow(r, light, true) : new LightRow(r, ctx.Auto(r), false)).ToList();
+        var preselected = ui.Selection.GetElementIds().Select(doc.GetElement).OfType<Autodesk.Revit.DB.Architecture.Room>().Select(r => r.UniqueId).ToHashSet();
+        if (LightingWindow.Show(rows, ctx, preselected) is not { } outcome) return Result.Cancelled;
+
+        using var t = new Transaction(doc, outcome.Place.Count > 0 ? "ЭОМ: расстановка светильников" : "ЭОМ: светотехнические свойства помещений"); t.Start();
+        int total = 0, removed = 0; var problems = new List<string>(); var types = new List<string>();
+        // Каждый светильник БД ставится своим типом: тип с именем светильника в связанном семействе, данные БД записаны в параметры.
+        var symbols = new Dictionary<LuminaireItem, FamilySymbol>();
+        foreach (var lum in outcome.Place.Select(r => r.Result!.Luminaire).Distinct())
+            symbols[lum] = FixtureSync.Ensure(doc, lum, types);
+        if (symbols.Count > 0) doc.Regenerate();
+        foreach (var row in outcome.Place)
         {
-            int placed = Rooms.Place(doc, row.Room, symbol, row.Count, placement.MountM);
-            total += placed;
-            if (placed < row.Count) problems.Add($"{row.Number} {row.Name}: размещено {placed} из {row.Count} — контур слишком сложный для сетки.");
+            var light = row.Light;
+            if (outcome.Replace) removed += Rooms.Remove(doc, light.Placed);
+            var (gridRows, gridCols) = row.PlaceGrid;
+            double mount = light.MountM > 0 ? light.MountM : row.Geometry.HeightM;
+            var placed = Rooms.Place(doc, row.Room, symbols[row.Result!.Luminaire], gridRows, gridCols, row.PlaceCount, mount);
+            row.Light = light with { Placed = outcome.Replace ? placed : [.. light.Placed, .. placed] };
+            total += placed.Count;
+            if (placed.Count < row.PlaceCount) problems.Add($"{row.Number} {row.Name}: размещено {placed.Count} из {row.PlaceCount} — контур слишком сложный для сетки.");
         }
+        EomStore.SaveRoomLights(doc, rows.ToDictionary(r => r.Room.Key, r => r.Light));
         t.Commit();
-        TaskDialog.Show("BotPlus ЭОМ", $"Размещено светильников: {total} в {placement.Rows.Count} помещениях." + (problems.Count > 0 ? "\n\n" + string.Join("\n", problems) : ""));
+        if (outcome.Place.Count == 0) return Result.Succeeded;
+        ctx.Catalog.Save();
+        new TaskDialog("BotPlus ЭОМ")
+        {
+            MainInstruction = $"Размещено светильников: {total} в {outcome.Place.Count} помещениях" + (removed > 0 ? $", удалено прежних: {removed}" : ""),
+            MainContent = string.Join("\n", types) + (problems.Count > 0 ? "\n\n" + string.Join("\n", problems) : ""),
+        }.Show();
         return Result.Succeeded;
+    }
+
+    /// <summary>
+    /// Типы осветительных приборов, которые можно поставить на уровень, с габаритами из параметров типа. Лампами и вложенными
+    /// компонентами считаются семейства с «лампа»/«lamp» в имени (но не «светильник») и семейства, все экземпляры которых
+    /// вложены в другие семейства. Они идут в конце списка и помечаются, чтобы их не связали со светильником по ошибке.
+    /// </summary>
+    static List<FixtureType> FixtureTypes(Document doc)
+    {
+        var instances = new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_LightingFixtures).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>()
+            .GroupBy(i => i.Symbol.Id).ToDictionary(g => g.Key, g => (Total: g.Count(), Nested: g.Count(i => i.SuperComponent != null)));
+        static bool LampName(string name)
+        {
+            string n = name.ToLowerInvariant();
+            return (n.Contains("ламп") || n.Contains("lamp")) && !n.Contains("светильн") && !n.Contains("luminaire");
+        }
+        return new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_LightingFixtures).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
+            .Where(s => s.Family.FamilyPlacementType is FamilyPlacementType.OneLevelBased or FamilyPlacementType.OneLevelBasedHosted)
+            .Select(s =>
+            {
+                var (total, nested) = instances.TryGetValue(s.Id, out var c) ? c : (0, 0);
+                bool component = LampName(s.FamilyName) || (total > 0 && nested == total);
+                return new FixtureType(s.Id, s.FamilyName, s.Name, component, total - nested,
+                    FixtureSync.ReadMm(s, FixtureSync.LengthNames), FixtureSync.ReadMm(s, FixtureSync.WidthNames), FixtureSync.ReadMm(s, FixtureSync.HeightNames));
+            })
+            .OrderBy(s => s.Component).ThenBy(s => s.Name, NaturalComparer.Instance).ToList();
     }
 }
 

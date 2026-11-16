@@ -46,4 +46,15 @@ internal static class EomStore
     /// <summary>Трасса (лоток или короб), к которой привязано обозначение проводки.</summary>
     internal static long? WiringHost(Element symbol) => long.TryParse(Read(symbol, WiringId), out var id) ? id : null;
     internal static void SaveWiringHost(Element symbol, ElementId host) => Write(symbol, WiringId, "BotPlusEomWiringV1", host.Value.ToString());
+
+    static readonly Guid RoomLightId = new("E3D4A9B2-61C8-4F0A-8E3B-7B5C2D1F9A04");
+    /// <summary>Светотехнические свойства помещений по UniqueId помещения (свои и из связей АР) на «Сведениях о проекте».</summary>
+    internal static Dictionary<string, RoomLight> RoomLights(Document doc)
+    {
+        var json = Read(doc.ProjectInformation, RoomLightId);
+        try { return json == null ? [] : System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, RoomLight>>(json) ?? []; } catch { return []; }
+    }
+    /// <summary>Требует открытой транзакции.</summary>
+    internal static void SaveRoomLights(Document doc, Dictionary<string, RoomLight> data) =>
+        Write(doc.ProjectInformation, RoomLightId, "BotPlusEomRoomLightV1", System.Text.Json.JsonSerializer.Serialize(data));
 }

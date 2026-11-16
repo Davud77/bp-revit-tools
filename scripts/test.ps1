@@ -26,8 +26,10 @@ function Step([string]$name, [string]$directory, [scriptblock]$command) {
 Step 'Build' $root { & (Join-Path $root 'build.ps1') }
 Step 'Host lifecycle checks' $root { dotnet run --project tests\HostChecks\HostChecks.csproj -c Release }
 Step 'MEP updater rules and system tools geometry' $root { dotnet run --project tests\MepChecks\MepChecks.csproj -c Release }
+Step 'MEP updater window' $root { dotnet run --project tests\UpdaterUiChecks\UpdaterUiChecks.csproj -c Release -- (Join-Path $root 'Выходные данные/Проверки/Апдейтер') }
 Step 'Schedule numbering policy' $root { dotnet run --project tests\ScheduleNumberingChecks\ScheduleNumberingChecks.csproj -c Release }
 Step 'Schedule numbering window' $root { dotnet run --project tests\ScheduleUiChecks\ScheduleUiChecks.csproj -c Release -- (Join-Path $root 'Выходные данные/Проверки/ScheduleNumbering') }
+Step 'View range policy and window' $root { dotnet run --project tests\ViewRangeChecks\ViewRangeChecks.csproj -c Release -- (Join-Path $root 'Выходные данные/Проверки/Виды') }
 Step 'Tag options strip' $root { dotnet run --project tests\TagUiChecks\TagUiChecks.csproj -c Release }
 Step 'GitHub update checks' $root { dotnet run --project tests\UpdateChecks\UpdateChecks.csproj -c Release }
 Step 'Update window states' $root { dotnet run --project tests\UpdateUiChecks\UpdateUiChecks.csproj -c Release -- (Join-Path $root 'Выходные данные\Проверки\Обновления') }

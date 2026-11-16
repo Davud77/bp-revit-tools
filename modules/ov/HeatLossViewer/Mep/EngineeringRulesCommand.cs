@@ -19,8 +19,8 @@ public sealed class EngineeringRulesCommand : IExternalCommand
             if (doc.IsFamilyDocument) { TaskDialog.Show("Апдейтер", "Откройте проект."); return Result.Cancelled; }
             var rules = EngineeringRulesStore.Read(doc);
             var picked = ui.Selection.GetElementIds().Select(doc.GetElement).FirstOrDefault(e => e != null && EngineeringEngine.CategoryKey(e) != null);
-            var window = new EngineeringRulesWindow(doc, rules, picked is null ? null : EngineeringEngine.CategoryKey(picked),
-                picked is null ? null : EngineeringEngine.TypeKey(picked));
+            var window = new EngineeringRulesWindow(new RevitUpdaterModel(doc), rules, picked is null ? null : EngineeringEngine.CategoryKey(picked),
+                picked is null ? null : EngineeringEngine.TypeMark(picked));
             new WindowInteropHelper(window) { Owner = data.Application.MainWindowHandle };
             if (window.ShowDialog() != true) return Result.Cancelled;
 
@@ -30,7 +30,7 @@ public sealed class EngineeringRulesCommand : IExternalCommand
                 t.Start();
                 EngineeringRulesStore.Write(doc, window.Rules);
                 if (window.UpdateScope is { } scope)
-                    outcome = EngineeringEngine.ApplyScope(doc, window.Rules, scope.Category, scope.TypeKey);
+                    outcome = EngineeringEngine.ApplyScope(doc, window.Rules, scope.Category, scope.Mark);
                 // The command already wrote every value; the updater would only re-check them on commit.
                 EngineeringUpdater.Suspended = true;
                 try { if (t.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Revit отменил сохранение правил."); }
@@ -55,17 +55,15 @@ public sealed class EngineeringRefreshCommand : IExternalCommand
             if (ui is null) return Result.Cancelled;
             var doc = ui.Document;
             var rules = EngineeringRulesStore.Read(doc);
-            if (rules.Rules.Count == 0) { TaskDialog.Show("Апдейтер", "В проекте нет правил. Настройте их командой «Апдейтер»."); return Result.Cancelled; }
-            var selected = ui.Selection.GetElementIds().Select(doc.GetElement).Where(e => e != null && EngineeringEngine.CategoryKey(e) != null).ToList();
+            if (rules.Rules.Count == 0 && rules.WallThickness.Target.Length == 0 && !rules.SystemNames.Enabled) { TaskDialog.Show("Апдейтер", "В проекте нет правил. Настройте их командой «Апдейтер»."); return Result.Cancelled; }
+            var selected = ui.Selection.GetElementIds().Select(doc.GetElement).Where(e => e != null && (EngineeringEngine.CategoryKey(e) != null || EngineeringEngine.SystemCategory(e))).ToList();
             IEnumerable<Element> targets = selected.Count > 0 ? selected
-                : rules.Rules.Select(r => r.Category).Distinct().SelectMany(c => EngineeringEngine.Instances(doc, c, null));
+                : EngineeringEngine.Watched().SelectMany(c => new FilteredElementCollector(doc).OfCategory(c).WhereElementIsNotElementType());
             var outcome = new EngineeringOutcome();
             using (var t = new Transaction(doc, "BotPlus: обновить инженерные параметры"))
             {
                 t.Start();
-                foreach (var element in targets.ToList())
-                    if (rules.Resolve(EngineeringEngine.CategoryKey(element)!, EngineeringEngine.TypeKey(element)) is { } rule)
-                        EngineeringEngine.Apply(element, rule, outcome);
+                foreach (var element in targets.ToList()) EngineeringEngine.Process(element, rules, outcome);
                 EngineeringUpdater.Suspended = true;
                 try { t.Commit(); } finally { EngineeringUpdater.Suspended = false; }
             }

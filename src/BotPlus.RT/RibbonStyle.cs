@@ -75,26 +75,6 @@ internal static class RibbonStyle
             default:Bolt();break;
         }
     }
-    /// <summary>Иконки инструментов «Системы» панели ОВ: трубы — синие, действие — зелёное.</summary>
-    static void MepIcon(DrawingContext d,string name,Pen outline,Brush blue,Brush paper)
-    {
-        var green=new SolidColorBrush(Color.FromRgb(62,158,104));
-        var pipe=new Pen(blue,4);var act=new Pen(green,2){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round};
-        void Shape(string path,Brush? fill=null,Pen? pen=null)=>d.DrawGeometry(fill,pen??outline,Geometry.Parse(path));
-        void Line(Pen pen,double x,double y,double a,double b)=>d.DrawLine(pen,new Point(x,y),new Point(a,b));
-        if(name.Contains("Updater"))
-        {
-            Shape("M5,3 L22,3 L27,8 L27,29 L5,29 Z",paper);Line(outline,9,10,20,10);Line(outline,9,15,17,15);
-            Shape("M10,24 C11,19 20,18 22,22 M22,22 L22,18 M22,22 L18,22",null,act);
-        }
-        else if(name.Contains("Disconnect")||name.Contains("Detach")){Line(pipe,2,16,12,16);Line(pipe,20,16,30,16);Line(new Pen(new SolidColorBrush(Color.FromRgb(214,64,52)),2),14,8,18,24);}
-        else if(name.Contains("Diffuser")){Line(pipe,2,7,30,7);Line(new Pen(blue,3),16,9,16,20);d.DrawRectangle(paper,outline,new Rect(8,20,16,6));for(int x=11;x<=21;x+=5)Line(outline,x,22,x,26);}
-        else if(name.Contains("Line")){Line(pipe,2,16,13,16);Line(pipe,19,16,30,16);d.DrawRectangle(paper,outline,new Rect(13,11,6,10));Shape("M9,25 L23,25 M19,22 L23,25 L19,28",null,act);}
-        else if(name.Contains("Connect")){Line(pipe,2,22,14,22);Line(pipe,18,22,18,4);d.DrawEllipse(Brushes.White,act,new Point(16,22),3.5,3.5);}
-        else if(name.Contains("Tray")){d.PushTransform(new RotateTransform(-20,16,16));d.DrawRectangle(paper,outline,new Rect(4,12,24,8));d.Pop();Shape("M8,28 C14,32 22,30 26,24 M26,24 L26,29 M26,24 L21,25",null,act);}
-        else if(name.Contains("Orient")){Line(pipe,2,26,30,26);Line(new Pen(blue,3),8,20,22,6);Shape("M26,10 C28,14 27,18 24,20 M24,20 L29,20 M24,20 L25,15",null,act);}
-        else {Line(pipe,4,16,28,16);d.DrawEllipse(null,act,new Point(16,16),10,10);Shape("M26,10 L26,16 L20,14",null,act);}
-    }
     internal static DrawingImage Icon(string name,int pixels)
     {
         var group=new DrawingGroup();using(var d=group.Open())
@@ -105,7 +85,8 @@ internal static class RibbonStyle
             void Line(double x,double y,double a,double b)=>d.DrawLine(outline,new Point(x,y),new Point(a,b));
             void Arrow()=>Shape("M15,12 L23,12 L23,7 L30,16 L23,25 L23,20 L15,20 Z",green);
             if(name.StartsWith("BotPlusEom"))EomIcon(d,name["BotPlusEom".Length..],outline,blue,green,paper);
-            else if(name.StartsWith("OVMep"))MepIcon(d,name,outline,blue,paper);
+            else if(name.StartsWith("OVMep")&&MepIcons.Draw(d,name)){}
+            else if(name.StartsWith("BotPlusOpenView")||name.StartsWith("BotPlusViewRange")){MepIcons.Draw(d,name);}
             else if(name.Contains("Crossings")){d.DrawRoundedRectangle(paper,outline,new Rect(12,3,8,26),1,1);d.DrawRectangle(null,new Pen(blue,3.4),new Rect(2,12,28,8));d.DrawEllipse(Brushes.White,new Pen(green,2),new Point(16,16),4,4);}
             else if(name.Contains("Opening")){d.DrawRoundedRectangle(paper,outline,new Rect(4,4,24,24),1,1);d.DrawEllipse(Brushes.White,new Pen(blue,2),new Point(16,16),7,7);Line(1,16,10,16);Line(22,16,31,16);Line(16,1,16,10);Line(16,22,16,31);}
             else if(name.Contains("Tags"))

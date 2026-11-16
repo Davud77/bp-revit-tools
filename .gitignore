@@ -36,3 +36,6 @@ RevitAPIUI.dll
 modules/ac2revit/runtime/
 modules/ac2revit/config/exchange-settings.json
 modules/ov/reference.html
+
+# Local Elproject compatibility experiment; excluded from the main source payload.
+/experiments/elpo/

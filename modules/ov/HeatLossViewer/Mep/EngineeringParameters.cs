@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.ExtensibleStorage;
+using Autodesk.Revit.DB.Mechanical;
+using Autodesk.Revit.DB.Plumbing;
 
 namespace HeatLossViewer.Mep;
 
@@ -19,6 +21,8 @@ internal static class EngineeringRulesStore
         string? json = entity.IsValid() ? entity.Get<string>(schema.GetField("Json")) : null;
         if (json == lastJson) return lastSet;
         var set = EngineeringRuleSet.FromJson(json);
+        // Version 1 kept type UniqueIds; they become the types' current «Маркировка типоразмера» (saved on the next write).
+        set.Migrate(key => doc.GetElement(key) is ElementType type ? EngineeringEngine.TypeMark(type) : null);
         lastJson = json; lastSet = set;
         return set;
     }
@@ -27,6 +31,8 @@ internal static class EngineeringRulesStore
     internal static void Write(Document doc, EngineeringRuleSet set)
     {
         foreach (var rule in set.Rules) rule.Validate();
+        set.WallThickness.Validate();
+        set.SystemNames.Validate();
         var schema = Schema.Lookup(SchemaId);
         if (schema is null)
         {
@@ -61,16 +67,7 @@ internal sealed class EngineeringOutcome
 internal static class EngineeringEngine
 {
     internal static readonly (BuiltInCategory Category, string Label)[] Categories =
-    [
-        (BuiltInCategory.OST_PipeCurves, "Трубы"),
-        (BuiltInCategory.OST_FlexPipeCurves, "Гибкие трубы"),
-        (BuiltInCategory.OST_PipeFitting, "Соединительные детали трубопроводов"),
-        (BuiltInCategory.OST_DuctCurves, "Воздуховоды"),
-        (BuiltInCategory.OST_FlexDuctCurves, "Гибкие воздуховоды"),
-        (BuiltInCategory.OST_DuctFitting, "Соединительные детали воздуховодов"),
-        (BuiltInCategory.OST_CableTray, "Кабельные лотки"),
-        (BuiltInCategory.OST_Conduit, "Короба")
-    ];
+        EngineeringRulesPolicy.Categories.Select(c => (Enum.Parse<BuiltInCategory>(c.Key), c.Label)).ToArray();
 
     internal static string? CategoryKey(Element element)
     {
@@ -78,19 +75,37 @@ internal static class EngineeringEngine
         return bic is { } c && Categories.Any(x => x.Category == c) ? c.ToString() : null;
     }
 
-    internal static string? TypeKey(Element element) => element.Document.GetElement(element.GetTypeId())?.UniqueId;
-
-    internal static IEnumerable<Element> Instances(Document doc, string category, string? typeKey)
+    /// <summary>«Маркировка типоразмера» of the type (or of the element when it is a type); empty → null.</summary>
+    internal static string? TypeMark(Element element)
     {
-        var bic = Enum.Parse<BuiltInCategory>(category);
-        var all = new FilteredElementCollector(doc).OfCategory(bic).WhereElementIsNotElementType();
-        return typeKey == null ? all : all.Where(e => TypeKey(e) == typeKey);
+        var type = element as ElementType ?? element.Document.GetElement(element.GetTypeId()) as ElementType;
+        return EngineeringRulesPolicy.NormalizeMark(type?.get_Parameter(BuiltInParameter.ALL_MODEL_TYPE_MARK)?.AsString());
     }
+
+    static IEnumerable<Element> All(Document doc, string category) =>
+        new FilteredElementCollector(doc).OfCategory(Enum.Parse<BuiltInCategory>(category)).WhereElementIsNotElementType();
+
+    /// <summary>Instances whose type carries <paramref name="mark"/> (null — types without a mark).</summary>
+    internal static IEnumerable<Element> Instances(Document doc, string category, string? mark) =>
+        All(doc, category).Where(e => TypeMark(e) == EngineeringRulesPolicy.NormalizeMark(mark));
+
+    internal static IEnumerable<Element> InstancesOfType(Document doc, ElementType type) =>
+        CategoryKey(type) is { } category ? All(doc, category).Where(e => e.GetTypeId() == type.Id) : [];
+
+    /// <summary>Types of the category grouped by mark, for the scope list (BIM2B groups rules the same way).</summary>
+    internal static List<(string? Mark, List<string> Types)> Marks(Document doc, string category) =>
+        new FilteredElementCollector(doc).OfCategory(Enum.Parse<BuiltInCategory>(category)).WhereElementIsElementType().Cast<ElementType>()
+            .GroupBy(TypeMark)
+            .Select(g => (g.Key, g.Select(t => string.IsNullOrEmpty(t.FamilyName) ? t.Name : t.FamilyName + ": " + t.Name).OrderBy(n => n).ToList()))
+            .OrderBy(g => g.Key != null).ThenBy(g => g.Key, StringComparer.CurrentCultureIgnoreCase).ToList();
 
     static Parameter? Find(Element element, string name) =>
         element.LookupParameter(name) ?? element.Document.GetElement(element.GetTypeId())?.LookupParameter(name);
 
-    internal static string? Text(Element element, string source)
+    static double Mm(Element e, BuiltInParameter id) => e.get_Parameter(id) is { HasValue: true, StorageType: StorageType.Double } p
+        ? UnitUtils.ConvertFromInternalUnits(p.AsDouble(), UnitTypeId.Millimeters) : 0;
+
+    internal static string? Text(Element element, string source, WallThicknessSettings? walls = null)
     {
         var type = element.Document.GetElement(element.GetTypeId()) as ElementType;
         switch (source)
@@ -99,6 +114,12 @@ internal static class EngineeringEngine
             case EngineeringRulesPolicy.FamilyNameSource: return type?.FamilyName;
             case EngineeringRulesPolicy.SortedSizeSource: return SortedSize(element);
             case EngineeringRulesPolicy.CountSource: return "1";
+            case EngineeringRulesPolicy.FittingSizeSource: return FittingSize(element);
+            case EngineeringRulesPolicy.WallThicknessSource:
+                return WallThickness(element, walls ?? new()) is { } t ? EngineeringRulesPolicy.Format(t, 2) : null;
+            case EngineeringRulesPolicy.HostLengthSource:
+            case EngineeringRulesPolicy.HostAreaSource:
+                return Source(element, source) is { } v ? EngineeringRulesPolicy.Format(v.Value, 2) : null;
         }
         var p = Find(element, source);
         if (p is null || !p.HasValue) return null;
@@ -107,23 +128,68 @@ internal static class EngineeringEngine
 
     static string? SortedSize(Element element)
     {
-        double Mm(BuiltInParameter id) => element.get_Parameter(id) is { HasValue: true, StorageType: StorageType.Double } p
-            ? UnitUtils.ConvertFromInternalUnits(p.AsDouble(), UnitTypeId.Millimeters) : 0;
-        double w = Mm(BuiltInParameter.RBS_CURVE_WIDTH_PARAM), h = Mm(BuiltInParameter.RBS_CURVE_HEIGHT_PARAM);
-        if (w <= 0) w = Mm(BuiltInParameter.RBS_CABLETRAY_WIDTH_PARAM);
-        if (h <= 0) h = Mm(BuiltInParameter.RBS_CABLETRAY_HEIGHT_PARAM);
+        double w = Mm(element, BuiltInParameter.RBS_CURVE_WIDTH_PARAM), h = Mm(element, BuiltInParameter.RBS_CURVE_HEIGHT_PARAM);
+        if (w <= 0) w = Mm(element, BuiltInParameter.RBS_CABLETRAY_WIDTH_PARAM);
+        if (h <= 0) h = Mm(element, BuiltInParameter.RBS_CABLETRAY_HEIGHT_PARAM);
         if (w > 0 && h > 0) return EngineeringRulesPolicy.SortedSize(w, h);
-        double d = Mm(BuiltInParameter.RBS_CURVE_DIAMETER_PARAM);
-        if (d <= 0) d = Mm(BuiltInParameter.RBS_PIPE_DIAMETER_PARAM);
-        if (d <= 0) d = Mm(BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM);
+        double d = Mm(element, BuiltInParameter.RBS_CURVE_DIAMETER_PARAM);
+        if (d <= 0) d = Mm(element, BuiltInParameter.RBS_PIPE_DIAMETER_PARAM);
+        if (d <= 0) d = Mm(element, BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM);
         if (d > 0) return EngineeringRulesPolicy.Format(d, 1);
         return element.get_Parameter(BuiltInParameter.RBS_CALCULATED_SIZE)?.AsString();
+    }
+
+    /// <summary>Size of a duct or pipe fitting from its connectors: elbow, transition, tee, takeoff.</summary>
+    static string? FittingSize(Element element)
+    {
+        if (element is not FamilyInstance) return null;
+        double ToMm(double feet) => UnitUtils.ConvertFromInternalUnits(feet, UnitTypeId.Millimeters);
+        var sizes = Mep.Connectors(element).Select(c => c.Shape == ConnectorProfileType.Round
+            ? (ToMm(c.Radius * 2), 0d, 0d) : (0d, ToMm(c.Width), ToMm(c.Height))).ToList();
+        return sizes.Count == 0 ? null : EngineeringRulesPolicy.FittingSize(sizes);
+    }
+
+    /// <summary>Pipes: (outer − inner)/2; ducts: table by shape, size and fire protection (insulation name marker).</summary>
+    internal static double? WallThickness(Element element, WallThicknessSettings walls)
+    {
+        if (element is Pipe)
+            return EngineeringRulesPolicy.PipeWall(Mm(element, BuiltInParameter.RBS_PIPE_OUTER_DIAMETER), Mm(element, BuiltInParameter.RBS_PIPE_INNER_DIAM_PARAM));
+        if (element is not Duct duct) return null;
+        var shape = duct.DuctType.Shape == ConnectorProfileType.Round ? SectionShape.Round : SectionShape.Rectangular;
+        double size = shape == SectionShape.Round ? Mm(duct, BuiltInParameter.RBS_CURVE_DIAMETER_PARAM)
+            : Math.Max(Mm(duct, BuiltInParameter.RBS_CURVE_WIDTH_PARAM), Mm(duct, BuiltInParameter.RBS_CURVE_HEIGHT_PARAM));
+        if (size <= 0) return null;
+        return EngineeringRulesPolicy.DuctWall(walls.Rows, shape, size, FireProtected(duct, walls.FireMarker));
+    }
+
+    static bool FireProtected(Duct duct, string marker)
+    {
+        if (string.IsNullOrWhiteSpace(marker)) return false;
+        var doc = duct.Document;
+        foreach (var id in InsulationLiningBase.GetInsulationIds(doc, duct.Id))
+        {
+            var type = doc.GetElement(doc.GetElement(id)?.GetTypeId() ?? ElementId.InvalidElementId) as ElementType;
+            if (type != null && (type.Name + " " + type.FamilyName).Contains(marker, StringComparison.CurrentCultureIgnoreCase)) return true;
+        }
+        return false;
     }
 
     /// <summary>Source value in SI and its physical kind. Null when absent.</summary>
     internal static (SourceKind Kind, double Value)? Source(Element element, string source)
     {
-        if (source == EngineeringRulesPolicy.CountSource) return (SourceKind.Count, 1);
+        switch (source)
+        {
+            case EngineeringRulesPolicy.CountSource: return (SourceKind.Count, 1);
+            case EngineeringRulesPolicy.HostLengthSource:
+            case EngineeringRulesPolicy.HostAreaSource:
+                // Insulation counts by its host: pipe length, actual duct surface.
+                if (element is not InsulationLiningBase lining || element.Document.GetElement(lining.HostElementId) is not { } host) return null;
+                var p0 = host.get_Parameter(source == EngineeringRulesPolicy.HostLengthSource ? BuiltInParameter.CURVE_ELEM_LENGTH : BuiltInParameter.RBS_CURVE_SURFACE_AREA);
+                if (p0 is not { HasValue: true, StorageType: StorageType.Double }) return null;
+                return source == EngineeringRulesPolicy.HostLengthSource
+                    ? (SourceKind.Length, UnitUtils.ConvertFromInternalUnits(p0.AsDouble(), UnitTypeId.Meters))
+                    : (SourceKind.Area, UnitUtils.ConvertFromInternalUnits(p0.AsDouble(), UnitTypeId.SquareMeters));
+        }
         var p = Find(element, source);
         if (p is null || !p.HasValue) return null;
         if (p.StorageType == StorageType.Integer) return (SourceKind.Number, p.AsInteger());
@@ -153,8 +219,68 @@ internal static class EngineeringEngine
         return [.. names];
     }
 
+    internal static bool SystemCategory(Element element) =>
+        element.Category?.BuiltInCategory is { } c && EngineeringRulesPolicy.SystemCategories.Contains(c.ToString());
+
+    /// <summary>All categories the updater watches: name/quantity categories and ADSK_Система_Имя categories.</summary>
+    internal static List<BuiltInCategory> Watched() =>
+        Categories.Select(c => c.Category).Concat(EngineeringRulesPolicy.SystemCategories.Select(Enum.Parse<BuiltInCategory>)).Distinct().ToList();
+
+    /// <summary>
+    /// System types of the element: the system type parameter of pipes, ducts and fittings; for insulation — of its host;
+    /// for equipment and fixtures — the systems of its connectors (several for multi-system equipment).
+    /// </summary>
+    internal static List<(string Type, SystemDomain Domain)> SystemTypes(Element element)
+    {
+        var doc = element.Document;
+        if (element is InsulationLiningBase lining && doc.GetElement(lining.HostElementId) is { } host) element = host;
+        var result = new List<(string, SystemDomain)>();
+        void Add(ElementId id, SystemDomain domain)
+        {
+            if (id != ElementId.InvalidElementId && doc.GetElement(id) is ElementType type && !result.Contains((type.Name, domain))) result.Add((type.Name, domain));
+        }
+        foreach (var (bip, domain) in new[] { (BuiltInParameter.RBS_PIPING_SYSTEM_TYPE_PARAM, SystemDomain.Pipe), (BuiltInParameter.RBS_DUCT_SYSTEM_TYPE_PARAM, SystemDomain.Duct) })
+            if (element.get_Parameter(bip) is { StorageType: StorageType.ElementId } p) Add(p.AsElementId(), domain);
+        if (result.Count == 0)
+            foreach (var c in Mep.Connectors(element))
+                if (c.MEPSystem is { } system) Add(system.GetTypeId(), system is PipingSystem ? SystemDomain.Pipe : system is MechanicalSystem ? SystemDomain.Duct : SystemDomain.Any);
+        return result;
+    }
+
+    /// <summary>
+    /// Size for the reserve table, mm: pipe nominal diameter, duct/tray diameter or larger side, flexible diameter;
+    /// fittings and accessories — the largest connector; insulation — its host.
+    /// </summary>
+    internal static double? SizeMm(Element element)
+    {
+        var doc = element.Document;
+        if (element is InsulationLiningBase lining && doc.GetElement(lining.HostElementId) is { } host) element = host;
+        double d = Mm(element, BuiltInParameter.RBS_PIPE_DIAMETER_PARAM);
+        if (d <= 0) d = Mm(element, BuiltInParameter.RBS_CURVE_DIAMETER_PARAM);
+        if (d <= 0) d = Mm(element, BuiltInParameter.RBS_CONDUIT_DIAMETER_PARAM);
+        if (d <= 0) d = Math.Max(Mm(element, BuiltInParameter.RBS_CURVE_WIDTH_PARAM), Mm(element, BuiltInParameter.RBS_CURVE_HEIGHT_PARAM));
+        if (d <= 0) d = Math.Max(Mm(element, BuiltInParameter.RBS_CABLETRAY_WIDTH_PARAM), Mm(element, BuiltInParameter.RBS_CABLETRAY_HEIGHT_PARAM));
+        if (d <= 0 && element is FamilyInstance)
+            d = Mep.Connectors(element).Select(c => UnitUtils.ConvertFromInternalUnits(c.Shape == ConnectorProfileType.Round ? c.Radius * 2 : Math.Max(c.Width, c.Height), UnitTypeId.Millimeters))
+                .DefaultIfEmpty(0).Max();
+        return d > 0 ? Math.Round(d, 3) : null;
+    }
+
+    /// <summary>Rule of the element (by category and type mark), the wall thickness and ADSK_Система_Имя. Never throws.</summary>
+    internal static void Process(Element element, EngineeringRuleSet set, EngineeringOutcome outcome)
+    {
+        string? category = CategoryKey(element);
+        bool system = set.SystemNames.Enabled && SystemCategory(element);
+        if (category is null && !system) return;
+        string? mark = TypeMark(element);
+        if (EngineeringRulesPolicy.IsIgnored(mark)) return;
+        var rule = category is null ? null : set.Resolve(category, mark);
+        bool walls = set.WallThickness.Target.Length > 0 && element is Pipe or Duct;
+        if (rule != null || walls || system) Apply(element, rule, set, outcome);
+    }
+
     /// <summary>Writes only differing values. Each element is independent; a failure is counted, never thrown.</summary>
-    internal static void Apply(Element element, EngineeringRule rule, EngineeringOutcome outcome)
+    internal static void Apply(Element element, EngineeringRule? rule, EngineeringRuleSet set, EngineeringOutcome outcome)
     {
         var doc = element.Document;
         if (doc.IsWorkshared && WorksharingUtils.GetCheckoutStatus(doc, element.Id) == CheckoutStatus.OwnedByOtherUser)
@@ -162,27 +288,58 @@ internal static class EngineeringEngine
         bool changed = false, failed = false;
         try
         {
-            if (rule.NameEnabled)
+            if (rule is { NameEnabled: true })
             {
-                string name = EngineeringRulesPolicy.ComposeName(rule.Parts, s => Text(element, s));
+                string name = EngineeringRulesPolicy.ComposeName(rule.Parts, s => Text(element, s, set.WallThickness));
                 var target = Writable(element, rule.NameTarget, outcome);
                 if (target is null) failed = true;
                 else if (target.StorageType != StorageType.String) { outcome.Skip($"«{rule.NameTarget}» не текстовый"); failed = true; }
                 else if ((target.AsString() ?? "") != name) { target.Set(name); changed = true; }
             }
-            if (rule.QuantityEnabled)
+            if (rule is { QuantityEnabled: true })
             {
                 var source = Source(element, rule.QuantitySource);
-                if (source is null) { outcome.Skip($"нет значения «{rule.QuantitySource}»"); failed = true; }
+                if (source is null)
+                {
+                    // As in BIM2B: a duct fitting family without ADSK_Размер_Площадь is simply not counted.
+                    outcome.Skip(rule.QuantitySource == EngineeringRulesPolicy.FittingAreaParameter
+                        ? $"семейство без «{EngineeringRulesPolicy.FittingAreaParameter}» — проигнорировано"
+                        : $"нет значения «{rule.QuantitySource}»");
+                    failed = true;
+                }
                 else
                 {
-                    var q = EngineeringRulesPolicy.Quantity(rule, source.Value.Kind, source.Value.Value, out string? error);
+                    double reserve = EngineeringRulesPolicy.ReserveFor(rule, rule.ReserveBySize.Count > 0 ? SizeMm(element) : null,
+                        rule.ReserveBySize.Count > 0 ? SystemTypes(element).Select(t => t.Type) : []);
+                    var q = EngineeringRulesPolicy.Quantity(rule, source.Value.Kind, source.Value.Value, out string? error, reserve);
                     var target = q is null ? null : Writable(element, rule.QuantityTarget, outcome);
                     if (q is null) { outcome.Skip(error!); failed = true; }
                     else if (target is null) failed = true;
                     else if (WriteNumber(target, q.Value, rule.Decimals, outcome, rule.QuantityTarget) is { } wrote) changed |= wrote;
                     else failed = true;
                 }
+            }
+            if (set.SystemNames.Enabled && SystemCategory(element))
+            {
+                // No matching rule (or no system yet): the value is left as is rather than cleared.
+                if (EngineeringRulesPolicy.SystemName(set.SystemNames, SystemTypes(element)) is { } systemName)
+                {
+                    string systemTarget = set.SystemNames.Target;
+                    var target = Writable(element, systemTarget, outcome);
+                    if (target is null) failed = true;
+                    else if (target.StorageType != StorageType.String) { outcome.Skip($"«{systemTarget}» не текстовый"); failed = true; }
+                    else if ((target.AsString() ?? "") != systemName) { target.Set(systemName); changed = true; }
+                }
+            }
+            string wallTarget = set.WallThickness.Target;
+            if (wallTarget.Length > 0 && element is Pipe or Duct)
+            {
+                var t = WallThickness(element, set.WallThickness);
+                var target = t is null ? null : Writable(element, wallTarget, outcome);
+                if (t is null) { outcome.Skip("толщина стенки не определена (нет размера или строки таблицы)"); failed = true; }
+                else if (target is null) failed = true;
+                else if (WriteThickness(target, t.Value, outcome, wallTarget) is { } wrote) changed |= wrote;
+                else failed = true;
             }
         }
         catch (Exception error)
@@ -228,23 +385,31 @@ internal static class EngineeringEngine
         }
     }
 
-    internal static EngineeringOutcome ApplyScope(Document doc, EngineeringRuleSet set, string category, string? typeKey)
+    /// <summary>Thickness in mm into a length parameter (converted), a unitless number (mm) or text.</summary>
+    static bool? WriteThickness(Parameter p, double mm, EngineeringOutcome outcome, string name)
+    {
+        if (p.StorageType == StorageType.Double && p.Definition.GetDataType() == SpecTypeId.Length)
+        {
+            double value = UnitUtils.ConvertToInternalUnits(mm, UnitTypeId.Millimeters);
+            if (Math.Abs(p.AsDouble() - value) < 1e-9) return false;
+            return p.Set(value);
+        }
+        return WriteNumber(p, mm, 2, outcome, name);
+    }
+
+    /// <summary>Applies the rules to every element of the category with the given mark.</summary>
+    internal static EngineeringOutcome ApplyScope(Document doc, EngineeringRuleSet set, string category, string? mark)
     {
         var outcome = new EngineeringOutcome();
-        foreach (var element in Instances(doc, category, typeKey).ToList())
-        {
-            var rule = set.Resolve(category, TypeKey(element));
-            if (rule is null) continue;
-            // A «Без типа» save does not touch elements whose type has its own rule: they resolve to that rule.
-            Apply(element, rule, outcome);
-        }
+        foreach (var element in Instances(doc, category, mark).ToList()) Process(element, set, outcome);
         return outcome;
     }
 }
 
 /// <summary>
-/// Dynamic model updater: fills values on creation and on any change of the listed categories.
-/// Writes are idempotent (only differing values), so its own changes cannot loop.
+/// Dynamic model updater: fills values on creation and on any change of the listed categories and their types
+/// (a new «Маркировка типоразмера» moves instances to another rule). Writes are idempotent (only differing values),
+/// so its own changes cannot loop.
 /// </summary>
 internal sealed class EngineeringUpdater : IUpdater
 {
@@ -259,7 +424,7 @@ internal sealed class EngineeringUpdater : IUpdater
         var updater = new EngineeringUpdater(addIn);
         if (UpdaterRegistry.IsUpdaterRegistered(updater.id)) return;
         UpdaterRegistry.RegisterUpdater(updater, isOptional: true);
-        var filter = new ElementMulticategoryFilter(EngineeringEngine.Categories.Select(c => c.Category).ToList());
+        var filter = new ElementMulticategoryFilter(EngineeringEngine.Watched());
         UpdaterRegistry.AddTrigger(updater.id, filter, Element.GetChangeTypeAny());
         UpdaterRegistry.AddTrigger(updater.id, filter, Element.GetChangeTypeElementAddition());
     }
@@ -277,26 +442,19 @@ internal sealed class EngineeringUpdater : IUpdater
         {
             var doc = data.GetDocument();
             var set = EngineeringRulesStore.Read(doc);
-            if (set.Rules.Count == 0) return;
+            if (set.Rules.Count == 0 && set.WallThickness.Target.Length == 0 && !set.SystemNames.Enabled) return;
             var ids = new HashSet<ElementId>(data.GetAddedElementIds());
             ids.UnionWith(data.GetModifiedElementIds());
             var outcome = new EngineeringOutcome();
+            var done = new HashSet<ElementId>();
             foreach (var id in ids)
             {
                 var element = doc.GetElement(id);
                 if (element is null) continue;
-                if (element is ElementType type)
-                {
-                    // A type edit (size, material) changes values of all its instances.
-                    string? category = EngineeringEngine.CategoryKey(type);
-                    if (category is null || set.Rules.All(r => r.Category != category)) continue;
-                    foreach (var instance in EngineeringEngine.Instances(doc, category, type.UniqueId))
-                        if (set.Resolve(category, type.UniqueId) is { } typeRule) EngineeringEngine.Apply(instance, typeRule, outcome);
-                    continue;
-                }
-                string? key = EngineeringEngine.CategoryKey(element);
-                if (key is null) continue;
-                if (set.Resolve(key, EngineeringEngine.TypeKey(element)) is { } rule) EngineeringEngine.Apply(element, rule, outcome);
+                // A type edit (size, material, mark) changes values of all its instances.
+                var targets = element is ElementType type ? EngineeringEngine.InstancesOfType(doc, type) : [element];
+                foreach (var target in targets)
+                    if (done.Add(target.Id)) EngineeringEngine.Process(target, set, outcome);
             }
         }
         catch (Exception error) { Trace.WriteLine("BotPlus engineering updater: " + error); }
@@ -305,5 +463,56 @@ internal sealed class EngineeringUpdater : IUpdater
     public UpdaterId GetUpdaterId() => id;
     public ChangePriority GetChangePriority() => ChangePriority.MEPSystems;
     public string GetUpdaterName() => "BotPlus RT: инженерные параметры";
-    public string GetAdditionalInformation() => "Заполняет наименование и количество инженерных элементов по правилам проекта.";
+    public string GetAdditionalInformation() => "Заполняет наименование, количество и толщину стенки инженерных элементов по правилам проекта.";
+}
+
+/// <summary>Project data for the rules window: the first element of each scope serves as the example.</summary>
+internal sealed class RevitUpdaterModel(Document doc) : IUpdaterModel
+{
+    readonly Dictionary<(string, string?), List<Element>> samples = [];
+
+    List<Element> Scoped(string category, string? mark)
+    {
+        if (!samples.TryGetValue((category, mark), out var list))
+            samples[(category, mark)] = list = EngineeringEngine.Instances(doc, category, mark).Take(30).ToList();
+        return list;
+    }
+
+    /// <summary>Scope elements, or any elements of the category when the mark has none (names and targets still useful).</summary>
+    List<Element> Any(string category, string? mark)
+    {
+        var scoped = Scoped(category, mark);
+        return scoped.Count > 0 ? scoped
+            : new FilteredElementCollector(doc).OfCategory(Enum.Parse<BuiltInCategory>(category)).WhereElementIsNotElementType().Take(20).ToList();
+    }
+
+    public IReadOnlyList<(string? Mark, List<string> Types)> Marks(string category) => EngineeringEngine.Marks(doc, category);
+    public bool HasSample(string category, string? mark) => Scoped(category, mark).Count > 0;
+    public IReadOnlyList<string> Parameters(string category, string? mark) => EngineeringEngine.ParameterNames(Any(category, mark));
+
+    IReadOnlyList<string> Targets(string category, string? mark, Func<Parameter, bool> fits)
+    {
+        var first = Any(category, mark).FirstOrDefault();
+        if (first is null) return [];
+        return first.Parameters.Cast<Parameter>().Where(p => !p.IsReadOnly && p.Definition?.Name is { Length: > 0 } && fits(p))
+            .Select(p => p.Definition.Name).Distinct().OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase).ToList();
+    }
+
+    public IReadOnlyList<string> TextTargets(string category, string? mark) => Targets(category, mark, p => p.StorageType == StorageType.String);
+    public IReadOnlyList<string> NumberTargets(string category, string? mark) => Targets(category, mark, p =>
+        p.StorageType is StorageType.Integer or StorageType.String || (p.StorageType == StorageType.Double && p.Definition.GetDataType() == SpecTypeId.Number));
+
+    public string? Text(string category, string? mark, string parameter, WallThicknessSettings walls) =>
+        Scoped(category, mark).FirstOrDefault() is { } e ? EngineeringEngine.Text(e, parameter, walls) : null;
+
+    public (double? SizeMm, IReadOnlyList<string> Systems) ReserveContext(string category, string? mark) =>
+        Scoped(category, mark).FirstOrDefault() is { } e ? (EngineeringEngine.SizeMm(e), EngineeringEngine.SystemTypes(e).Select(t => t.Type).ToList()) : (null, []);
+
+    public IReadOnlyList<(string Type, SystemDomain Domain)> SystemTypes() =>
+        new FilteredElementCollector(doc).OfClass(typeof(PipingSystemType)).Cast<ElementType>().Select(t => (t.Name, SystemDomain.Pipe))
+            .Concat(new FilteredElementCollector(doc).OfClass(typeof(MechanicalSystemType)).Cast<ElementType>().Select(t => (t.Name, SystemDomain.Duct)))
+            .OrderBy(t => t.Item2).ThenBy(t => t.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+
+    public (SourceKind Kind, double Value)? Source(string category, string? mark, string parameter) =>
+        Scoped(category, mark).FirstOrDefault() is { } e ? EngineeringEngine.Source(e, parameter) : null;
 }

@@ -49,6 +49,17 @@ public sealed class Application : IExternalApplication
                     typeof(ScheduleNumberingCommand).FullName!) { ToolTip = "Пронумеровать элементы в порядке строк активной спецификации.",
                     AvailabilityClassName = typeof(ScheduleNumberingAvailable).FullName! });
             }
+            if (!BotPlusSettings.HiddenPanels.Contains("Виды"))
+            {
+                var views = application.CreateRibbonPanel("BotPlus RT", "Виды");
+                views.AddItem(new PushButtonData(ViewportContext.ButtonName, "Открыть\nвид", typeof(Application).Assembly.Location, typeof(OpenViewCommand).FullName!)
+                    { ToolTip = "Открыть виды выбранных видовых экранов листа в отдельных вкладках. Кнопка есть и на вкладке «Изменить | Видовые экраны».",
+                      AvailabilityClassName = typeof(OpenViewAvailable).FullName! });
+                views.AddItem(new PushButtonData("BotPlusViewRange", "Секущий\nдиапазон", typeof(Application).Assembly.Location, typeof(ViewRangeCommand).FullName!)
+                    { ToolTip = "Управление секущим диапазоном плана с помощью ползунков: уровень и смещение каждой плоскости, изменения видны сразу.",
+                      AvailabilityClassName = typeof(ViewRangeAvailable).FullName! });
+                ViewportContext.Attach(application);
+            }
             var service = application.CreateRibbonPanel("BotPlus RT", "Настройки");
             service.AddItem(new PushButtonData("BotPlusRTSettings", "Настройки", typeof(Application).Assembly.Location,
                 typeof(SettingsCommand).FullName!){ToolTip="Тема окон, включение модулей и сведения о плагине.",AvailabilityClassName=typeof(HostAvailable).FullName!});
@@ -76,6 +87,7 @@ public sealed class Application : IExternalApplication
     public Result OnShutdown(UIControlledApplication application)
     {
         StartupUpdates.Detach(application);
+        ViewportContext.Detach(application);
         foreach (var module in started.AsEnumerable().Reverse())
         {
             try { module.OnShutdown(application); }

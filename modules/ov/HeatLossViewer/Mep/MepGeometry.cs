@@ -225,6 +225,21 @@ public sealed class MepToolSettings
     public FlexOptions Rectangular { get; set; } = new();
     public FlexOptions Oval { get; set; } = new();
     public List<string> AngleHistory { get; set; } = [];
+    // «Задать расстояние»
+    public List<string> DistanceHistory { get; set; } = ["100", "150", "200"];
+    public bool DistanceHorizontal { get; set; } = true;
+    public bool DistanceFaces { get; set; }
+    public bool DistanceInsulation { get; set; } = true;
+    // «Мультипостроение»
+    public bool MultiFixedAngles { get; set; } = true;
+    public string MultiAngles { get; set; } = "15, 30, 45, 60, 90";
+    public bool MultiSingleUndo { get; set; }
+
+    public void RememberDistance(string value)
+    {
+        DistanceHistory.Remove(value); DistanceHistory.Insert(0, value);
+        if (DistanceHistory.Count > 8) DistanceHistory.RemoveRange(8, DistanceHistory.Count - 8);
+    }
 
     public static string DefaultPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BotPlus RT", "mep-tools.json");
 

@@ -43,7 +43,7 @@ Console.WriteLine("PASS partial startup failure cleans up handlers and reports t
 
 State.Calls.Clear();
 var configuredApp = new UIControlledApplication();
-BotPlus.Shared.BotPlusSettings.HiddenPanels.UnionWith(["MCP", "Ac2Revit", "Отверстия", "ВК", "ЭОМ", "Марки", "Спецификации"]);
+BotPlus.Shared.BotPlusSettings.HiddenPanels.UnionWith(["MCP", "Ac2Revit", "Отверстия", "ВК", "ЭОМ", "Марки", "Спецификации", "Виды"]);
 if (host.OnStartup(configuredApp) != Result.Succeeded) throw new Exception("Disabled module started");
 host.OnShutdown(configuredApp);
 if (!State.Calls.SequenceEqual(new[] { "start:ov", "stop:ov" }) || !configuredApp.Panels.SequenceEqual(new[] { "Настройки" }))

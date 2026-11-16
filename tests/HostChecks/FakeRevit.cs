@@ -57,4 +57,6 @@ namespace BotPlus.RT { public sealed class MatchTagCommand { } public sealed cla
 namespace BotPlus.RT { public sealed class ScheduleNumberingCommand { } public sealed class ScheduleNumberingAvailable { } }
 namespace BotPlus.RT { internal static class StartupUpdates { public static void Attach(Autodesk.Revit.UI.UIControlledApplication app){} public static void Detach(Autodesk.Revit.UI.UIControlledApplication app){} } }
 namespace BotPlus.RT { public sealed class HostAvailable{} }
+namespace BotPlus.RT { public sealed class OpenViewCommand { } public sealed class OpenViewAvailable { } public sealed class ViewRangeCommand { } public sealed class ViewRangeAvailable { }
+    internal static class ViewportContext { public const string ButtonName = "BotPlusOpenView"; public static void Attach(Autodesk.Revit.UI.UIControlledApplication app){} public static void Detach(Autodesk.Revit.UI.UIControlledApplication app){} } }
 namespace BotPlus.RT { public sealed class UpdateCommand { } internal static class RibbonStyle { public static void Apply(Autodesk.Revit.UI.UIControlledApplication app){} } }

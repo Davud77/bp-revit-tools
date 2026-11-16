@@ -36,13 +36,45 @@ public sealed class TrayItem
     public double Height { get; set; }
 }
 
+/// <summary>Светильник БД оборудования: технические данные и коэффициенты использования для расчёта методом Ки.</summary>
 public sealed class LuminaireItem
 {
     public string Name { get; set; } = "";
+    /// <summary>Раздел и серия — уровни дерева БД.</summary>
+    public string Section { get; set; } = "Офисно-административное освещение";
+    public string Series { get; set; } = "";
+    public string Manufacturer { get; set; } = "";
+    /// <summary>Номинальная мощность светильника, Вт.</summary>
     public double Power { get; set; }
+    /// <summary>Световой поток всех ламп светильника, лм (для LED — поток светильника при КПД = 1).</summary>
     public double Flux { get; set; }
-    /// <summary>Файл фотометрии .ies/.ldt (пока не используется в расчёте).</summary>
+    /// <summary>Тип ламп («LED», «ЛЛ»...) и их количество.</summary>
+    public string LampType { get; set; } = "LED";
+    public int LampCount { get; set; } = 1;
+    /// <summary>Световой КПД светильника, о.е.: для типовой таблицы Ки = ηп·КПД.</summary>
+    public double Efficiency { get; set; } = 1;
+    public double PowerFactor { get; set; } = 0.95;
+    public string Mounting { get; set; } = "Встраиваемый";
+    public string IP { get; set; } = "IP20";
+    public double LengthMm { get; set; }
+    public double WidthMm { get; set; }
+    public double HeightMm { get; set; }
+    /// <summary>Описание в спецификации, код оборудования, нормативный документ, напряжение, масса.</summary>
+    public string Description { get; set; } = "";
+    public string Code { get; set; } = "";
+    public string Document { get; set; } = "";
+    public double Voltage { get; set; } = 220;
+    public double MassKg { get; set; }
+    /// <summary>Файл фотометрии .ies/.ldt (справочно).</summary>
     public string Photometry { get; set; } = "";
+    /// <summary>
+    /// Связанное семейство Revit («Семейство: Тип»). При расстановке в этом семействе создаётся тип с именем светильника,
+    /// в который записываются данные БД.
+    /// </summary>
+    public string RevitType { get; set; } = "";
+    /// <summary>Собственная таблица Ки из паспорта; null — типовая таблица КСС Д × КПД.</summary>
+    public UtilizationTable? Utilization { get; set; }
+    public double LuminaireFlux => Flux;
     public override string ToString() => Name;
 }
 
@@ -96,10 +128,12 @@ public sealed class EomCatalog
         foreach (var (w, h) in new[] { (100, 50), (200, 50), (300, 50), (200, 100), (400, 100) })
             catalog.Trays.Add(new() { Name = $"Лоток перфорированный {w}х{h}", Width = w, Height = h });
         catalog.Luminaires.AddRange([
-            new() { Name = "Панель LED 595х595, 36 Вт, 4000 лм", Power = 36, Flux = 4000 },
-            new() { Name = "Даунлайт LED, 18 Вт, 1800 лм", Power = 18, Flux = 1800 },
-            new() { Name = "Линейный LED 1200 мм, 40 Вт, 4400 лм", Power = 40, Flux = 4400 },
-            new() { Name = "Промышленный LED, 100 Вт, 13000 лм", Power = 100, Flux = 13000 }]);
+            new() { Name = "Панель LED 595х595, 36 Вт, 4000 лм", Series = "Панели LED", Power = 36, Flux = 4000, LengthMm = 595, WidthMm = 595 },
+            new() { Name = "Даунлайт LED, 18 Вт, 1800 лм", Series = "Даунлайты LED", Power = 18, Flux = 1800, LengthMm = 200, WidthMm = 200 },
+            new() { Name = "Линейный LED 1200 мм, 40 Вт, 4400 лм", Series = "Линейные LED", Mounting = "Накладной", Power = 40, Flux = 4400, LengthMm = 1200, WidthMm = 70 },
+            new() { Name = "Пылевлагозащищённый LED, 36 Вт, 3600 лм", Section = "Технические помещения", Series = "Линейные IP65", Mounting = "Накладной", IP = "IP65", Power = 36, Flux = 3600, LengthMm = 1270, WidthMm = 90 },
+            new() { Name = "ЛЛ 4х18 Вт 595х595 (зеркальная решётка)", Series = "Растровые ЛЛ", LampType = "ЛЛ", LampCount = 4, Power = 72, Flux = 4 * 1300, Efficiency = 0.66, PowerFactor = 0.85, LengthMm = 595, WidthMm = 595 },
+            new() { Name = "Промышленный LED, 100 Вт, 13000 лм", Section = "Промышленное освещение", Series = "Колокола LED", Mounting = "Подвесной", IP = "IP65", Power = 100, Flux = 13000 }]);
         return catalog;
     }
 }
