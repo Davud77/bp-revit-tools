@@ -76,7 +76,7 @@ internal static class Program
             Check(buttons0(window).Contains("Запас по размеру… (2)"), "Reserve button shows the number of rows");
             var buttons = All<Button>(window).Select(b => b.Content as string).ToList();
             Check(buttons.Contains("Сохранить настройки и обновить все элементы выбранного типа") && buttons.Contains("Сохранить настройки и закрыть") && buttons.Contains("Отменить и закрыть"), "Three BIM2B buttons");
-            Check(buttons.Contains("Импорт…") && buttons.Contains("Экспорт…") && buttons.Contains("Толщина стенки…") && buttons.Contains("Имена систем…"), "Service buttons");
+            Check(!buttons.Contains("Импорт…") && !buttons.Contains("Экспорт…") && buttons.Contains("Толщина стенки…") && buttons.Contains("Имена систем…"), "Service buttons, no import/export");
             var lists = All<ListBox>(window).ToList();
             Check(lists.Count == 2 && lists[0].Items.Cast<ListBoxItem>().Any(i => (string)i.Content == "Толщина стенки"), "Built-in parameters in the list");
             var root = (FrameworkElement)window.Content;
@@ -136,6 +136,8 @@ internal static class Program
             insulation.Show(); insulation.UpdateLayout();
             Check(insulation.Rows.Count == 3 && insulation.Rows[0].Type == "K-Flex ST 13" && insulation.Rows[0].Insulated == "4 из 12" && insulation.Rows[1].Type == InsulationPolicy.NoInsulation, "Pipes of the system with stored rule");
             Check(insulation.Selected.SequenceEqual(["ADSK_Водопровод_Т3"]), "Starts on the selected pipes' systems");
+            Check(insulation.Rows[0].InsulationName == InsulationPolicy.DefaultNameTemplate && insulation.Title == "Менеджер изоляций", "Default insulation name template, window title");
+            insulation.Rows[0].InsulationName = "Изоляция K-Flex ø{Ø}";
             insulation.SelectSystems("ADSK_Водопровод_Т3", "ADSK_Водопровод_В1"); insulation.UpdateLayout();
             Check(insulation.Rows.Count == 4 && insulation.Rows.First(r => r.Name.StartsWith("Труба PP-R PN20 Ø25")).Count == 25, "Several systems: pipes merged by name");
             Check(insulation.Rows.First(r => r.Name.Contains("Ø20х2,8")).Type == InsulationPolicy.Mixed, "Different rules across systems shown as mixed");
@@ -149,7 +151,7 @@ internal static class Program
             insulation.SetAll("Energoflex Super 9", "9");
             Check(insulation.Rows.All(r => r.Type == "Energoflex Super 9" && r.Thickness == "9"), "«Задать всем» fills every pipe");
             insulation.SelectSystem("ADSK_Канализация_К1");
-            Check(insulation.Rows.Count == 0, "System without pipes");
+            Check(insulation.Rows.Count == 0 && !All<CheckBox>(insulation).Any(b => b.Tag as string == "ADSK_Канализация_К1") && All<CheckBox>(insulation).Count(b => b.Tag is string) == 3, "Systems without pipes are not listed");
             insulation.SelectSystem("ADSK_Водопровод_В1");
             Check(insulation.Rows.Count == 2 && insulation.Rows.All(r => r.Type == "Energoflex Super 9"), "Rows of several systems written to each of them");
             insulation.Rows[0].Thickness = "abc";
@@ -161,12 +163,13 @@ internal static class Program
             Check(insulation.Accept() && insulation.Result is { } saved
                 && saved.Resolve("ADSK_Водопровод_Т3", "Труба стальная водогазопроводная Ø20х2,8")!.InsulationType == "Energoflex Super 9"
                 && saved.Resolve("ADSK_Водопровод_В1", "Труба PP-R PN20 Ø25")!.ThicknessMm == 19
-                && saved.Resolve("ADSK_Водопровод_Т3", "Труба PP-R PN20 Ø25")!.ThicknessMm == 9, "OK saves rules of every visited system");
+                && saved.Resolve("ADSK_Водопровод_Т3", "Труба PP-R PN20 Ø25")!.ThicknessMm == 9
+                && saved.Resolve("ADSK_Водопровод_В1", "Труба PP-R PN20 Ø25")!.NameTemplate == InsulationPolicy.DefaultNameTemplate, "OK saves rules of every visited system");
             Check(stored.Rules.Count == 1 && stored.Rules[0].InsulationType == "K-Flex ST 13", "Window works on a copy");
-            CheckBox Box(string text) => All<CheckBox>(insulation).First(b => (b.Content as TextBlock)?.Text == text);
+            CheckBox Box(string tag) => All<CheckBox>(insulation).First(b => b.Tag as string == tag);
             Box("ADSK_Водопровод_В1").IsChecked = true; Box("ADSK_Водопровод_Т3").IsChecked = true;
-            Check(insulation.Selected.SequenceEqual(["ADSK_Водопровод_В1", "ADSK_Водопровод_Т3"]) && Box(InsulationPolicy.AllSystemsLabel).IsChecked == false, "Checking systems replaces «all systems»");
-            Box(InsulationPolicy.AllSystemsLabel).IsChecked = true;
+            Check(insulation.Selected.SequenceEqual(["ADSK_Водопровод_В1", "ADSK_Водопровод_Т3"]) && Box("").IsChecked == false, "Checking systems replaces «all systems»");
+            Box("").IsChecked = true;
             Check(insulation.Selected.SequenceEqual([""]) && Box("ADSK_Водопровод_В1").IsChecked == false, "«All systems» clears the others");
             insulation.Close();
         }

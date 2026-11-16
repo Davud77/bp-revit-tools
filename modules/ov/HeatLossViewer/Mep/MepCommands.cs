@@ -42,6 +42,12 @@ public sealed class MepConnectCommand : IExternalCommand
                 "Отключите его или выберите свободный элемент.");
         if (Mep.Locked(moving) is { } why) throw new InvalidOperationException($"Присоединяемый элемент {why}.");
         if (cm.Domain != cr.Domain) throw new InvalidOperationException("Коннекторы относятся к разным инженерным системам.");
+        // Joined directly, without unions or transitions; different sizes only on confirmation.
+        if (!Mep.SameSize(cm, cr))
+        {
+            var ask = new TaskDialog(Title) { MainInstruction = $"Размеры различаются: {Size(cm)} и {Size(cr)}", MainContent = "Соединить коннекторы напрямую, без перехода?", CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No, DefaultButton = TaskDialogResult.Yes };
+            if (ask.Show() != TaskDialogResult.Yes) throw new System.OperationCanceledException();
+        }
 
         int id = cm.Id;
         var target = cr.CoordinateSystem;
@@ -68,7 +74,13 @@ public sealed class MepConnectCommand : IExternalCommand
         var shift = cr.Origin - cm.Origin;
         if (shift.GetLength() > 1e-9) ElementTransformUtils.MoveElement(doc, moving.Id, shift);
         doc.Regenerate();
-        Mep.Join(doc, Mep.Find(moving, id), cr);
+        Mep.Find(moving, id).ConnectTo(cr);
+    }
+
+    static string Size(Connector c)
+    {
+        static string Mm(double feet) => Math.Round(UnitUtils.ConvertFromInternalUnits(feet, UnitTypeId.Millimeters), 1).ToString("0.#");
+        return c.Shape == ConnectorProfileType.Round ? "ø" + Mm(c.Radius * 2) : Mm(c.Width) + "×" + Mm(c.Height);
     }
 }
 

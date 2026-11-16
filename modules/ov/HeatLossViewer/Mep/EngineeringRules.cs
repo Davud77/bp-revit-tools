@@ -247,6 +247,31 @@ public sealed class EngineeringRuleSet
 
     public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
+    /// <summary>
+    /// Формулы по умолчанию (как в настройках BIM2B пользователя): трубы, гибкие трубы и изоляция труб по маркировке типоразмера.
+    /// Подставляются в окно, пока в проекте нет сохранённых правил. Запас — «Нет», округление — «Нет».
+    /// </summary>
+    public static List<EngineeringRule> DefaultRules()
+    {
+        const string comment = "Комментарии к типоразмеру";
+        static NamePart P(string parameter, string prefix = "") => new() { Parameter = parameter, Prefix = prefix };
+        static EngineeringRule R(string category, string? mark, string source, QuantityUnit unit, params NamePart[] parts) => new()
+        {
+            Category = category, TypeMark = mark, NameEnabled = true, Parts = [.. parts], QuantityEnabled = true, QuantitySource = source,
+            Reserve = 1, Unit = unit, Decimals = 6, Rounding = QuantityRounding.Nearest
+        };
+        return
+        [
+            R("OST_PipeCurves", null, "Длина", QuantityUnit.Meter, P(comment), P("Внешний диаметр", " ø"), P(EngineeringRulesPolicy.WallThicknessSource, "x")),
+            R("OST_PipeCurves", "Ду х Стенка", "Длина", QuantityUnit.Meter, P(comment), P("Диаметр", " ø"), P(EngineeringRulesPolicy.WallThicknessSource, "x")),
+            R("OST_FlexPipeCurves", "Гофры", EngineeringRulesPolicy.CountSource, QuantityUnit.Piece, P(comment)),
+            R("OST_FlexPipeCurves", "Подводки", EngineeringRulesPolicy.CountSource, QuantityUnit.Piece, P(comment), P("Диаметр", " ø")),
+            R("OST_PipeInsulations", "Трубки", "Длина", QuantityUnit.Meter, P(comment), P("Толщина изоляции", " толщиной "), P("Размер трубы", " для трубы ")),
+            R("OST_PipeInsulations", "Трубки цветные", "Длина", QuantityUnit.Meter, P(comment), P("Размер трубы", " для трубы ")),
+            R("OST_PipeInsulations", "Цилиндры", "Объем", QuantityUnit.Piece, P(comment), P("Толщина изоляции", " толщиной "), P("Размер трубы", " для трубы ")),
+        ];
+    }
+
     public static EngineeringRuleSet FromJson(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return new EngineeringRuleSet();

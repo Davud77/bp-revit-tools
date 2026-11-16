@@ -70,11 +70,11 @@ public static class MepAlignGeometry
     }
 
     /// <summary>«Выровнять вертикально»: keeps the lower end, puts the upper end straight above it. Returns the new upper end.</summary>
-    public static V3 Plumb(V3 a, V3 b, out bool upperIsB)
+    /// <summary>Upper end placed over the lower one; any slope is accepted. Null for a horizontal element (no height to keep).</summary>
+    public static V3? Plumb(V3 a, V3 b, out bool upperIsB)
     {
-        var d = b - a;
-        if (d.Length < Eps) throw new InvalidOperationException("Нулевая длина элемента.");
-        if (Math.Abs(d.Unit().Z) < 0.7) throw new InvalidOperationException("Элемент отклонён от вертикали больше чем на 45°: это не стояк.");
+        upperIsB = b.Z >= a.Z;
+        if (Math.Abs(b.Z - a.Z) < Eps) return null;
         upperIsB = b.Z >= a.Z;
         var low = upperIsB ? a : b; var high = upperIsB ? b : a;
         return new V3(low.X, low.Y, high.Z);

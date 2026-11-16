@@ -25,7 +25,9 @@ internal sealed class ViewRangeWindow : Window
     readonly IReadOnlyList<LevelInfo> levels;
     readonly LevelInfo associated;
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0), MinHeight = 18 };
-    readonly DispatcherTimer delay = new() { Interval = TimeSpan.FromMilliseconds(180) };
+    // Live update while dragging: the first change applies at once, further ones at most every 30 ms (the latest value wins).
+    readonly DispatcherTimer delay = new() { Interval = TimeSpan.FromMilliseconds(30) };
+    bool queued;
     bool loading;
     string? lastApplied;
 
@@ -92,7 +94,7 @@ internal sealed class ViewRangeWindow : Window
         ok.Click += (_, _) => Accept();
         buttons.Children.Add(ok); buttons.Children.Add(cancel);
         root.Children.Add(buttons);
-        delay.Tick += (_, _) => { delay.Stop(); Push(); };
+        delay.Tick += (_, _) => { delay.Stop(); if (!queued) return; queued = false; Push(); delay.Start(); };
         lastApplied = Key();
         Validate();
         BotPlusTheme.Apply(this);
@@ -130,8 +132,9 @@ internal sealed class ViewRangeWindow : Window
 
     void Changed()
     {
-        if (!Validate()) { delay.Stop(); return; }
-        delay.Stop(); delay.Start();
+        if (!Validate()) { queued = false; return; }
+        if (delay.IsEnabled) { queued = true; return; }
+        Push(); delay.Start();
     }
 
     /// <summary>Applies the current rows if they changed and are valid. Public for the checks.</summary>
@@ -154,7 +157,7 @@ internal sealed class ViewRangeWindow : Window
 
     void Accept()
     {
-        delay.Stop();
+        delay.Stop(); queued = false;
         if (!Push()) return;
         DialogResult = true;
     }

@@ -12,6 +12,8 @@ public sealed class InsulationRule
     public string Name { get; set; } = "";
     public string? InsulationType { get; set; }
     public double ThicknessMm { get; set; } = InsulationPolicy.DefaultThicknessMm;
+    /// <summary>ADSK_Наименование элемента изоляции; «{Ø}» — диаметр изолируемой трубы. Пусто — не заполнять.</summary>
+    public string NameTemplate { get; set; } = InsulationPolicy.DefaultNameTemplate;
 }
 
 /// <summary>Настройки изоляции проекта: хранятся в RVT вместе с правилами апдейтера.</summary>
@@ -36,10 +38,10 @@ public sealed class InsulationSettings
     public InsulationRule? Get(string system, string name) => Rules.FirstOrDefault(r => Same(r.System, system) && Same(r.Name, name));
 
     /// <summary>Записать строку; без типа изоляции строка удаляется.</summary>
-    public void Put(string system, string name, string? type, double thicknessMm)
+    public void Put(string system, string name, string? type, double thicknessMm, string nameTemplate = InsulationPolicy.DefaultNameTemplate)
     {
         Rules.RemoveAll(r => Same(r.System, system) && Same(r.Name, name));
-        if (type is { Length: > 0 }) Rules.Add(new InsulationRule { System = system.Trim(), Name = name.Trim(), InsulationType = type, ThicknessMm = thicknessMm });
+        if (type is { Length: > 0 }) Rules.Add(new InsulationRule { System = system.Trim(), Name = name.Trim(), InsulationType = type, ThicknessMm = thicknessMm, NameTemplate = (nameTemplate ?? "").Trim() });
     }
 
     public void Validate()
@@ -68,6 +70,16 @@ public enum InsulationAction { None, Create, Update, Keep }
 public static class InsulationPolicy
 {
     public const double DefaultThicknessMm = 13;
+    public const string DiameterToken = "{Ø}";
+    public const string DefaultNameTemplate = "Трубная изоляция для ø" + DiameterToken;
+
+    /// <summary>Наименование изоляции по шаблону строки: «{Ø}» заменяется диаметром трубы. Пустой шаблон — null (не заполнять).</summary>
+    public static string? InsulationName(string? template, double diameterMm)
+    {
+        if (string.IsNullOrWhiteSpace(template)) return null;
+        string d = diameterMm > 0 ? Math.Round(diameterMm, 1).ToString("0.#", System.Globalization.CultureInfo.CurrentCulture) : "";
+        return template.Replace(DiameterToken, d).Trim();
+    }
     public const string AllSystemsLabel = "Все системы";
     public const string NoInsulation = "— не задано";
     /// <summary>Отмечено несколько систем с разными правилами строки; без правки строка их не меняет.</summary>

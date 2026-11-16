@@ -197,6 +197,8 @@ internal static class EngineeringEngine
         var spec = p.Definition.GetDataType();
         if (spec == SpecTypeId.Length) return (SourceKind.Length, UnitUtils.ConvertFromInternalUnits(p.AsDouble(), UnitTypeId.Meters));
         if (spec == SpecTypeId.Area) return (SourceKind.Area, UnitUtils.ConvertFromInternalUnits(p.AsDouble(), UnitTypeId.SquareMeters));
+        // Volume (insulation cylinders) as a number in m³.
+        if (spec == SpecTypeId.Volume) return (SourceKind.Number, UnitUtils.ConvertFromInternalUnits(p.AsDouble(), UnitTypeId.CubicMeters));
         return (SourceKind.Number, p.AsDouble());
     }
 

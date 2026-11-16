@@ -127,8 +127,6 @@ internal sealed class EngineeringRulesWindow : Window
         var tools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 0, 0, 0) };
         tools.Children.Add(Small("Имена систем…", EditSystems, "ADSK_Система_Имя по типу системы: правила, сети и предпросмотр по типам систем проекта."));
         tools.Children.Add(Small("Толщина стенки…", EditWalls, "Таблица толщины стенки воздуховодов по форме сечения, размеру и огнезащите; запись в параметр."));
-        tools.Children.Add(Small("Импорт…", Import, "Загрузить правила из JSON: выбранные правила сопоставляются по категории и маркировке типоразмера."));
-        tools.Children.Add(Small("Экспорт…", Export, "Сохранить все правила и таблицу толщины стенки в JSON."));
         DockPanel.SetDock(tools, Dock.Right); top.Children.Add(tools); top.Children.Add(scope);
         Add(top);
         Add(types);
@@ -504,72 +502,6 @@ internal sealed class EngineeringRulesWindow : Window
     {
         var w = new SystemNamesWindow(Rules.SystemNames, model.SystemTypes()) { Owner = this };
         if (w.ShowDialog() == true) Rules.SystemNames = w.Result!;
-    }
-
-    void Export()
-    {
-        if (!Commit(out string? error)) { MessageBox.Show(this, error, Title); return; }
-        var dialog = new Microsoft.Win32.SaveFileDialog { Filter = "Настройки апдейтера (*.json)|*.json", FileName = "BotPlus-апдейтер.json" };
-        if (dialog.ShowDialog(this) != true) return;
-        try { System.IO.File.WriteAllText(dialog.FileName, Rules.ToJson()); }
-        catch (Exception e) when (e is System.IO.IOException or UnauthorizedAccessException) { MessageBox.Show(this, "Не удалось сохранить файл: " + e.Message, Title); }
-    }
-
-    void Import()
-    {
-        if (!Commit(out string? error)) { MessageBox.Show(this, error, Title); return; }
-        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "Настройки апдейтера (*.json)|*.json" };
-        if (dialog.ShowDialog(this) != true) return;
-        EngineeringRuleSet incoming;
-        try { incoming = EngineeringRuleSet.FromJson(System.IO.File.ReadAllText(dialog.FileName)); }
-        catch (Exception e) when (e is InvalidOperationException or System.IO.IOException or UnauthorizedAccessException)
-        { MessageBox.Show(this, "Не удалось прочитать настройки: " + e.Message, Title); return; }
-        var pick = new ImportWindow(incoming) { Owner = this };
-        if (pick.ShowDialog() != true) return;
-        try
-        {
-            int n = Rules.Merge(incoming, pick.Selected.Contains, pick.Walls, pick.Systems);
-            FillScopes(current?.Category, current?.Mark);
-            MessageBox.Show(this, $"Импортировано правил: {n}." + (pick.Walls ? "\nТаблица толщины стенки заменена." : "") + (pick.Systems ? "\nПравила имён систем заменены." : ""), Title);
-        }
-        catch (InvalidOperationException e) { MessageBox.Show(this, e.Message, Title); }
-    }
-}
-
-/// <summary>Import: each rule of the file with a checkbox, matched by category and «Маркировка типоразмера».</summary>
-internal sealed class ImportWindow : Window
-{
-    readonly List<(CheckBox Box, EngineeringRule Rule)> boxes = [];
-    readonly CheckBox walls = new() { Content = "Таблица толщины стенки и параметр записи", Margin = new Thickness(0, 8, 0, 0) };
-    internal HashSet<EngineeringRule> Selected { get; } = [];
-    internal bool Walls => walls.IsChecked == true;
-    readonly CheckBox systems = new() { Content = "Правила ADSK_Система_Имя", Margin = new Thickness(0, 4, 0, 0) };
-    internal bool Systems => systems.IsChecked == true;
-
-    internal ImportWindow(EngineeringRuleSet incoming)
-    {
-        Title = "Импорт настроек апдейтера"; Width = 520; Height = 480; WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        var root = new DockPanel { Margin = new Thickness(12) }; Content = root;
-        var hint = new TextBlock { Text = "Отметьте правила для импорта. Правило с той же категорией и маркировкой типоразмера будет заменено.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8) };
-        DockPanel.SetDock(hint, Dock.Top); root.Children.Add(hint);
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
-        var ok = new Button { Content = "Импортировать", IsDefault = true, MinWidth = 110, Margin = new Thickness(0, 0, 8, 0) };
-        var cancel = new Button { Content = "Отмена", IsCancel = true, MinWidth = 85 };
-        ok.Click += (_, _) => { foreach (var (b, r) in boxes) if (b.IsChecked == true) Selected.Add(r); DialogResult = true; };
-        buttons.Children.Add(ok); buttons.Children.Add(cancel);
-        DockPanel.SetDock(buttons, Dock.Bottom); root.Children.Add(buttons);
-        DockPanel.SetDock(systems, Dock.Bottom); root.Children.Add(systems);
-        DockPanel.SetDock(walls, Dock.Bottom); root.Children.Add(walls);
-        var list = new StackPanel();
-        foreach (var rule in incoming.Rules.OrderBy(r => r.Category).ThenBy(r => r.TypeMark))
-        {
-            string label = EngineeringRulesPolicy.CategoryLabel(rule.Category);
-            var box = new CheckBox { Content = $"{label} : {rule.ScopeLabel}", IsChecked = true, Margin = new Thickness(0, 2, 0, 2) };
-            boxes.Add((box, rule)); list.Children.Add(box);
-        }
-        if (boxes.Count == 0) list.Children.Add(new TextBlock { Text = "В файле нет правил.", Opacity = 0.7 });
-        root.Children.Add(new ScrollViewer { Content = list, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
-        BotPlusTheme.Apply(this);
     }
 }
 

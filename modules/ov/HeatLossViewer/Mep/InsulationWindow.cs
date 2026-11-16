@@ -18,13 +18,14 @@ namespace HeatLossViewer.Mep;
 
 internal sealed class InsulationRow : INotifyPropertyChanged
 {
-    string type = InsulationPolicy.NoInsulation, thickness = "";
+    string type = InsulationPolicy.NoInsulation, thickness = "", insulationName = InsulationPolicy.DefaultNameTemplate;
     public string Name { get; init; } = "";
     public int Count { get; init; }
     public string Sizes { get; init; } = "";
     public string Insulated { get; init; } = "";
     public string Type { get => type; set { type = value ?? InsulationPolicy.NoInsulation; Edited = true; Changed(); } }
     public string Thickness { get => thickness; set { thickness = value ?? ""; Edited = true; Changed(); } }
+    public string InsulationName { get => insulationName; set { insulationName = value ?? ""; Edited = true; Changed(); } }
     public bool Active => Type != InsulationPolicy.NoInsulation && Type != InsulationPolicy.Mixed;
     /// <summary>Строка изменена пользователем: только такие строки записываются в правила (строка «— разные» без правки не трогает системы).</summary>
     internal bool Edited { get; set; }
@@ -64,7 +65,7 @@ internal sealed class InsulationWindow : Window
     {
         this.model = model; this.settings = settings;
         Warn = text => MessageBox.Show(this, text, Title);
-        Title = "Изоляция труб"; Width = 1180; Height = 660; MinWidth = 1000; MinHeight = 460; WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        Title = "Менеджер изоляций"; Width = 1440; Height = 660; MinWidth = 1200; MinHeight = 460; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         typeChoices = [InsulationPolicy.NoInsulation, InsulationPolicy.Mixed, .. model.InsulationTypes()];
         foreach (var r in settings.Rules.Where(r => r.InsulationType != null && !typeChoices.Contains(r.InsulationType!, StringComparer.CurrentCultureIgnoreCase)))
             typeChoices.Add(r.InsulationType!);
@@ -117,9 +118,11 @@ internal sealed class InsulationWindow : Window
         grid.Columns.Add(new DataGridTextColumn { Header = "Изолировано", Binding = new Binding(nameof(InsulationRow.Insulated)), IsReadOnly = true, Width = 92 });
         grid.Columns.Add(new DataGridComboBoxColumn { Header = "Тип изоляции", ItemsSource = typeChoices, SelectedItemBinding = new Binding(nameof(InsulationRow.Type)) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }, Width = 230 });
         grid.Columns.Add(new DataGridTextColumn { Header = "Толщина, мм", Binding = new Binding(nameof(InsulationRow.Thickness)) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }, Width = 96 });
+        grid.Columns.Add(new DataGridTextColumn { Header = new TextBlock { Text = InsulationEngineNames.Name + " изоляции" }, Binding = new Binding(nameof(InsulationRow.InsulationName)) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }, Width = 270 });
         Add(grid);
 
         var options = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
+        options.Children.Add(new TextBlock { Text = "В наименовании изоляции «" + InsulationPolicy.DiameterToken + "» заменяется диаметром трубы; пустое поле — наименование не заполняется.", Opacity = 0.7, Margin = new Thickness(0, 0, 0, 6), TextWrapping = TextWrapping.Wrap });
         options.Children.Add(auto); options.Children.Add(fittings);
         Grid.SetRow(options, 3); Grid.SetColumn(options, 1); root.Children.Add(options); line++;
         var bottom = new StackPanel();
@@ -135,9 +138,15 @@ internal sealed class InsulationWindow : Window
         Grid.SetRow(bottom, 4); Grid.SetColumnSpan(bottom, 2); root.Children.Add(bottom);
 
         auto.IsChecked = settings.Auto; fittings.IsChecked = settings.Fittings;
-        foreach (var name in new[] { "" }.Concat(model.Systems()))
+        // Только системы, в которых есть трубы; число труб — после имени.
+        foreach (var (name, count) in new[] { ("", model.Pipes([""]).Sum(g => g.Count)) }.Concat(model.Systems().Select(s => (s, model.Pipes([s]).Sum(g => g.Count)))))
         {
-            var box = new CheckBox { Content = new TextBlock { Text = name.Length == 0 ? InsulationPolicy.AllSystemsLabel : name }, Margin = new Thickness(0, 2, 0, 2) };
+            if (name.Length > 0 && count == 0) continue;
+            var label = new TextBlock { Text = name.Length == 0 ? InsulationPolicy.AllSystemsLabel : name };
+            var number = new System.Windows.Documents.Run($"  {count}") { FontWeight = FontWeights.Normal };
+            number.SetResourceReference(System.Windows.Documents.TextElement.ForegroundProperty, "BP.Muted");
+            label.Inlines.Add(number);
+            var box = new CheckBox { Content = label, Tag = name, Margin = new Thickness(0, 2, 0, 2) };
             if (name.Length == 0) box.FontWeight = FontWeights.SemiBold;
             if (settings.Rules.Any(r => r.InsulationType != null && r.System == name)) box.ToolTip = "Есть правила изоляции";
             string key = name;
@@ -194,12 +203,13 @@ internal sealed class InsulationWindow : Window
         {
             var found = current.Select(s => settings.Get(s, g.Name)).ToList();
             var first = found[0];
-            bool same = found.All(r => r?.InsulationType == first?.InsulationType && (r is null || Math.Abs(r.ThicknessMm - first!.ThicknessMm) < 0.05));
+            bool same = found.All(r => r?.InsulationType == first?.InsulationType && (r is null || Math.Abs(r.ThicknessMm - first!.ThicknessMm) < 0.05 && r.NameTemplate == first.NameTemplate));
             var row = new InsulationRow
             {
                 Name = g.Name, Count = g.Count, Sizes = g.Sizes, Insulated = g.Insulated == 0 ? "—" : $"{g.Insulated} из {g.Count}",
                 Type = !same ? InsulationPolicy.Mixed : first?.InsulationType ?? InsulationPolicy.NoInsulation,
-                Thickness = !same || first is null ? "" : first.ThicknessMm.ToString("0.#")
+                Thickness = !same || first is null ? "" : first.ThicknessMm.ToString("0.#"),
+                InsulationName = !same ? "" : first?.NameTemplate ?? InsulationPolicy.DefaultNameTemplate
             };
             row.Edited = false;
             rows.Add(row);
@@ -223,17 +233,17 @@ internal sealed class InsulationWindow : Window
     {
         grid.CommitEdit(DataGridEditingUnit.Row, true);
         var edited = rows.Where(r => r.Edited && r.Type != InsulationPolicy.Mixed).ToList();
-        var values = new List<(string Name, string? Type, double Mm)>();
+        var values = new List<(string Name, string? Type, double Mm, string Template)>();
         foreach (var row in edited)
         {
-            if (!row.Active) { values.Add((row.Name, null, 0)); continue; }
+            if (!row.Active) { values.Add((row.Name, null, 0, "")); continue; }
             string text = row.Thickness.Trim().Length == 0 ? InsulationPolicy.DefaultThicknessMm.ToString() : row.Thickness;
             if (!InsulationPolicy.TryParseThickness(text, out double mm))
                 return $"«{row.Name}»: толщина — число больше 0 и не больше 300 мм.";
-            values.Add((row.Name, row.Type, mm));
+            values.Add((row.Name, row.Type, mm, row.InsulationName));
         }
         foreach (var system in current)
-            foreach (var (name, type, mm) in values) settings.Put(system, name, type, mm);
+            foreach (var (name, type, mm, template) in values) settings.Put(system, name, type, mm, template);
         foreach (var row in edited) row.Edited = false;
         return null;
     }

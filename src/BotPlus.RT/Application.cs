@@ -52,9 +52,7 @@ public sealed class Application : IExternalApplication
             if (!BotPlusSettings.HiddenPanels.Contains("Виды"))
             {
                 var views = application.CreateRibbonPanel("BotPlus RT", "Виды");
-                views.AddItem(new PushButtonData(ViewportContext.ButtonName, "Открыть\nвид", typeof(Application).Assembly.Location, typeof(OpenViewCommand).FullName!)
-                    { ToolTip = "Открыть виды выбранных видовых экранов листа в отдельных вкладках. Кнопка есть и на вкладке «Изменить | Видовые экраны».",
-                      AvailabilityClassName = typeof(OpenViewAvailable).FullName! });
+                // «Открыть вид» живёт только на контекстной вкладке: появляется при выборе видового экрана или разреза.
                 views.AddItem(new PushButtonData("BotPlusViewRange", "Секущий\nдиапазон", typeof(Application).Assembly.Location, typeof(ViewRangeCommand).FullName!)
                     { ToolTip = "Управление секущим диапазоном плана с помощью ползунков: уровень и смещение каждой плоскости, изменения видны сразу.",
                       AvailabilityClassName = typeof(ViewRangeAvailable).FullName! });

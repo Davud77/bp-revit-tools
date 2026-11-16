@@ -28,9 +28,23 @@ internal static class ScheduleNumbering
     internal static Parameter? ParameterOf(Element element, long id) =>
         element.Parameters.Cast<Parameter>().FirstOrDefault(p => p.Id.Value == id);
 
+    /// <summary>
+    /// Fast parameter access by id: built-in parameters by enum, shared by GUID, project parameters by definition.
+    /// Scanning element.Parameters for every element and field made large schedules very slow.
+    /// </summary>
+    internal static Func<Element, Parameter?> Finder(Document doc, long id)
+    {
+        if (id < 0) { var bip = (BuiltInParameter)id; return e => e.get_Parameter(bip); }
+        var owner = doc.GetElement(new ElementId(id));
+        if (owner is SharedParameterElement shared) { var guid = shared.GuidValue; return e => e.get_Parameter(guid); }
+        if (owner is ParameterElement project) { var definition = project.GetDefinition(); return e => e.get_Parameter(definition); }
+        return e => ParameterOf(e, id);
+    }
+
     internal static IReadOnlyList<NumberingParameter> Parameters(IEnumerable<Element> elements)
     {
-        var parameters = elements.SelectMany(e => e.Parameters.Cast<Parameter>())
+        // One sample per type and category: instances of a type carry the same parameter set.
+        var parameters = elements.GroupBy(e => (e.GetTypeId().Value, e.Category?.Id.Value)).Select(g => g.First()).SelectMany(e => e.Parameters.Cast<Parameter>())
             .Where(p => p.StorageType is StorageType.String or StorageType.Integer)
             .Select(p => new NumberingParameter(p.Id.Value, p.Definition.Name, p.StorageType))
             .DistinctBy(p => p.Id).OrderBy(p => p.Name, StringComparer.CurrentCulture).ToArray();
@@ -96,12 +110,16 @@ internal static class ScheduleNumbering
                 // Derive candidate membership from raw sorting values, then validate it against
                 // Revit's own collapsed rows. Any formatted/rounded grouping disagreement fails.
                 var groupFields = original.Definition.GetSortGroupFields().Select(s => original.Definition.GetField(s.FieldId)).ToArray();
+                foreach (var f in groupFields)
+                    if (f.IsCalculatedField || f.IsCombinedParameterField || f.ParameterId == ElementId.InvalidElementId)
+                        throw new InvalidOperationException($"Сортировка или группировка по полю «{f.GetName()}» (вычисляемое или объединённое) не поддерживается.");
+                var finders = groupFields.Select(f => Finder(doc, f.ParameterId.Value)).ToArray();
                 var byId = elements.ToDictionary(e => e.Id.Value);
                 var groups = new List<List<long>>(); string? lastKey = null;
                 foreach (var token in ordered)
                 {
                     long id = long.Parse(token, CultureInfo.InvariantCulture);
-                    string key = System.Text.Json.JsonSerializer.Serialize(groupFields.Select(f => GroupValue(doc, byId[id], f)).ToArray());
+                    string key = System.Text.Json.JsonSerializer.Serialize(finders.Select(find => GroupValue(doc, byId[id], find)).ToArray());
                     if (groups.Count == 0 || key != lastKey) { groups.Add([]); lastKey = key; }
                     groups[^1].Add(id);
                 }
@@ -145,28 +163,28 @@ internal static class ScheduleNumbering
         return result;
     }
 
-    static string GroupValue(Document doc, Element element, ScheduleField field)
+    /// <summary>Raw sorting value; an element without the parameter has a blank cell in Revit and groups as blank.</summary>
+    static string GroupValue(Document doc, Element element, Func<Element, Parameter?> find)
     {
-        if (field.IsCalculatedField || field.IsCombinedParameterField || field.ParameterId == ElementId.InvalidElementId)
-            throw new InvalidOperationException("Нумерация по вычисляемой или объединённой группировке не поддерживается.");
-        var p = ParameterOf(element, field.ParameterId.Value);
-        if (p == null && doc.GetElement(element.GetTypeId()) is { } type) p = ParameterOf(type, field.ParameterId.Value);
-        if (p == null) throw new InvalidOperationException("Не удалось прочитать параметр группировки.");
+        var p = find(element);
+        if (p == null && doc.GetElement(element.GetTypeId()) is { } type) p = find(type);
+        if (p == null || !p.HasValue) return "-";
         return p.StorageType switch
         {
             StorageType.String => "S:" + p.AsString(),
             StorageType.Integer => "I:" + p.AsInteger().ToString(CultureInfo.InvariantCulture),
             StorageType.Double => "D:" + p.AsDouble().ToString("R", CultureInfo.InvariantCulture),
             StorageType.ElementId => "E:" + p.AsElementId().Value.ToString(CultureInfo.InvariantCulture),
-            _ => throw new InvalidOperationException("Неподдерживаемый параметр группировки.")
+            _ => "-"
         };
     }
 
     internal static NumberingResult Apply(Document doc, IReadOnlyList<IReadOnlyList<long>> rows, NumberingParameter chosen, int start, HashSet<long>? selected)
     {
+        var find = Finder(doc, chosen.Id);
         var input = rows.Select(ids => new NumberingRow(ids.Select(id =>
         {
-            var p = doc.GetElement(new ElementId(id)) is { } e ? ParameterOf(e, chosen.Id) : null;
+            var p = doc.GetElement(new ElementId(id)) is { } e ? find(e) : null;
             return new NumberingTarget(id, p != null && !p.IsReadOnly && p.StorageType == chosen.StorageType, selected?.Contains(id) ?? true);
         }).ToArray())).ToArray();
         var plan = ScheduleNumberingPolicy.Build(input, start, selected != null);
@@ -180,22 +198,24 @@ internal static class ScheduleNumbering
         foreach (var group in plan.Groups)
         {
             int number = checked(start + writtenRows); bool written = false;
+            string text = number.ToString(CultureInfo.InvariantCulture);
             foreach (long id in group.ElementIds)
             {
-                using var item = new SubTransaction(doc);
-                item.Start();
                 try
                 {
-                    var p = ParameterOf(doc.GetElement(new ElementId(id)), chosen.Id)!;
-                    bool ok = chosen.StorageType == StorageType.Integer ? p.Set(number) : p.Set(number.ToString(CultureInfo.InvariantCulture));
-                    if (!ok || (chosen.StorageType == StorageType.Integer ? p.AsInteger() != number : p.AsString() != number.ToString(CultureInfo.InvariantCulture)))
-                        throw new InvalidOperationException("Revit не подтвердил значение.");
-                    if (item.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Не подтверждена запись элемента.");
+                    var p = find(doc.GetElement(new ElementId(id)))!;
+                    // Unchanged values are not rewritten: fewer modified elements, faster commit.
+                    bool same = chosen.StorageType == StorageType.Integer ? p.HasValue && p.AsInteger() == number : p.AsString() == text;
+                    if (!same && !(chosen.StorageType == StorageType.Integer ? p.Set(number) : p.Set(text)))
+                        throw new InvalidOperationException("Revit не принял значение.");
                     updated++; written = true; expected[id] = number;
                 }
-                catch (Exception error)
+                catch (Autodesk.Revit.Exceptions.ApplicationException error)
                 {
-                    if (item.GetStatus() == TransactionStatus.Started) item.RollBack();
+                    skipped++; if (errors.Count < 10) errors.Add(id + ": " + error.Message);
+                }
+                catch (InvalidOperationException error)
+                {
                     skipped++; if (errors.Count < 10) errors.Add(id + ": " + error.Message);
                 }
             }
@@ -204,7 +224,7 @@ internal static class ScheduleNumbering
         Commit(transaction);
         foreach (var (id, number) in expected)
         {
-            var p = ParameterOf(doc.GetElement(new ElementId(id)), chosen.Id)!;
+            var p = find(doc.GetElement(new ElementId(id)))!;
             if (chosen.StorageType == StorageType.Integer ? p.AsInteger() != number : p.AsString() != number.ToString(CultureInfo.InvariantCulture))
                 throw new InvalidOperationException("После фиксации Revit изменил номер. Нумерация отменена.");
         }

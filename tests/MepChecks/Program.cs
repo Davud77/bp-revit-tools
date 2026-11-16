@@ -226,9 +226,9 @@ Check(Near(MepAlignGeometry.HeightShift(new V3(0, 0, 3), new V3(1, 0, 0.1), new 
 Check(Near(MepAlignGeometry.HeightShift(new V3(0, 2, 3), X, new V3(5, 0, 1), X), -2), "Parallel in plan: same elevation");
 Fails(() => MepAlignGeometry.HeightShift(new V3(0, 0, 0), Z, new V3(0, 0, 0), X), "Vertical moving element");
 Fails(() => MepAlignGeometry.HeightShift(new V3(0, 0, 0), X, new V3(0, 0, 0), Z), "Vertical reference");
-Check(NearV(MepAlignGeometry.Plumb(new V3(0, 0, 0), new V3(0.2, 0.1, 3), out bool upB), new V3(0, 0, 3)) && upB, "Plumb keeps the lower end");
-Check(NearV(MepAlignGeometry.Plumb(new V3(1, 1, 5), new V3(0.8, 1, 0), out bool upB2), new V3(0.8, 1, 5)) && !upB2, "Plumb with reversed curve");
-Fails(() => MepAlignGeometry.Plumb(new V3(0, 0, 0), new V3(5, 0, 1), out _), "Not a riser");
+Check(NearV(MepAlignGeometry.Plumb(new V3(0, 0, 0), new V3(0.2, 0.1, 3), out bool upB)!.Value, new V3(0, 0, 3)) && upB, "Plumb keeps the lower end");
+Check(NearV(MepAlignGeometry.Plumb(new V3(1, 1, 5), new V3(0.8, 1, 0), out bool upB2)!.Value, new V3(0.8, 1, 5)) && !upB2, "Plumb with reversed curve");
+Check(NearV(MepAlignGeometry.Plumb(new V3(0, 0, 0), new V3(5, 0, 1), out _)!.Value, new V3(0, 0, 1)) && MepAlignGeometry.Plumb(new V3(0, 0, 2), new V3(5, 0, 2), out _) is null, "Strong slope straightened; horizontal skipped");
 Check(NearV(MepAlignGeometry.DistanceShift(new V3(0, 3, 0), X, new V3(0, 0, 0), X, 2, true, 0), new V3(0, -1, 0)), "Horizontal axis distance 3 → 2, same side");
 Check(NearV(MepAlignGeometry.DistanceShift(new V3(0, -3, 0), X, new V3(0, 0, 0), X, 2, true, 0), new V3(0, 1, 0)), "Other side kept");
 Check(NearV(MepAlignGeometry.DistanceShift(new V3(0, 3, 0), X, new V3(0, 0, 0), X, 2, true, 0.5), new V3(0, -0.5, 0)), "Face distance adds half sizes and insulation");
@@ -304,3 +304,20 @@ Check(InsulationPolicy.Decide(null, "K-Flex 13", 13) == InsulationAction.None &&
 Check(InsulationPolicy.Sizes([20, 15, 50, 20, 0]) == "15–50" && InsulationPolicy.Sizes([32]) == "32" && InsulationPolicy.Sizes([]) == "", "Diameter range");
 Check(InsulationPolicy.TryParseThickness(" 9,5 ", out double thk) && thk == 9.5 && !InsulationPolicy.TryParseThickness("0", out _) && !InsulationPolicy.TryParseThickness("400", out _), "Thickness input");
 Console.WriteLine("PASS pipe insulation rules: system over all systems, removal, round trip, create/update/keep, sizes, thickness input");
+Check(InsulationPolicy.InsulationName(InsulationPolicy.DefaultNameTemplate, 110) == "Трубная изоляция для ø110" && InsulationPolicy.InsulationName("Изоляция ø{Ø} мм", 26.8) == "Изоляция ø" + 26.8.ToString() + " мм", "Insulation name from template");
+Check(InsulationPolicy.InsulationName(" ", 50) is null && InsulationSettings.FromJson("{\"Rules\":[{\"Name\":\"A\",\"InsulationType\":\"K\",\"ThicknessMm\":9}]}").Rules[0].NameTemplate == InsulationPolicy.DefaultNameTemplate, "Empty template skipped; old settings get the default name");
+Console.WriteLine("PASS insulation name template");
+
+// ---------- Default updater formulas ----------
+var defaults = EngineeringRuleSet.DefaultRules();
+foreach (var d in defaults) d.Validate();
+Check(defaults.Count == 7 && defaults.Select(d => (d.Category, d.TypeMark)).Distinct().Count() == 7, "Seven default rules, one per scope");
+var pipeDefault = defaults.First(d => d.Category == "OST_PipeCurves" && d.TypeMark is null);
+Check(EngineeringRulesPolicy.ComposeName(pipeDefault.Parts, p => p switch { "Комментарии к типоразмеру" => "Труба стальная", "Внешний диаметр" => "26,8", _ => "2,8" }) == "Труба стальная ø26,8x2,8", "Default pipe name");
+var tubes = defaults.First(d => d.TypeMark == "Трубки");
+Check(EngineeringRulesPolicy.ComposeName(tubes.Parts, p => p switch { "Комментарии к типоразмеру" => "Трубка K-Flex", "Толщина изоляции" => "13 мм", _ => "ø20" }) == "Трубка K-Flex толщиной 13 мм для трубы ø20", "Default insulation name");
+Check(defaults.All(d => d.Reserve == 1 && d.Decimals == 6 && d.Rounding == QuantityRounding.Nearest) && defaults.First(d => d.TypeMark == "Гофры").QuantitySource == EngineeringRulesPolicy.CountSource
+    && defaults.First(d => d.TypeMark == "Цилиндры").QuantitySource == "Объем", "Default quantities: no reserve, no rounding, count and volume sources");
+var withDefaults = new EngineeringRuleSet(); foreach (var d in defaults) withDefaults.Put(d);
+Check(withDefaults.Resolve("OST_FlexPipeCurves", "Подводки")!.Parts.Count == 2, "Defaults resolve by type mark");
+Console.WriteLine("PASS default updater formulas");

@@ -111,45 +111,87 @@ public sealed class ViewRangeAvailable : IExternalCommandAvailability
     public bool IsCommandAvailable(UIApplication app, CategorySet categories) => app.ActiveUIDocument?.ActiveView is ViewPlan { IsTemplate: false };
 }
 
-/// <summary>«Открыть вид»: открывает виды выбранных видовых экранов листа (и спецификаций на листе) отдельными вкладками.</summary>
-[Transaction(TransactionMode.ReadOnly)]
+/// <summary>
+/// «Открыть вид»: открывает виды выбранных видовых экранов листа, спецификаций на листе, разрезов, фасадов и выносок
+/// отдельными вкладками. Кнопка появляется на контекстной вкладке только при таком выборе (<see cref="ViewportContext"/>).
+/// </summary>
+[Transaction(TransactionMode.Manual)]
 public sealed class OpenViewCommand : IExternalCommand
 {
-    const string Title = "Открыть вид";
-
     public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
     {
         var ui = data.Application.ActiveUIDocument;
-        if (ui is null) return Result.Cancelled;
+        return ui is null ? Result.Cancelled : OpenViews.Run(ui) ? Result.Succeeded : Result.Cancelled;
+    }
+}
+
+public sealed class OpenViewAvailable : IExternalCommandAvailability
+{
+    public bool IsCommandAvailable(UIApplication app, CategorySet categories) => app.ActiveUIDocument != null;
+}
+
+internal static class OpenViews
+{
+    const string Title = "Открыть вид";
+
+    /// <summary>Opens the views behind the selection; on a sheet with nothing suitable selected, asks to pick a viewport.</summary>
+    internal static bool Run(UIDocument ui)
+    {
         var doc = ui.Document;
         var views = Views(doc, ui.Selection.GetElementIds().Select(doc.GetElement));
         if (views.Count == 0)
         {
-            if (ui.ActiveView is not ViewSheet) { TaskDialog.Show(Title, "Выберите видовой экран на листе."); return Result.Cancelled; }
+            if (ui.ActiveView is not ViewSheet) { TaskDialog.Show(Title, "Выберите видовой экран на листе, разрез, фасад или выносной элемент."); return false; }
             try
             {
                 var picked = ui.Selection.PickObject(ObjectType.Element, new ViewportFilter(), "Выберите видовой экран");
                 views = Views(doc, [doc.GetElement(picked)]);
             }
-            catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
+            catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return false; }
         }
-        if (views.Count == 0) { TaskDialog.Show(Title, "У выбранного видового экрана нет вида."); return Result.Cancelled; }
+        if (views.Count == 0) { TaskDialog.Show(Title, "У выбранного элемента нет вида."); return false; }
         foreach (var view in views)
         {
             try { ui.ActiveView = view; }
+            catch (Autodesk.Revit.Exceptions.InvalidOperationException) { ui.RequestViewChange(view); }
             catch (Autodesk.Revit.Exceptions.ArgumentException) { TaskDialog.Show(Title, $"Вид «{view.Name}» нельзя открыть."); }
         }
-        return Result.Succeeded;
+        return true;
     }
 
-    /// <summary>Distinct views behind viewports and schedule instances; already open views are simply activated.</summary>
+    internal static bool Suitable(Element? e) => e is Viewport or ScheduleSheetInstance or ElevationMarker || IsViewer(e);
+
+    static bool IsViewer(Element? e) => e?.Category?.BuiltInCategory == BuiltInCategory.OST_Viewers && e is not View;
+
+    /// <summary>
+    /// A section, callout or elevation line is a «viewer» element next to its view: Revit creates the view right before it,
+    /// so the id one less is checked first, then a view of the same name.
+    /// </summary>
+    static View? ViewOfViewer(Document doc, Element viewer)
+    {
+        if (doc.GetElement(new ElementId(viewer.Id.Value - 1)) is View near && !near.IsTemplate && near.Name == viewer.Name) return near;
+        return new FilteredElementCollector(doc).OfClass(typeof(View)).Cast<View>()
+            .FirstOrDefault(v => !v.IsTemplate && v.Name == viewer.Name && v is not ViewSheet && v.ViewType is ViewType.Section or ViewType.Elevation or ViewType.Detail
+                or ViewType.FloorPlan or ViewType.CeilingPlan or ViewType.EngineeringPlan or ViewType.DraftingView or ViewType.ThreeD);
+    }
+
+    /// <summary>Distinct views behind the selection; already open views are simply activated.</summary>
     internal static List<View> Views(Document doc, IEnumerable<Element?> selection)
     {
         var result = new List<View>();
+        void Add(View? view) { if (view is { IsTemplate: false } && result.All(v => v.Id != view.Id)) result.Add(view); }
         foreach (var e in selection)
         {
-            var id = e switch { Viewport v => v.ViewId, ScheduleSheetInstance s => s.ScheduleId, _ => ElementId.InvalidElementId };
-            if (id != ElementId.InvalidElementId && doc.GetElement(id) is View view && result.All(v => v.Id != view.Id)) result.Add(view);
+            switch (e)
+            {
+                case Viewport v: Add(doc.GetElement(v.ViewId) as View); break;
+                case ScheduleSheetInstance s: Add(doc.GetElement(s.ScheduleId) as View); break;
+                case ElevationMarker m:
+                    for (int i = 0; i < m.MaximumViewCount; i++)
+                        if (!m.IsAvailableIndex(i)) Add(doc.GetElement(m.GetViewId(i)) as View);
+                    break;
+                case not null when IsViewer(e): Add(ViewOfViewer(doc, e)); break;
+            }
         }
         return result;
     }
@@ -161,24 +203,21 @@ public sealed class OpenViewCommand : IExternalCommand
     }
 }
 
-public sealed class OpenViewAvailable : IExternalCommandAvailability
-{
-    public bool IsCommandAvailable(UIApplication app, CategorySet categories) => app.ActiveUIDocument != null;
-}
-
 /// <summary>
-/// Puts «Открыть вид» on Revit's contextual tab «Изменить | Видовые экраны» (as ModPlus does). The Revit API has no access to
-/// contextual tabs, so the button is added through AdWindows when such a tab appears; it posts the regular ribbon command.
+/// «Открыть вид» на контекстной вкладке, как у ModPlus: панель «BotPlus RT» добавляется на открытую контекстную вкладку,
+/// только когда выбран видовой экран, спецификация на листе, разрез, фасад или выноска, и убирается при другом выборе.
+/// Revit API не даёт доступа к контекстным вкладкам — панель добавляется через AdWindows, команда выполняется через ExternalEvent.
 /// </summary>
 internal static class ViewportContext
 {
     internal const string ButtonName = "BotPlusOpenView";
     const string PanelId = "BotPlusRT.ViewportTools";
-    static UIApplication? ui;
-    static bool pending = true;
+    static ExternalEvent? open;
+    static bool dirty, wanted;
 
     internal static void Attach(UIControlledApplication app)
     {
+        open ??= ExternalEvent.Create(new OpenHandler());
         app.Idling += OnIdling;
         app.SelectionChanged += OnSelectionChanged;
     }
@@ -187,60 +226,73 @@ internal static class ViewportContext
     {
         app.Idling -= OnIdling;
         app.SelectionChanged -= OnSelectionChanged;
+        try { Sync(false); } catch (Exception error) { System.Diagnostics.Trace.WriteLine(error); }
     }
 
     static void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        try { if (e.GetSelectedElements().Select(e.GetDocument().GetElement).Any(x => x is Viewport or ScheduleSheetInstance)) pending = true; }
+        try
+        {
+            var doc = e.GetDocument();
+            bool now = e.GetSelectedElements().Select(doc.GetElement).Any(OpenViews.Suitable);
+            if (now != wanted || now) { wanted = now; dirty = true; }
+        }
         catch (Exception error) { System.Diagnostics.Trace.WriteLine(error); }
     }
 
     static void OnIdling(object? sender, IdlingEventArgs e)
     {
-        ui ??= sender as UIApplication;
-        if (!pending) return;
-        pending = false;
-        try { Ensure(); }
+        if (!dirty) return;
+        dirty = false;
+        try { Sync(wanted); }
         catch (Exception error) { System.Diagnostics.Trace.WriteLine("BotPlus viewport tab: " + error); }
     }
 
-    static bool ViewportTab(Autodesk.Windows.RibbonTab tab)
-    {
-        string text = $"{tab.Title} {tab.Name} {tab.Id}";
-        return tab.IsContextualTab && (text.Contains("Видовые экраны", StringComparison.CurrentCultureIgnoreCase) || text.Contains("Viewport", StringComparison.OrdinalIgnoreCase));
-    }
-
-    static void Ensure()
+    /// <summary>Panel on the visible contextual tabs while the selection is suitable, removed everywhere otherwise.</summary>
+    static void Sync(bool show)
     {
         var ribbon = Autodesk.Windows.ComponentManager.Ribbon;
         if (ribbon is null) return;
-        foreach (var tab in ribbon.Tabs.Where(ViewportTab))
+        var targets = show ? ribbon.Tabs.Where(t => t.IsContextualTab && t.IsVisible).ToList() : [];
+        if (show && targets.Count == 0 && ribbon.ActiveTab is { } active) targets.Add(active);
+        foreach (var tab in ribbon.Tabs)
         {
-            if (tab.Panels.Any(p => p.Source?.Id == PanelId)) continue;
-            var button = new Autodesk.Windows.RibbonButton
-            {
-                Id = PanelId + ".OpenView", Text = "Открыть\nвид", ShowText = true, ShowImage = true,
-                Size = Autodesk.Windows.RibbonItemSize.Large, Orientation = System.Windows.Controls.Orientation.Vertical,
-                LargeImage = RibbonStyle.Icon(ButtonName, 32), Image = RibbonStyle.Icon(ButtonName, 16),
-                ToolTip = "Открыть вид выбранного видового экрана в отдельной вкладке.",
-                CommandHandler = new PostOpenView()
-            };
-            var source = new Autodesk.Windows.RibbonPanelSource { Id = PanelId, Title = "BotPlus RT" };
-            source.Items.Add(button);
-            tab.Panels.Add(new Autodesk.Windows.RibbonPanel { Source = source });
+            var mine = tab.Panels.Where(p => p.Source?.Id == PanelId).ToList();
+            bool keep = targets.Contains(tab);
+            if (!keep) foreach (var p in mine) tab.Panels.Remove(p);
+            else if (mine.Count == 0) tab.Panels.Add(Panel());
         }
     }
 
-    /// <summary>Runs the ribbon command through Revit's own queue: the external command gets a proper API context.</summary>
-    sealed class PostOpenView : System.Windows.Input.ICommand
+    static Autodesk.Windows.RibbonPanel Panel()
+    {
+        var button = new Autodesk.Windows.RibbonButton
+        {
+            Id = PanelId + ".OpenView", Text = "Открыть\nвид", ShowText = true, ShowImage = true,
+            Size = Autodesk.Windows.RibbonItemSize.Large, Orientation = System.Windows.Controls.Orientation.Vertical,
+            LargeImage = RibbonStyle.Icon(ButtonName, 32), Image = RibbonStyle.Icon(ButtonName, 16),
+            ToolTip = "Открыть вид выбранного видового экрана, разреза, фасада или выноски в отдельной вкладке.",
+            CommandHandler = new RaiseOpen()
+        };
+        var source = new Autodesk.Windows.RibbonPanelSource { Id = PanelId, Title = "BotPlus RT" };
+        source.Items.Add(button);
+        return new Autodesk.Windows.RibbonPanel { Source = source };
+    }
+
+    sealed class RaiseOpen : System.Windows.Input.ICommand
     {
         public event EventHandler? CanExecuteChanged { add { } remove { } }
         public bool CanExecute(object? parameter) => true;
-        public void Execute(object? parameter)
+        public void Execute(object? parameter) => open?.Raise();
+    }
+
+    sealed class OpenHandler : IExternalEventHandler
+    {
+        public void Execute(UIApplication app)
         {
-            var id = RevitCommandId.LookupCommandId($"CustomCtrl_%CustomCtrl_%BotPlus RT%Виды%{ButtonName}");
-            if (ui != null && id != null && ui.CanPostCommand(id)) ui.PostCommand(id);
-            else TaskDialog.Show("Открыть вид", "Команда недоступна: включите панель «Виды» в настройках BotPlus RT.");
+            try { if (app.ActiveUIDocument is { } ui) OpenViews.Run(ui); }
+            catch (Exception error) { TaskDialog.Show("Открыть вид", error.Message); }
         }
+        public string GetName() => "BotPlus RT: открыть вид";
     }
 }

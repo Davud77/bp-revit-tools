@@ -102,7 +102,7 @@ public sealed class MepAlignVerticalCommand : IExternalCommand
             try { curves = ui.Selection.PickObjects(ObjectType.Element, new ElementFilter(AlignAxes.Straight), "Выберите наклонные стояки и нажмите «Готово»").Select(doc.GetElement).ToList(); }
             catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
         }
-        int changed = 0;
+        int changed = 0, flat = 0;
         bool ok = Mep.Run(doc, Title, () =>
         {
             Mep.EnsureEditable(doc, curves.Select(c => c.Id));
@@ -110,7 +110,8 @@ public sealed class MepAlignVerticalCommand : IExternalCommand
             {
                 var location = (LocationCurve)curve.Location;
                 var line = (Line)location.Curve;
-                var top = MepAlignGeometry.Plumb(Mep.V(line.GetEndPoint(0)), Mep.V(line.GetEndPoint(1)), out bool upperIsEnd);
+                // Any slope is straightened; horizontal elements have no height and are skipped.
+                if (MepAlignGeometry.Plumb(Mep.V(line.GetEndPoint(0)), Mep.V(line.GetEndPoint(1)), out bool upperIsEnd) is not { } top) { flat++; continue; }
                 var target = Mep.X(top);
                 var current = line.GetEndPoint(upperIsEnd ? 1 : 0);
                 if (current.DistanceTo(target) < doc.Application.ShortCurveTolerance / 100) continue;
@@ -118,7 +119,8 @@ public sealed class MepAlignVerticalCommand : IExternalCommand
                 changed++;
             }
         }, Title);
-        if (ok) TaskDialog.Show(Title, changed == 0 ? "Элементы уже вертикальны." : $"Выровнено элементов: {changed}.");
+        if (ok && (changed == 0 || flat > 0))
+            TaskDialog.Show(Title, (changed == 0 ? "Элементы уже вертикальны." : $"Выровнено элементов: {changed}.") + (flat > 0 ? $"\nГоризонтальные элементы пропущены: {flat}." : ""));
         return ok ? Result.Succeeded : Result.Failed;
     }
 }

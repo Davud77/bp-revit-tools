@@ -87,13 +87,16 @@ internal static class Program
                 using var stream = File.Create(Path.Combine(args[0], dark ? "view-range-dark.png" : "view-range-light.png")); encoder.Save(stream);
             }
             sliders[1].Value = 1500;
-            Check(boxes[1].Text == "1500", "Slider updates the offset field");
-            Check(window.Push() && applied.Count == 1 && applied[0][1].OffsetMm == 1500, "Valid change applied to the view");
+            Check(boxes[1].Text == "1500" && applied.Count == 1 && applied[0][1].OffsetMm == 1500, "Slider move applied to the view at once, no wait for release");
+            sliders[1].Value = 1510; sliders[1].Value = 1520;
+            Check(applied.Count == 1, "Rapid moves within 30 ms are coalesced");
+            Check(window.Push() && applied.Count == 2 && applied[1][1].OffsetMm == 1520, "Latest value applied");
+            sliders[1].Value = 1500; window.Push();
             boxes[2].Text = "2000";
-            Check(!window.Push() && applied.Count == 1, "Bottom above cut is not applied");
+            Check(!window.Push() && applied.Count == 3, "Bottom above cut is not applied");
             Check(All<TextBlock>(window).Any(t => t.Text.Contains("Нижняя граница") && t.Text.Contains("не применено")), "Reason shown");
             boxes[2].Text = "0";
-            Check(window.Push() && applied.Count == 1 && window.Applied == 1, "Back to the applied state: nothing new to apply");
+            Check(window.Push() && applied.Count == 3 && window.Applied == 3, "Back to the applied state: nothing new to apply");
             window.Close();
         }
         app.Shutdown();

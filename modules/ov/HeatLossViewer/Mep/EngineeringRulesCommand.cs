@@ -18,6 +18,8 @@ public sealed class EngineeringRulesCommand : IExternalCommand
             var doc = ui.Document;
             if (doc.IsFamilyDocument) { TaskDialog.Show("Апдейтер", "Откройте проект."); return Result.Cancelled; }
             var rules = EngineeringRulesStore.Read(doc);
+            // No saved rules yet: the window opens with the default formulas; they take effect once saved.
+            if (rules.Rules.Count == 0) { rules = EngineeringRuleSet.FromJson(rules.ToJson()); rules.Rules.AddRange(EngineeringRuleSet.DefaultRules()); }
             var picked = ui.Selection.GetElementIds().Select(doc.GetElement).FirstOrDefault(e => e != null && EngineeringEngine.CategoryKey(e) != null);
             var window = new EngineeringRulesWindow(new RevitUpdaterModel(doc), rules, picked is null ? null : EngineeringEngine.CategoryKey(picked),
                 picked is null ? null : EngineeringEngine.TypeMark(picked));

@@ -125,6 +125,20 @@ internal static class InsulationEngine
         new FilteredElementCollector(doc).OfClass(typeof(PipeInsulationType)).Cast<ElementType>()
             .GroupBy(t => t.Name, StringComparer.CurrentCultureIgnoreCase).ToDictionary(g => g.Key, g => g.First().Id, StringComparer.CurrentCultureIgnoreCase);
 
+    /// <summary>Диаметр для наименования изоляции: у трубы — её диаметр, у фитинга и арматуры — наибольший коннектор.</summary>
+    static double NameDiameter(Element element) => element is Pipe ? DiameterMm(element) : EngineeringEngine.SizeMm(element) ?? 0;
+
+    /// <summary>ADSK_Наименование изоляции (параметр экземпляра); true — значение изменено.</summary>
+    static bool WriteName(PipeInsulation insulation, Element host, InsulationRule rule, InsulationOutcome outcome)
+    {
+        if (InsulationPolicy.InsulationName(rule.NameTemplate, NameDiameter(host)) is not { } name) return false;
+        var p = insulation.LookupParameter(NameParameter);
+        if (p is not { StorageType: StorageType.String } || p.IsReadOnly) { outcome.Skip("у изоляции нет изменяемого параметра экземпляра " + NameParameter); return false; }
+        if (p.AsString() == name) return false;
+        p.Set(name);
+        return true;
+    }
+
     internal static void Process(Element element, InsulationSettings settings, Dictionary<string, ElementId> types, InsulationOutcome outcome)
     {
         var rule = RuleFor(element, settings);
@@ -140,16 +154,17 @@ internal static class InsulationEngine
             switch (InsulationPolicy.Decide(rule, currentType, currentMm))
             {
                 case InsulationAction.Create:
-                    PipeInsulation.Create(doc, element.Id, typeId, ft);
+                    WriteName(PipeInsulation.Create(doc, element.Id, typeId, ft), element, rule, outcome);
                     outcome.Created++;
                     break;
                 case InsulationAction.Update:
                     if (existing!.GetTypeId() != typeId) existing.ChangeTypeId(typeId);
                     if (Math.Abs(existing.Thickness - ft) > 1e-6) existing.Thickness = ft;
+                    WriteName(existing, element, rule, outcome);
                     outcome.Updated++;
                     break;
                 case InsulationAction.Keep:
-                    outcome.Unchanged++;
+                    if (WriteName(existing!, element, rule, outcome)) outcome.Updated++; else outcome.Unchanged++;
                     break;
             }
         }
@@ -240,12 +255,9 @@ internal sealed class RevitInsulationModel(Document doc) : IInsulationModel
     readonly List<(string? System, string Name, double D, bool Insulated)> pipes = InsulationEngine.Pipes(doc)
         .Select(p => (InsulationEngine.SystemType(p), InsulationEngine.Key(p), InsulationEngine.DiameterMm(p), InsulationEngine.Existing(doc, p.Id) != null)).ToList();
 
-    public IReadOnlyList<string> Systems()
-    {
-        var used = pipes.Select(p => p.System).OfType<string>().ToHashSet(StringComparer.CurrentCultureIgnoreCase);
-        return new FilteredElementCollector(doc).OfClass(typeof(PipingSystemType)).Cast<ElementType>().Select(t => t.Name)
-            .OrderBy(n => !used.Contains(n)).ThenBy(n => n, StringComparer.CurrentCultureIgnoreCase).ToList();
-    }
+    /// <summary>Только системы, в которых есть трубы.</summary>
+    public IReadOnlyList<string> Systems() =>
+        pipes.Select(p => p.System).OfType<string>().Distinct(StringComparer.CurrentCultureIgnoreCase).Order(StringComparer.CurrentCultureIgnoreCase).ToList();
 
     public IReadOnlyList<PipeGroup> Pipes(IReadOnlyCollection<string> systems) =>
         pipes.Where(p => systems.Contains("") || p.System is { } s && systems.Contains(s, StringComparer.CurrentCultureIgnoreCase))
