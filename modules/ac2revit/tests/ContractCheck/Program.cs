@@ -206,6 +206,14 @@ Console.WriteLine("PASS monotonic stage progress, checkpoint reopen, explicit co
     if(profile.Outer.Count!=4 || Math.Abs(RoofPlanner.SignedArea(profile.Outer)-expected)>1e-6 || profile.Holes.Count!=0)throw new Exception("The profile of a prism wall was not read from its mesh");
     Console.WriteLine("PASS profile of a prism wall is read from the mesh");
 }
+{
+    var when=new DateTime(2026,11,16,15,30,0);
+    string first=SessionPaths.OutputFileName("054_25_ДОО 120 мест Каспийск_01",when,_=>false);
+    string again=SessionPaths.OutputFileName("054_25_ДОО 120 мест Каспийск_01.pln",when,n=>n==first);
+    if(first!="A2R_054_25_ДОО 120 мест Каспийск_01.rvt" || again!="A2R_054_25_ДОО 120 мест Каспийск_01_20261116-153000.rvt" || SessionPaths.OutputFileName("a:b*c",when,_=>false)!="A2R_a_b_c.rvt" || SessionPaths.OutputFileName("",when,_=>false)!="A2R_Archicad.rvt")
+        throw new Exception("The imported model must be named A2R_<name of the Archicad file>");
+    Console.WriteLine("PASS the imported model is named A2R_<name of the Archicad file>");
+}
 if(args.Length==0)return;
 
 var manifest = Manifest.Load(args[0]);

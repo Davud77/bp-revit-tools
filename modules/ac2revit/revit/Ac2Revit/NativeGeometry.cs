@@ -110,7 +110,7 @@ public static class NativeGeometry
         if(result.HasInvalidData || geometry.Count==0 || geometry.Any(g=>g is not Solid))throw new InvalidDataException("Reference mesh cannot form native solids without salvage");
         return geometry.Cast<Solid>().ToList();
     }
-    static List<Solid> BrepSolids(List<XYZ> points,List<List<int>> faces)
+    internal static List<Solid> BrepSolids(List<XYZ> points,List<List<int>> faces)
     {
         using var builder=new BRepBuilder(BRepType.Solid);builder.SetAllowShortEdges();
         var edges=new Dictionary<(int,int),BRepBuilderGeometryId>();

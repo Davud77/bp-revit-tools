@@ -18,6 +18,18 @@ public static class SessionPaths
         return unique;
     }
 
+    /// <summary>File name of the imported model: «A2R_» + the name of the Archicad file; a timestamp is added when that name is taken.</summary>
+    public static string OutputFileName(string projectName, DateTime now, Func<string, bool> taken)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        string name = new string((projectName ?? "").Select(c => invalid.Contains(c) || char.IsControl(c) ? '_' : c).ToArray()).Trim(' ', '.');
+        foreach (string extension in new[] { ".pln", ".pla", ".bpn", ".tpl" })
+            if (name.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) name = name[..^extension.Length];
+        if (name.Length > 120) name = name[..120].TrimEnd(' ', '.');
+        string plain = "A2R_" + (name.Length == 0 ? "Archicad" : name) + ".rvt";
+        return taken(plain) ? "A2R_" + (name.Length == 0 ? "Archicad" : name) + "_" + now.ToString("yyyyMMdd-HHmmss") + ".rvt" : plain;
+    }
+
     public static string FolderName(string projectName, int sessionsLength, DateTime now)
     {
         var invalid = Path.GetInvalidFileNameChars();

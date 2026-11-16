@@ -151,6 +151,10 @@ public static class OpeningStage
         {
             var selected=accepted.Where(r=>r.S("kind")==kind && !r.B("emptyOpening") && !index.ContainsKey(r.S("sourceGuid"))).ToList();
             if(selected.Count==0)continue;
+            // Real door and window families from the exact IFC bodies; whatever cannot be reproduced to 3 mm stays exact IFC geometry.
+            var nativeFamilies=NativeFillings.Run(doc,project,root.S("ifcSha256"),folder,selected,index,report,(n,total)=>progress?.Invoke("native"+kind,n,total));
+            if(nativeFamilies.Count>0){selected=selected.Where(r=>!nativeFamilies.Contains(r.S("sourceGuid"))).ToList();Checkpoints.Save(doc);}
+            if(selected.Count==0)continue;
             string body=Path.Combine(folder,"fillings-"+kind+".json");
             using(var stream=File.Create(body))
             using(var writer=new Utf8JsonWriter(stream))
