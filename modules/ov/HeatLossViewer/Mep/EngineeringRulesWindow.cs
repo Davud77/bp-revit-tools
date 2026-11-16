@@ -31,7 +31,10 @@ internal sealed class ScopeChoice(string category, string categoryLabel, string?
     public string? Mark { get; } = mark;
     public List<string> Types { get; } = types;
     public bool Configured { get; set; }
-    public override string ToString() => $"{(Configured ? "● " : "")}{categoryLabel} : {Mark ?? EngineeringRulesPolicy.NoTypeLabel}";
+    /// <summary>Пункт «Имена систем» в том же списке: вместо формул показываются правила ADSK_Система_Имя.</summary>
+    public bool IsSystems { get; init; }
+    internal const string SystemsLabel = "Имена систем (ADSK_Система_Имя)";
+    public override string ToString() => $"{(Configured ? "● " : "")}{(IsSystems ? SystemsLabel : $"{categoryLabel} : {Mark ?? EngineeringRulesPolicy.NoTypeLabel}")}";
 }
 
 internal sealed class PartRow : INotifyPropertyChanged
@@ -93,12 +96,19 @@ internal sealed class EngineeringRulesWindow : Window
     readonly DataGrid partsGrid = Grid0(), quantityGrid = Grid0();
     readonly TextBlock namePreview = new() { TextWrapping = TextWrapping.Wrap }, quantityPreview = new() { TextWrapping = TextWrapping.Wrap };
     ScopeChoice? current;
+    /// <summary>Выбранный пункт списка, включая «Имена систем» (тогда <see cref="current"/> = null).</summary>
+    ScopeChoice? shown;
+    readonly SystemNamesPanel systemsPanel;
+    readonly List<UIElement> ruleArea = [];
     bool sample;
     bool loading;
 
     internal EngineeringRuleSet Rules { get; private set; }
     /// <summary>Scope to refresh after saving, or null for «Сохранить настройки и закрыть».</summary>
     internal (string Category, string? Mark)? UpdateScope { get; private set; }
+    /// <summary>«Сохранить и обновить» на пункте «Имена систем»: обновить ADSK_Система_Имя во всём проекте.</summary>
+    internal bool UpdateSystems { get; private set; }
+    internal bool SystemsShown => shown?.IsSystems == true;
 
     internal static string Percent(double reserve) => EngineeringRulesPolicy.Format((reserve - 1) * 100, 1) + " %";
 
@@ -125,22 +135,25 @@ internal sealed class EngineeringRulesWindow : Window
         // Область и сервисные кнопки.
         var top = new DockPanel();
         var tools = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 0, 0, 0) };
-        tools.Children.Add(Small("Имена систем…", EditSystems, "ADSK_Система_Имя по типу системы: правила, сети и предпросмотр по типам систем проекта."));
         tools.Children.Add(Small("Толщина стенки…", EditWalls, "Таблица толщины стенки воздуховодов по форме сечения, размеру и огнезащите; запись в параметр."));
         DockPanel.SetDock(tools, Dock.Right); top.Children.Add(tools); top.Children.Add(scope);
         Add(top);
         Add(types);
 
-        // Наименование.
-        Add(Header(nameOn, nameTarget));
-        Add(Body(nameList, partsGrid, AddPart, RemovePart, true));
-        Add(Example(namePreview));
+        // Наименование и количество; на пункте «Имена систем» вместо них — правила ADSK_Система_Имя.
+        int firstRuleRow = row;
+        void Rule(UIElement e) { ruleArea.Add(e); Add(e); }
+        Rule(Header(nameOn, nameTarget));
+        Rule(Body(nameList, partsGrid, AddPart, RemovePart, true));
+        Rule(Example(namePreview));
 
         // Количество.
-        Add(Header(quantityOn, quantityTarget));
+        Rule(Header(quantityOn, quantityTarget));
         reserveButton.Click += (_, _) => EditReserve();
-        Add(Body(quantityList, quantityGrid, AddQuantity, () => { quantity.Clear(); Refresh(); }, false, reserveButton));
-        Add(Example(quantityPreview));
+        Rule(Body(quantityList, quantityGrid, AddQuantity, () => { quantity.Clear(); Refresh(); }, false, reserveButton));
+        Rule(Example(quantityPreview));
+        systemsPanel = new SystemNamesPanel(Rules.SystemNames, model.SystemTypes()) { Visibility = Visibility.Collapsed };
+        Grid.SetRow(systemsPanel, firstRuleRow); Grid.SetRowSpan(systemsPanel, row - firstRuleRow); root.Children.Add(systemsPanel);
 
         // Кнопки, как в BIM2B: широкая основная и две под ней.
         var buttons = new Grid { Margin = new Thickness(0, 10, 0, 0) };
@@ -256,18 +269,19 @@ internal sealed class EngineeringRulesWindow : Window
 
     void FillScopes(string? category, string? mark)
     {
-        var list = new List<ScopeChoice>();
+        var list = new List<ScopeChoice> { new("", "", null, []) { IsSystems = true } };
         foreach (var (key, label) in EngineeringRulesPolicy.Categories)
             foreach (var (m, names) in model.Marks(key))
                 if (!EngineeringRulesPolicy.IsIgnored(m)) list.Add(new ScopeChoice(key, label, m, names));
         // Rules of marks no longer in the project stay editable (and removable).
         foreach (var r in Rules.Rules.Where(r => !list.Any(s => s.Category == r.Category && s.Mark == r.TypeMark)))
             list.Add(new ScopeChoice(r.Category, EngineeringRulesPolicy.CategoryLabel(r.Category), r.TypeMark, []));
-        foreach (var s in list) s.Configured = Rules.Find(s.Category, s.Mark) is { IsActive: true };
+        foreach (var s in list) s.Configured = s.IsSystems ? Rules.SystemNames.Enabled : Rules.Find(s.Category, s.Mark) is { IsActive: true };
         loading = true;
         scope.ItemsSource = list;
-        scope.SelectedItem = list.FirstOrDefault(s => s.Category == category && s.Mark == mark)
-            ?? list.FirstOrDefault(s => s.Category == category) ?? list.FirstOrDefault();
+        var rules = list.Where(s => !s.IsSystems).ToList();
+        scope.SelectedItem = rules.FirstOrDefault(s => s.Category == category && s.Mark == mark)
+            ?? rules.FirstOrDefault(s => s.Category == category) ?? rules.FirstOrDefault() ?? list[0];
         loading = false;
         Load();
     }
@@ -277,17 +291,31 @@ internal sealed class EngineeringRulesWindow : Window
         if (!Commit(out string? error))
         {
             MessageBox.Show(this, error, Title);
-            loading = true; scope.SelectedItem = current; loading = false;
+            loading = true; scope.SelectedItem = shown; loading = false;
             return;
         }
         if (current != null) current.Configured = Rules.Find(current.Category, current.Mark) is { IsActive: true };
+        if (shown?.IsSystems == true) shown.Configured = Rules.SystemNames.Enabled;
         scope.Items.Refresh();
         Load();
     }
 
+    internal void ShowScope(Func<ScopeChoice, bool> pick) => scope.SelectedItem = scope.Items.Cast<ScopeChoice>().First(pick);
+
     void Load()
     {
-        current = scope.SelectedItem as ScopeChoice;
+        shown = scope.SelectedItem as ScopeChoice;
+        bool systems = shown?.IsSystems == true;
+        systemsPanel.Visibility = systems ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var e in ruleArea) e.Visibility = systems ? Visibility.Collapsed : Visibility.Visible;
+        if (systems)
+        {
+            current = null;
+            types.Text = "Правила ADSK_Система_Имя по типу системы действуют для всех категорий; «Сохранить и обновить» заполняет весь проект.";
+            types.ToolTip = null;
+            return;
+        }
+        current = shown;
         if (current == null) { IsEnabled = true; types.Text = "В проекте нет элементов поддерживаемых категорий."; return; }
         loading = true;
         types.Text = current.Types.Count == 0 ? "Типов с этой маркировкой в проекте нет." : "Типы: " + string.Join(", ", current.Types);
@@ -466,6 +494,11 @@ internal sealed class EngineeringRulesWindow : Window
     bool Commit(out string? error)
     {
         error = null;
+        if (shown?.IsSystems == true)
+        {
+            if (!systemsPanel.TryRead(out var names, out error)) return false;
+            Rules.SystemNames = names;
+        }
         if (current == null) return true;
         partsGrid.CommitEdit(DataGridEditingUnit.Row, true);
         quantityGrid.CommitEdit(DataGridEditingUnit.Row, true);
@@ -477,6 +510,7 @@ internal sealed class EngineeringRulesWindow : Window
     {
         if (!Commit(out string? error)) { MessageBox.Show(this, error, Title); return; }
         UpdateScope = update && current != null ? (current.Category, current.Mark) : null;
+        UpdateSystems = update && shown?.IsSystems == true;
         DialogResult = true;
     }
 
@@ -498,11 +532,6 @@ internal sealed class EngineeringRulesWindow : Window
         if (w.ShowDialog() == true) { Rules.WallThickness = w.Result!; Refresh(); }
     }
 
-    void EditSystems()
-    {
-        var w = new SystemNamesWindow(Rules.SystemNames, model.SystemTypes()) { Owner = this };
-        if (w.ShowDialog() == true) Rules.SystemNames = w.Result!;
-    }
 }
 
 internal sealed class WallRow

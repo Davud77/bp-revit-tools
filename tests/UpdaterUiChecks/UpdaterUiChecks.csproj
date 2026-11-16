@@ -3,7 +3,7 @@
   <ItemGroup>
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/EngineeringRules.cs" Link="EngineeringRules.cs" />
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/EngineeringRulesWindow.cs" Link="EngineeringRulesWindow.cs" />
-    <Compile Include="../../modules/ov/HeatLossViewer/Mep/SystemNamesWindow.cs" Link="SystemNamesWindow.cs" />
+    <Compile Include="../../modules/ov/HeatLossViewer/Mep/SystemNamesPanel.cs" Link="SystemNamesPanel.cs" />
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/ReserveWindow.cs" Link="ReserveWindow.cs" />
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/InsulationRules.cs" Link="InsulationRules.cs" />
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/InsulationWindow.cs" Link="InsulationWindow.cs" />

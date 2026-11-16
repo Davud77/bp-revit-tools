@@ -76,7 +76,7 @@ internal static class Program
             Check(buttons0(window).Contains("Запас по размеру… (2)"), "Reserve button shows the number of rows");
             var buttons = All<Button>(window).Select(b => b.Content as string).ToList();
             Check(buttons.Contains("Сохранить настройки и обновить все элементы выбранного типа") && buttons.Contains("Сохранить настройки и закрыть") && buttons.Contains("Отменить и закрыть"), "Three BIM2B buttons");
-            Check(!buttons.Contains("Импорт…") && !buttons.Contains("Экспорт…") && buttons.Contains("Толщина стенки…") && buttons.Contains("Имена систем…"), "Service buttons, no import/export");
+            Check(!buttons.Contains("Импорт…") && !buttons.Contains("Экспорт…") && buttons.Contains("Толщина стенки…") && !buttons.Contains("Имена систем…"), "Service buttons: no import/export, system names in the dropdown");
             var lists = All<ListBox>(window).ToList();
             Check(lists.Count == 2 && lists[0].Items.Cast<ListBoxItem>().Any(i => (string)i.Content == "Толщина стенки"), "Built-in parameters in the list");
             var root = (FrameworkElement)window.Content;
@@ -112,9 +112,15 @@ internal static class Program
                 using var stream = File.Create(Path.Combine(args[0], dark ? "reserve-dark.png" : "reserve-light.png")); encoder.Save(stream);
             }
             reserve.Close();
-            var systems = new SystemNamesWindow(new SystemNameSettings { Enabled = true }, new FakeModel().SystemTypes()) { ShowActivated = false, ShowInTaskbar = false };
+            var systemsRules = new EngineeringRuleSet(); systemsRules.SystemNames.Enabled = true;
+            var systems = new EngineeringRulesWindow(new FakeModel(), systemsRules, "OST_PipeCurves", null) { ShowActivated = false, ShowInTaskbar = false };
             systems.Show(); systems.UpdateLayout();
-            var rows = systems.PreviewRows;
+            Check(!systems.SystemsShown && All<ComboBox>(systems).First().Items.Cast<object>().First().ToString()!.Contains(ScopeChoice.SystemsLabel), "System names are the first entry of the scope dropdown");
+            Check(!All<Button>(systems).Any(b => b.Content as string == "Имена систем…"), "No separate system names window");
+            systems.ShowScope(s => s.IsSystems); systems.UpdateLayout();
+            var panel = All<SystemNamesPanel>(systems).Single();
+            Check(systems.SystemsShown && panel.Visibility == Visibility.Visible, "System names shown in place of the formulas");
+            var rows = panel.PreviewRows;
             Check(rows.First(r => r.Type == "ADSK_Водопровод_Т3").Name == rows.First(r => r.Type == "ADSK_Водопровод_Т4").Name, "Preview: Т3/Т4 share the name");
             Check(rows.First(r => r.Type == "Прочие трубопроводы").Name.StartsWith("—") && rows.First(r => r.Type == "Приточный воздух").Name.StartsWith("—"), "Preview shows uncovered systems");
             if (args.Length > 0)
@@ -124,6 +130,8 @@ internal static class Program
                 var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image));
                 using var stream = File.Create(Path.Combine(args[0], dark ? "systems-dark.png" : "systems-light.png")); encoder.Save(stream);
             }
+            systems.ShowScope(s => s.Category == "OST_PipeCurves"); systems.UpdateLayout();
+            Check(!systems.SystemsShown && panel.Visibility == Visibility.Collapsed && systems.Rules.SystemNames.Enabled && systems.Rules.SystemNames.Rules.Count > 5, "Back to formulas; system rules kept");
             systems.Close();
         }
         foreach (bool dark in new[] { false, true })

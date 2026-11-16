@@ -18,6 +18,7 @@ public sealed class EngineeringRulesCommand : IExternalCommand
             var doc = ui.Document;
             if (doc.IsFamilyDocument) { TaskDialog.Show("Апдейтер", "Откройте проект."); return Result.Cancelled; }
             var rules = EngineeringRulesStore.Read(doc);
+            var stored = rules;
             // No saved rules yet: the window opens with the default formulas; they take effect once saved.
             if (rules.Rules.Count == 0) { rules = EngineeringRuleSet.FromJson(rules.ToJson()); rules.Rules.AddRange(EngineeringRuleSet.DefaultRules()); }
             var picked = ui.Selection.GetElementIds().Select(doc.GetElement).FirstOrDefault(e => e != null && EngineeringEngine.CategoryKey(e) != null);
@@ -33,6 +34,10 @@ public sealed class EngineeringRulesCommand : IExternalCommand
                 EngineeringRulesStore.Write(doc, window.Rules);
                 if (window.UpdateScope is { } scope)
                     outcome = EngineeringEngine.ApplyScope(doc, window.Rules, scope.Category, scope.Mark);
+                // Existing elements get ADSK_Система_Имя right away when the rules changed (the updater only reacts to later edits).
+                bool systemsChanged = System.Text.Json.JsonSerializer.Serialize(window.Rules.SystemNames) != System.Text.Json.JsonSerializer.Serialize(stored.SystemNames);
+                if (window.Rules.SystemNames.Enabled && (window.UpdateSystems || systemsChanged))
+                    outcome = EngineeringEngine.ApplySystemNames(doc, window.Rules, outcome);
                 // The command already wrote every value; the updater would only re-check them on commit.
                 EngineeringUpdater.Suspended = true;
                 try { if (t.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Revit отменил сохранение правил."); }

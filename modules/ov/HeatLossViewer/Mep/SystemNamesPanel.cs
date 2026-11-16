@@ -9,9 +9,9 @@ using Button = System.Windows.Controls.Button;
 using CheckBox = System.Windows.Controls.CheckBox;
 using DataGrid = System.Windows.Controls.DataGrid;
 using Grid = System.Windows.Controls.Grid;
-using MessageBox = System.Windows.MessageBox;
 using Orientation = System.Windows.Controls.Orientation;
 using TextBox = System.Windows.Controls.TextBox;
+using UserControl = System.Windows.Controls.UserControl;
 
 namespace HeatLossViewer.Mep;
 
@@ -21,7 +21,7 @@ internal sealed record SystemPreview(string Type, string Domain, string Name);
 internal sealed class SystemRow : INotifyPropertyChanged
 {
     string types = "", name = "";
-    Choice<SystemDomain> domain = SystemNamesWindow.Domains[0];
+    Choice<SystemDomain> domain = SystemNamesPanel.Domains[0];
     public string Types { get => types; set { types = value ?? ""; Changed(); } }
     public Choice<SystemDomain> Domain { get => domain; set { domain = value; Changed(); } }
     public string Name { get => name; set { name = value ?? ""; Changed(); } }
@@ -32,9 +32,9 @@ internal sealed class SystemRow : INotifyPropertyChanged
 
 /// <summary>
 /// ADSK_Система_Имя по типу системы: правило — список типов систем (через запятую), сеть и имя. Внизу — что получат
-/// типы систем текущего проекта, чтобы сразу увидеть непокрытые.
+/// типы систем текущего проекта, чтобы сразу увидеть непокрытые. Встраивается в окно апдейтера (пункт выпадающего списка).
 /// </summary>
-internal sealed class SystemNamesWindow : Window
+internal sealed class SystemNamesPanel : UserControl
 {
     internal static readonly Choice<SystemDomain>[] Domains = [new(SystemDomain.Pipe, "Трубопроводы"), new(SystemDomain.Duct, "Воздуховоды"), new(SystemDomain.Any, "Любые")];
     readonly ObservableCollection<SystemRow> rows = [];
@@ -43,14 +43,12 @@ internal sealed class SystemNamesWindow : Window
     readonly DataGrid grid = new() { AutoGenerateColumns = false, CanUserAddRows = false, CanUserDeleteRows = false, CanUserSortColumns = false, SelectionMode = DataGridSelectionMode.Single, HeadersVisibility = DataGridHeadersVisibility.Column };
     readonly DataGrid preview = new() { AutoGenerateColumns = false, IsReadOnly = true, HeadersVisibility = DataGridHeadersVisibility.Column, MinHeight = 120 };
     readonly IReadOnlyList<(string Type, SystemDomain Domain)> projectTypes;
-    internal SystemNameSettings? Result { get; private set; }
 
-    internal SystemNamesWindow(SystemNameSettings settings, IReadOnlyList<(string Type, SystemDomain Domain)> projectTypes)
+    internal SystemNamesPanel(SystemNameSettings settings, IReadOnlyList<(string Type, SystemDomain Domain)> projectTypes)
     {
         this.projectTypes = projectTypes;
-        Title = "Имена систем"; Width = 900; Height = 680; MinWidth = 860; MinHeight = 520; WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        var root = new Grid { Margin = new Thickness(12) }; Content = root;
-        foreach (var h in new[] { GridLength.Auto, GridLength.Auto, new GridLength(1.4, GridUnitType.Star), GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto })
+        var root = new Grid { Margin = new Thickness(0, 8, 0, 0) }; Content = root;
+        foreach (var h in new[] { GridLength.Auto, GridLength.Auto, new GridLength(1.4, GridUnitType.Star), GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star) })
             root.RowDefinitions.Add(new RowDefinition { Height = h });
         int r = 0;
         void Add(UIElement e) { Grid.SetRow(e, r++); root.Children.Add(e); }
@@ -83,16 +81,9 @@ internal sealed class SystemNamesWindow : Window
         preview.Columns.Add(new DataGridTextColumn { Header = "Сети", Binding = new Binding(nameof(SystemPreview.Domain)), Width = 110 });
         preview.Columns.Add(new DataGridTextColumn { Header = "Будет записано", Binding = new Binding(nameof(SystemPreview.Name)), Width = 470 });
         Add(preview);
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
-        var ok = new Button { Content = "OK", IsDefault = true, MinWidth = 85, Margin = new Thickness(0, 0, 8, 0) };
-        var cancel = new Button { Content = "Отмена", IsCancel = true, MinWidth = 85 };
-        ok.Click += (_, _) => Accept();
-        buttons.Children.Add(ok); buttons.Children.Add(cancel);
-        Add(buttons);
         enabled.IsChecked = settings.Enabled; target.Text = settings.Target;
         enabled.Checked += (_, _) => Refresh(); enabled.Unchecked += (_, _) => Refresh();
         Fill(settings.Rules);
-        BotPlusTheme.Apply(this);
     }
 
     static Button Btn(string text, Action click) { var b = new Button { Content = text, Margin = new Thickness(0, 0, 6, 0) }; b.Click += (_, _) => click(); return b; }
@@ -133,12 +124,12 @@ internal sealed class SystemNamesWindow : Window
 
     void Refresh() => preview.ItemsSource = PreviewRows;
 
-    void Accept()
+    /// <summary>Текущие правила панели; ошибка — текст для пользователя.</summary>
+    internal bool TryRead(out SystemNameSettings settings, out string? error)
     {
         grid.CommitEdit(DataGridEditingUnit.Row, true);
-        var settings = Editor();
-        try { settings.Validate(); }
-        catch (InvalidOperationException e) { MessageBox.Show(this, e.Message, Title); return; }
-        Result = settings; DialogResult = true;
+        settings = Editor(); error = null;
+        try { settings.Validate(); return true; }
+        catch (InvalidOperationException e) { error = e.Message; return false; }
     }
 }

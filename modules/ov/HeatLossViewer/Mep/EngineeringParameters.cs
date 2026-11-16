@@ -275,9 +275,10 @@ internal static class EngineeringEngine
         bool system = set.SystemNames.Enabled && SystemCategory(element);
         if (category is null && !system) return;
         string? mark = TypeMark(element);
-        if (EngineeringRulesPolicy.IsIgnored(mark)) return;
-        var rule = category is null ? null : set.Resolve(category, mark);
-        bool walls = set.WallThickness.Target.Length > 0 && element is Pipe or Duct;
+        // «игнорировать» switches off name, quantity and wall thickness; ADSK_Система_Имя is still filled.
+        bool ignored = EngineeringRulesPolicy.IsIgnored(mark);
+        var rule = category is null || ignored ? null : set.Resolve(category, mark);
+        bool walls = !ignored && set.WallThickness.Target.Length > 0 && element is Pipe or Duct;
         if (rule != null || walls || system) Apply(element, rule, set, outcome);
     }
 
@@ -400,6 +401,17 @@ internal static class EngineeringEngine
     }
 
     /// <summary>Applies the rules to every element of the category with the given mark.</summary>
+    /// <summary>All elements of the system categories: ADSK_Система_Имя (and their other rules) for the whole project.</summary>
+    internal static EngineeringOutcome ApplySystemNames(Document doc, EngineeringRuleSet set, EngineeringOutcome? outcome = null)
+    {
+        outcome ??= new EngineeringOutcome();
+        var done = new HashSet<ElementId>();
+        foreach (var category in EngineeringRulesPolicy.SystemCategories.Select(Enum.Parse<BuiltInCategory>))
+            foreach (var element in new FilteredElementCollector(doc).OfCategory(category).WhereElementIsNotElementType().ToList())
+                if (done.Add(element.Id)) Process(element, set, outcome);
+        return outcome;
+    }
+
     internal static EngineeringOutcome ApplyScope(Document doc, EngineeringRuleSet set, string category, string? mark)
     {
         var outcome = new EngineeringOutcome();
