@@ -31,6 +31,13 @@ public static class Storage
         var entity = e.GetEntity(schema);
         return entity.IsValid() ? (entity.Get<string>(schema.GetField("ProjectId")), entity.Get<string>(schema.GetField("SourceKey")), entity.Get<string>(schema.GetField("SourceHash"))) : null;
     }
+    public static string RawJson(Element e)
+    {
+        var schema = Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(Id);
+        if (schema == null) return "";
+        var entity = e.GetEntity(schema);
+        return entity.IsValid() ? entity.Get<string>(schema.GetField("RawJson")) : "";
+    }
     public static Dictionary<string, Element> Index(Document doc, string project)
     {
         var result = new Dictionary<string, Element>(StringComparer.OrdinalIgnoreCase);

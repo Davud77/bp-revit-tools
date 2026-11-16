@@ -32,6 +32,69 @@ public static class NativeGeometry
             catch(Exception brepError){throw new AggregateException("Neither native solid builder could preserve the reference mesh",tessellationError,brepError);}
         }
     }
+    /// <summary>
+    /// A void that is a prism through the wall (an arch, a round window): its two parallel faces are the same profile.
+    /// The profile is read from the mesh and extruded, because an arch tessellated by IFC rarely closes as a solid
+    /// through the tessellation builders. The volume is compared with the mesh before the result is accepted.
+    /// </summary>
+    public static List<Solid> PrismSolids(JsonElement record,Transform worldToLocal)
+    {
+        var points=record.GetProperty("vertices").Read<List<Point>>().Select(p=>worldToLocal.OfPoint(At(p))).ToList();
+        var faces=record.GetProperty("faces").Read<List<List<int>>>();
+        double metres=UnitUtils.ConvertFromInternalUnits(1,UnitTypeId.Meters);
+        // Distinct depths across the wall (local Y). An arch with rebates has a few: 0, 1 mm, 26 mm, full thickness.
+        long Level(XYZ p)=>(long)Math.Round(p.Y*metres*10000);
+        var levels=points.Select(Level).Distinct().OrderBy(v=>v).ToList();
+        if(levels.Count<2 || levels[^1]-levels[0]<100)throw new InvalidDataException("Void is not a prism through the wall");
+        var depth=levels.Select((v,i)=>(v,i)).ToDictionary(x=>x.v,x=>x.i);
+        double signed=0;
+        foreach(var f in faces){var p0=points[f[0]];var p1=points[f[1]];var p2=points[f[2]];signed+=p0.DotProduct(p1.CrossProduct(p2))/6;}
+        bool outward=signed>=0;
+        // Triangles lying in a plane across the wall: the caps where the void ends (facing +Y) or starts (facing -Y).
+        var ends=new List<(int Level,int[] Triangle)>();var starts=new List<(int Level,int[] Triangle)>();
+        foreach(var f in faces)
+        {
+            int a=depth[Level(points[f[0]])],b=depth[Level(points[f[1]])],c=depth[Level(points[f[2]])];
+            if(a!=b || b!=c)continue;
+            var normal=(points[f[1]]-points[f[0]]).CrossProduct(points[f[2]]-points[f[0]]);
+            if(Math.Abs(normal.Y)<1e-12)continue;
+            bool facesPlusY=(normal.Y>0)==outward;
+            if(facesPlusY)ends.Add((a,f.ToArray()));else starts.Add((a,f.ToArray()));
+        }
+        if(ends.Count==0 || starts.Count==0)throw new InvalidDataException("Void has no end faces across the wall");
+        // Monotone voids only: either every start face is at the first depth and the void narrows with depth,
+        // or every end face is at the last depth and the void widens with depth.
+        bool narrowing=starts.All(s=>s.Level==0),widening=ends.All(e=>e.Level==levels.Count-1);
+        if(!narrowing && !widening)throw new InvalidDataException("The void changes both ways across the wall");
+        var mapped=points.Select(p=>(X:p.X*metres,Y:-p.Z*metres,Z:p.Y*metres)).ToList();
+        var result=new List<Solid>();
+        double volume=0;
+        for(int i=0;i+1<levels.Count;++i)
+        {
+            // Over the layer between depths i and i+1 the void is what still exists beyond it: the union of the end faces at deeper levels.
+            // Narrowing: what still exists beyond the layer = end faces at deeper levels. Widening: what already exists = start faces up to this level.
+            var deeper=narrowing
+                ? ends.Where(e=>e.Level>=i+1).Select(e=>outward?e.Triangle:[e.Triangle[0],e.Triangle[2],e.Triangle[1]]).ToList()
+                : starts.Where(s=>s.Level<=i).Select(s=>outward?[s.Triangle[0],s.Triangle[2],s.Triangle[1]]:s.Triangle).ToList();
+            if(deeper.Count==0)continue;
+            (IReadOnlyList<RoofPlanner.P> Outer,IReadOnlyList<IReadOnlyList<RoofPlanner.P>> Holes) profile;
+            try{profile=RoofPlanner.Silhouette(mapped,deeper,0.001,0.0002);}
+            catch(InvalidDataException ex){throw new InvalidDataException("Layer "+i+": "+ex.Message);}
+            if(profile.Holes.Count>0)throw new InvalidDataException("Layer "+i+" has a hole");
+            double y0=levels[i]/10000.0/metres,y1=levels[i+1]/10000.0/metres;
+            var loop=new CurveLoop();
+            for(int k=0;k<profile.Outer.Count;++k)
+            {
+                var p=profile.Outer[k];var q=profile.Outer[(k+1)%profile.Outer.Count];
+                loop.Append(Line.CreateBound(new XYZ(p.X/metres,y0,-p.Y/metres),new XYZ(q.X/metres,y0,-q.Y/metres)));
+            }
+            var layer=GeometryCreationUtilities.CreateExtrusionGeometry([loop],XYZ.BasisY,y1-y0);
+            volume+=layer.Volume;result.Add(layer);
+        }
+        if(result.Count==0 || Math.Abs(volume-Math.Abs(signed))>Math.Abs(signed)*0.005)throw new InvalidDataException("Stacked profile volume differs from the IFC void by more than 0.5 %");
+        return result;
+    }
+
     static List<Solid> TessellatedSolids(List<XYZ> points,List<List<int>> faces)
     {
         using var builder=new TessellatedShapeBuilder();builder.OpenConnectedFaceSet(true);

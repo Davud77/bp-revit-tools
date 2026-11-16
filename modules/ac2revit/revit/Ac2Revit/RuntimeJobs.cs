@@ -56,6 +56,11 @@ public static class RuntimeJobs
             var job = JsonSerializer.Deserialize<Job>(File.ReadAllText(sourceInbox), Json.Options) ?? throw new InvalidDataException("Empty runtime job");
             File.Move(sourceInbox, Path.Combine(Path.GetDirectoryName(sourceInbox)!, "job-"+DateTime.UtcNow.ToString("yyyyMMdd-HHmmssfff")+".json"));
             resultPath = WorkspacePath(job.ResultPath);
+            if(job.Operation=="profileWallProbe")
+            {
+                var probeDoc=ui.OpenAndActivateDocument(WorkspacePath(job.SourceRvt)).Document;
+                File.WriteAllText(resultPath,JsonSerializer.Serialize(new{status="complete",probe=ProfileWallProbe.Run(probeDoc)},Json.Options));return;
+            }
             if(job.Operation=="surfacePaintCopy")
             {
                 var output=WorkspacePath(job.OutputRvt);File.Copy(WorkspacePath(job.SourceRvt),output,false);

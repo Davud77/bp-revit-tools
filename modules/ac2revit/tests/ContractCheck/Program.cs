@@ -196,6 +196,16 @@ Console.WriteLine("PASS monotonic stage progress, checkpoint reopen, explicit co
     if(!skewed.Outer.Any(e=>!e.Slope.HasValue))throw new Exception("Oblique roof planes still define an edge slope");
     Console.WriteLine("PASS roof planner recovers hip and gable edge slopes and leaves oblique planes unsloped");
 }
+{
+    // A wall under an outdoor stair: a trapezoid profile (4 m long, 1 m high at one end and 2.5 m at the other) extruded 0.4 m.
+    // The profile is read from the faces that look along the wall thickness (here mapped as X = along, Y = up, Z = across).
+    var pv=new List<(double X,double Y,double Z)>{(0,0,0),(4,0,0),(4,2.5,0),(0,1,0),(0,0,0.4),(4,0,0.4),(4,2.5,0.4),(0,1,0.4)};
+    var pf=new List<int[]>{new[]{0,2,1},new[]{0,3,2},new[]{4,5,6},new[]{4,6,7},new[]{0,1,5},new[]{0,5,4},new[]{1,2,6},new[]{1,6,5},new[]{2,3,7},new[]{2,7,6},new[]{3,0,4},new[]{3,4,7}};
+    var profile=RoofPlanner.Silhouette(pv,pf,0.002,0.0005);
+    double expected=4*(1+2.5)/2;
+    if(profile.Outer.Count!=4 || Math.Abs(RoofPlanner.SignedArea(profile.Outer)-expected)>1e-6 || profile.Holes.Count!=0)throw new Exception("The profile of a prism wall was not read from its mesh");
+    Console.WriteLine("PASS profile of a prism wall is read from the mesh");
+}
 if(args.Length==0)return;
 
 var manifest = Manifest.Load(args[0]);

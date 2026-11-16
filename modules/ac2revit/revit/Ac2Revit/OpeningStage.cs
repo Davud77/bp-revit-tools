@@ -72,7 +72,13 @@ public static class OpeningStage
                 // Shape key in the host wall's axes: equal openings in walls of any direction share one void family;
                 // the instance is rotated back. The Boolean check below still compares the actual cut with the IFC void.
                 double angle=hostElement is Wall { Location: LocationCurve { Curve: Line axis } }?Math.Atan2(axis.Direction.Y,axis.Direction.X):0;
-                var local=Transform.CreateRotation(XYZ.BasisZ,-angle).Multiply(Transform.CreateTranslation(center.Negate()));var source=NativeGeometry.MeshSolids(vg,local);
+                var local=Transform.CreateRotation(XYZ.BasisZ,-angle).Multiply(Transform.CreateTranslation(center.Negate()));List<Solid> source;
+                try{source=NativeGeometry.MeshSolids(vg,local);}
+                catch(AggregateException original)
+                {
+                    try{source=NativeGeometry.PrismSolids(vg,local);}
+                    catch(Exception prism){throw new AggregateException("Profile extrusion fallback also failed: "+prism.Message,original);}
+                }
                 var toWorld=local.Inverse;
                 owned.UnionWith(source);
                 var world=source.Select(s=>SolidUtils.CreateTransformed(s,toWorld)).ToList();owned.UnionWith(world);

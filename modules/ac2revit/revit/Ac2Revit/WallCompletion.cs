@@ -26,8 +26,27 @@ public static class WallCompletion
             var rows=node["elements"]!.AsArray().Where(r=>r!=null && !index.ContainsKey(r["sourceGuid"]!.GetValue<string>())).Select(r=>r!.DeepClone()).ToArray();
             var sourceKeys=walls.Select(w=>w.SourceGuid).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if(rows.Any(r=>!sourceKeys.Contains(r["sourceGuid"]!.GetValue<string>())))throw new InvalidDataException("Wall fallback contains foreign GUID");
+            // Profile walls whose IFC body is a prism through the wall become native walls; the rest keep the exact IFC body.
+            using(var rowsDocument=JsonDocument.Parse(new JsonArray(rows.Select(r=>r!.DeepClone()).ToArray()).ToJsonString()))
+            {
+                var native=NativeProfileWalls.Run(doc,manifest,rowsDocument.RootElement.EnumerateArray().ToList(),report);
+                if(native.Count>0)rows=rows.Where(r=>!native.Contains(r!["sourceGuid"]!.GetValue<string>())).ToArray();
+            }
             node["elements"]=new JsonArray(rows);string filtered=Path.Combine(output,"missing-wall-bodies.json");File.WriteAllText(filtered,node.ToJsonString());
-            var result=ReferenceFallback.Run(doc,filtered,Path.GetFullPath,(n,total)=>progress?.Invoke("wallGeometry",n,total));report.Items.AddRange(result.Items);
+            var sides=new Dictionary<string,WallSideMaterials>(StringComparer.OrdinalIgnoreCase);
+            using(var materialTransaction=new Transaction(doc,"Wall surface materials"))
+            {
+                materialTransaction.Start();
+                foreach(var row in rows)
+                {
+                    var details=row!["rawSource"]?["details"];if(details==null)continue;
+                    using var detailsDocument=JsonDocument.Parse(details.ToJsonString());
+                    var made=WallSideMaterials.Create(doc,manifest,detailsDocument.RootElement);
+                    if(made!=null)sides[row["sourceGuid"]!.GetValue<string>()]=made;
+                }
+                materialTransaction.Commit();
+            }
+            var result=ReferenceFallback.Run(doc,filtered,Path.GetFullPath,(n,total)=>progress?.Invoke("wallGeometry",n,total),wallSides:sides);report.Items.AddRange(result.Items);
         }
         // Exact IFC bodies take precedence over the nominal API sheet. Only
         // absent bodies may receive that explicitly incomplete substitute.

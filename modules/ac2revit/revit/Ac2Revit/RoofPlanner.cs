@@ -75,7 +75,7 @@ public static class RoofPlanner
     /// merged. Used when Archicad's polygon is not what the exact IFC mesh shows (the roof was trimmed by other
     /// elements); the result is still verified against the mesh before a native roof is accepted.
     /// </summary>
-    public static (IReadOnlyList<P> Outer, IReadOnlyList<IReadOnlyList<P>> Holes) Silhouette(IReadOnlyList<(double X, double Y, double Z)> vertices, IReadOnlyList<int[]> triangles)
+    public static (IReadOnlyList<P> Outer, IReadOnlyList<IReadOnlyList<P>> Holes) Silhouette(IReadOnlyList<(double X, double Y, double Z)> vertices, IReadOnlyList<int[]> triangles, double minEdge = 0.02, double collinear = 0.002)
     {
         const double grid = 1000; // 1 mm
         (long, long) K(P p) => ((long)Math.Round(p.X * grid), (long)Math.Round(p.Y * grid));
@@ -125,7 +125,7 @@ public static class RoofPlanner
                     if (step == null) throw new InvalidDataException("Roof silhouette is open");
                     next = step.Value;
                 }
-                loops.Add(Simplify(loop));
+                loops.Add(Simplify(loop, minEdge, collinear));
             }
         }
         loops = loops.Where(l => l.Count >= 3).ToList();
@@ -134,14 +134,14 @@ public static class RoofPlanner
         return (outers[0], loops.Where(l => SignedArea(l) < 0).Select(l => (IReadOnlyList<P>)l).ToList());
     }
 
-    static List<P> Simplify(List<P> loop)
+    static List<P> Simplify(List<P> loop, double minEdge, double collinear)
     {
         var list = Clean(loop);
         // Triangulation leaves 1 cm slivers where two planes meet; Revit cannot sketch such short edges.
         for (int i = list.Count - 1; i >= 0 && list.Count > 3; --i)
         {
             var p = list[i]; var q = list[(i + list.Count - 1) % list.Count];
-            if (Math.Sqrt((p.X - q.X) * (p.X - q.X) + (p.Y - q.Y) * (p.Y - q.Y)) < 0.02) list.RemoveAt(i);
+            if (Math.Sqrt((p.X - q.X) * (p.X - q.X) + (p.Y - q.Y) * (p.Y - q.Y)) < minEdge) list.RemoveAt(i);
         }
         bool changed = true;
         while (changed && list.Count > 3)
@@ -152,7 +152,7 @@ public static class RoofPlanner
                 var a = list[(i + list.Count - 1) % list.Count]; var b = list[i]; var c = list[(i + 1) % list.Count];
                 double cross = (b.X - a.X) * (c.Y - b.Y) - (b.Y - a.Y) * (c.X - b.X);
                 double span = Math.Max(Math.Sqrt((c.X - a.X) * (c.X - a.X) + (c.Y - a.Y) * (c.Y - a.Y)), 1e-9);
-                if (Math.Abs(cross) / span < 0.002) { list.RemoveAt(i); changed = true; break; }   // within 2 mm of the straight line
+                if (Math.Abs(cross) / span < collinear) { list.RemoveAt(i); changed = true; break; }   // within 2 mm of the straight line
             }
         }
         return list;

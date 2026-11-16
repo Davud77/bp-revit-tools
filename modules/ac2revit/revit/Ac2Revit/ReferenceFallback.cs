@@ -6,7 +6,7 @@ namespace Ac2Revit;
 public static class ReferenceFallback
 {
     public static Report Run(Document doc,string meshManifest,Func<string,string> workspacePath,Action<int,int>? progress=null,
-        BuiltInCategory category=BuiltInCategory.OST_Walls,string recordKind="WallGeometry",bool uniqueMarks=false,IReadOnlySet<string>? existingKeys=null)
+        BuiltInCategory category=BuiltInCategory.OST_Walls,string recordKind="WallGeometry",bool uniqueMarks=false,IReadOnlySet<string>? existingKeys=null,IReadOnlyDictionary<string,WallSideMaterials>? wallSides=null)
     {
         using var json=JsonDocument.Parse(File.ReadAllText(meshManifest));var root=json.RootElement;
         string project=root.GetProperty("projectId").GetString()!,ifcHash=root.GetProperty("ifcSha256").GetString()!;
@@ -38,13 +38,16 @@ public static class ReferenceFallback
                 var points=record.GetProperty("vertices").Read<List<Point>>().Select(geometry.Xyz).ToList();
                 var faces=record.GetProperty("faces").Read<List<List<int>>>();
                 var styles=IfcSurfaceStyles.Read(record,faces.Count);
+                var sides=wallSides!=null && wallSides.TryGetValue(key,out var wallSide)?wallSide.WithAxis(record,geometry):null;
                 if(points.Count<3 || faces.Count==0)throw new InvalidDataException("Empty reference mesh");
                 stage="buildFaces";int faceNumber=0;using var builder=new TessellatedShapeBuilder();builder.OpenConnectedFaceSet(false);
                 foreach(var indices in faces)
                 {
                     if(indices.Count!=3 || indices.Any(i=>i<0||i>=points.Count))throw new InvalidDataException("Invalid triangle indices");
                     var style=styles==null?-1:styles.Value.Faces[faceNumber++];
-                    using var face=new TessellatedFace(indices.Select(i=>points[i]).ToList(),style<0?ElementId.InvalidElementId:styleMaterials[styles!.Value.Styles[style]]);
+                    var faceMaterial=style<0?ElementId.InvalidElementId:styleMaterials[styles!.Value.Styles[style]];
+                    if(sides!=null)faceMaterial=sides.For(indices.Select(i=>points[i]).ToList(),faceMaterial);
+                    using var face=new TessellatedFace(indices.Select(i=>points[i]).ToList(),faceMaterial);
                     if(!builder.DoesFaceHaveEnoughLoopsAndVertices(face))throw new InvalidDataException("Revit rejected reference triangle");
                     builder.AddFace(face);
                 }
