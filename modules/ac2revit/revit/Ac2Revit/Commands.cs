@@ -82,8 +82,8 @@ public static class Command
                     progress:(phase,done,total)=>{display?.Update(phase,done,total);File.WriteAllText(Path.Combine(output,"progress.json"),System.Text.Json.JsonSerializer.Serialize(new{phase,done,total,overallPercent=display?.State.Percent,stage=display?.State.Stage,stages=display?.State.Stages,updatedUtc=DateTime.UtcNow},Json.Options));},preview:preview,selection:selection);
                 if(preview)Directory.CreateDirectory(output);
                 pipelineReport.Save(Path.Combine(output,"pipeline-report.json"));
-                string counts=string.Join("\n",pipelineReport.Items.GroupBy(x=>x.Status).Select(g=>g.Key+": "+g.Count()));
-                TaskDialog.Show("Archicad JSON",counts+"\n\nПорядок: оси → колонны → стены → балки/подрезки → проёмы/заполнения → помещения.\nОтчёт: "+output);
+
+                ImportDone.Show(ImportDone.LogBeside(ui.ActiveUIDocument.Document.PathName),Path.Combine(output,"pipeline-report.json"));
                 return Result.Succeeded;
             }
             var manifest = Manifest.Load(path);
@@ -106,8 +106,7 @@ public static class Command
             simpleProgress?.Update("pipeline:complete",5,5);
             report.Save(reportPath);
             if(!preview && !string.IsNullOrEmpty(ui.ActiveUIDocument.Document.PathName)){ui.ActiveUIDocument.Document.Save();ImportJournal.Write(ui.ActiveUIDocument.Document,report);}
-            string summary = string.Join("\n", report.Items.GroupBy(x => x.Status).Select(g => g.Key + ": " + g.Count()));
-            TaskDialog.Show("Archicad JSON", summary + "\n\nОтчёт: " + reportPath);
+            ImportDone.Show(ImportDone.LogBeside(ui.ActiveUIDocument.Document.PathName), reportPath);
             return Result.Succeeded;
         }
         catch (Exception ex)

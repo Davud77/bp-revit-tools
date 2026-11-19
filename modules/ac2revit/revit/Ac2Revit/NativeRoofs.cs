@@ -24,11 +24,13 @@ public static class NativeRoofs
             string key = record.S("sourceGuid");
             try
             {
-                string? reason = Build(doc, project, ifcHash, manifest, geometry, index, levels, record, false, out var roof);
-                if (reason != null)
+                string? reason = Build(doc, project, ifcHash, manifest, geometry, index, levels, record, false, 0, out var roof);
+                // The mesh silhouette, with slivers (2, 6, 15 cm) merged progressively: Revit cannot sketch very short edges.
+                foreach (double minEdge in new[] { 0.02, 0.06, 0.15 })
                 {
-                    string? second = Build(doc, project, ifcHash, manifest, geometry, index, levels, record, true, out roof);
-                    reason = second == null ? null : reason + "; by the mesh silhouette: " + second;
+                    if (reason == null) break;
+                    string? next = Build(doc, project, ifcHash, manifest, geometry, index, levels, record, true, minEdge, out roof);
+                    reason = next == null ? null : reason + "; by the mesh silhouette (" + minEdge * 100 + " cm): " + next;
                 }
                 if (reason == null && roof != null)
                 {
@@ -43,7 +45,7 @@ public static class NativeRoofs
     }
 
     static string? Build(Document doc, string project, string ifcHash, Manifest manifest, Geometry geometry, IReadOnlyDictionary<string, Element> index,
-        List<Level> levels, JsonElement record, bool silhouette, out Element? result)
+        List<Level> levels, JsonElement record, bool silhouette, double minEdge, out Element? result)
     {
         result = null;
         if (!record.TryGetProperty("rawSource", out var raw) || !raw.TryGetProperty("details", out var details)) return "source roof details are missing";
@@ -62,7 +64,7 @@ public static class NativeRoofs
         List<RoofPlanner.P> outline; IReadOnlyList<IReadOnlyList<RoofPlanner.P>> holes;
         try
         {
-            if (silhouette) { var s = RoofPlanner.Silhouette(vertices, triangles); outline = s.Outer.ToList(); holes = s.Holes; }
+            if (silhouette) { var s = RoofPlanner.Silhouette(vertices, triangles, minEdge); outline = s.Outer.ToList(); holes = s.Holes; }
             else
             {
                 if (!details.TryGetProperty("polygonOutline", out var outlineJson)) return "roof outline is missing";

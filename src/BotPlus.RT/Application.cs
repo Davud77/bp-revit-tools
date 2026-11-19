@@ -8,6 +8,7 @@ namespace BotPlus.RT;
 public sealed class Application : IExternalApplication
 {
     readonly List<IExternalApplication> started = [];
+    RibbonNavigation? ribbon;
 
     public Result OnStartup(UIControlledApplication application)
     {
@@ -17,6 +18,7 @@ public sealed class Application : IExternalApplication
             catch (Autodesk.Revit.Exceptions.ArgumentException) { }
             BotPlusSettings.Load();
             TagCopyOptions.Reset();
+            ribbon = new RibbonNavigation(application);
             string root = Path.GetDirectoryName(typeof(Application).Assembly.Location)!;
             foreach (var (panel, file, type) in new[]
             {
@@ -27,7 +29,6 @@ public sealed class Application : IExternalApplication
                 ("ЭОМ", "modules/eom/BotPlus.Eom.dll", "BotPlus.Eom.App")
             })
             {
-                if (panel == "ЭОМ" && !BotPlusSettings.HiddenPanels.Contains("ВК")) CreateVkTab(application);
                 if (BotPlusSettings.HiddenPanels.Contains(panel)) continue;
                 var assembly = Assembly.LoadFrom(Path.Combine(root, file));
                 var module = (IExternalApplication)Activator.CreateInstance(assembly.GetType(type, throwOnError: true)!)!;
@@ -35,6 +36,7 @@ public sealed class Application : IExternalApplication
                 started.Add(module);
                 if (module.OnStartup(application) != Result.Succeeded)
                     throw new InvalidOperationException($"Не удалось загрузить модуль {type}.");
+                ribbon.CapturePanels(application, panel);
             }
             if (!BotPlusSettings.HiddenPanels.Contains("Марки"))
             {
@@ -48,6 +50,8 @@ public sealed class Application : IExternalApplication
                 schedules.AddItem(new PushButtonData("BotPlusScheduleNumbering", "Нумерация", typeof(Application).Assembly.Location,
                     typeof(ScheduleNumberingCommand).FullName!) { ToolTip = "Пронумеровать элементы в порядке строк активной спецификации.",
                     AvailabilityClassName = typeof(ScheduleNumberingAvailable).FullName! });
+                // The same command on Revit's contextual tab of an open schedule.
+                ScheduleContext.Attach(application);
             }
             if (!BotPlusSettings.HiddenPanels.Contains("Виды"))
             {
@@ -58,11 +62,8 @@ public sealed class Application : IExternalApplication
                       AvailabilityClassName = typeof(ViewRangeAvailable).FullName! });
                 ViewportContext.Attach(application);
             }
-            var service = application.CreateRibbonPanel("BotPlus RT", "Настройки");
-            service.AddItem(new PushButtonData("BotPlusRTSettings", "Настройки", typeof(Application).Assembly.Location,
-                typeof(SettingsCommand).FullName!){ToolTip="Тема окон, включение модулей и сведения о плагине.",AvailabilityClassName=typeof(HostAvailable).FullName!});
-            service.AddItem(new PushButtonData("BotPlusRTUpdates","Обновления",typeof(Application).Assembly.Location,typeof(UpdateCommand).FullName!){AvailabilityClassName=typeof(HostAvailable).FullName!});
-            RibbonStyle.Apply(application);
+            ribbon.CapturePanels(application);
+            ribbon.Complete();
             StartupUpdates.Attach(application);
             return Result.Succeeded;
         }
@@ -74,18 +75,13 @@ public sealed class Application : IExternalApplication
         }
     }
 
-    /// <summary>Вкладка ВК пока без команд: создаётся одна пустая панель, чтобы вкладка была видна и готова к наполнению.</summary>
-    static void CreateVkTab(UIControlledApplication application)
-    {
-        try { application.CreateRibbonTab(BotPlusSettings.VkTab); }
-        catch (Autodesk.Revit.Exceptions.ArgumentException) { }
-        application.CreateRibbonPanel(BotPlusSettings.VkTab, "ВК");
-    }
-
     public Result OnShutdown(UIControlledApplication application)
     {
+        ribbon?.Dispose();
+        ribbon = null;
         StartupUpdates.Detach(application);
         ViewportContext.Detach(application);
+        ScheduleContext.Detach(application);
         foreach (var module in started.AsEnumerable().Reverse())
         {
             try { module.OnShutdown(application); }

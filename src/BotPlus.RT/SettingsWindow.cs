@@ -50,7 +50,7 @@ internal sealed class SettingsWindow : Window
             var box = new CheckBox { Content = name, IsChecked = !BotPlusSettings.HiddenPanels.Contains(name), Margin = new Thickness(0, 4, 0, 4) };
             panels[name] = box; ribbon.Children.Add(box);
         }
-        ribbon.Children.Add(Hint("После нажатия «ОК» лента обновится. Перезапустите Revit, чтобы применить новый состав модулей. Панель «Настройки» доступна всегда."));
+        ribbon.Children.Add(Hint("После нажатия «ОК» лента обновится. Перезапустите Revit, чтобы применить новый состав модулей. Панель «BotPlus» доступна всегда."));
         tabs.Items.Add(new TabItem { Header = "Модули", Content = ribbon });
 
         // О плагине.

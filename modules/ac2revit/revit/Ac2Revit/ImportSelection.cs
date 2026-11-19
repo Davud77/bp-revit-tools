@@ -39,6 +39,7 @@ public sealed class ImportSelection
         "supplementalBodies"=>Included.Overlaps(["Roof","Mesh","Stair","Railing","CurtainWall","Object","Shell","Skylight","Lamp"]),
         "roomSeparators" or "roomSeparatorRecheck"=>Includes("Zone"),
         "wallJoinsAndRooms"=>Includes("Wall") || Includes("Zone"),
+        "wallRoofAttach"=>Includes("Wall") && Includes("Roof"),
         _=>true
     };
 }

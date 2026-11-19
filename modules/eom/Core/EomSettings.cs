@@ -21,6 +21,17 @@ public sealed record EomSettings
     /// <summary>Маска марки кабеля.</summary>
     public string CableMask { get; init; } = "{Щит}-{N}";
     public bool LinesCreated { get; init; }
+    public double SwitchHeightMm { get; init; } = 1000;
+    public double ElectricalFixtureHeightMm { get; init; } = 300;
+    public double ElectricalEquipmentHeightMm { get; init; } = 1500;
+    public double LightingFixtureHeightMm { get; init; } = 2700;
+
+    internal static double ValidateHeight(double value)
+    {
+        if (!double.IsFinite(value) || value < 0)
+            throw new InvalidOperationException("Высота вставки должна быть неотрицательным числом в миллиметрах.");
+        return value;
+    }
 
     public void Validate()
     {
@@ -28,6 +39,10 @@ public sealed record EomSettings
         if (VoltageDropLimit is <= 0 or > 15) throw new InvalidOperationException("Допустимая потеря напряжения: от 0 до 15 %.");
         if (PhaseVoltage <= 0 || LineVoltage <= 0) throw new InvalidOperationException("Напряжение должно быть больше нуля.");
         if (!GroupMask.Contains("{N}") || !CableMask.Contains("{N}")) throw new InvalidOperationException("Маски маркировки должны содержать {N}.");
+        ValidateHeight(SwitchHeightMm);
+        ValidateHeight(ElectricalFixtureHeightMm);
+        ValidateHeight(ElectricalEquipmentHeightMm);
+        ValidateHeight(LightingFixtureHeightMm);
     }
 
     public string ToJson() => JsonSerializer.Serialize(this);

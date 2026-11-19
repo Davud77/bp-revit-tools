@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.ExtensibleStorage;
 using Autodesk.Revit.DB.Mechanical;
@@ -31,6 +31,7 @@ internal static class EngineeringRulesStore
     internal static void Write(Document doc, EngineeringRuleSet set)
     {
         foreach (var rule in set.Rules) rule.Validate();
+        set.ValidateConditionalGroups();
         set.WallThickness.Validate();
         set.SystemNames.Validate();
         var schema = Schema.Lookup(SchemaId);
@@ -122,7 +123,8 @@ internal static class EngineeringEngine
                 return Source(element, source) is { } v ? EngineeringRulesPolicy.Format(v.Value, 2) : null;
         }
         var p = Find(element, source);
-        if (p is null || !p.HasValue) return null;
+        if (p is null) return null;
+        if (!p.HasValue) return "";
         return p.StorageType == StorageType.String ? p.AsString() : p.AsValueString();
     }
 
@@ -277,13 +279,13 @@ internal static class EngineeringEngine
         string? mark = TypeMark(element);
         // «игнорировать» switches off name, quantity and wall thickness; ADSK_Система_Имя is still filled.
         bool ignored = EngineeringRulesPolicy.IsIgnored(mark);
-        var rule = category is null || ignored ? null : set.Resolve(category, mark);
+        IReadOnlyList<EngineeringRule> rules = category is null || ignored ? [] : set.ResolveConditionals(category, mark, p => Text(element, p, set.WallThickness));
         bool walls = !ignored && set.WallThickness.Target.Length > 0 && element is Pipe or Duct;
-        if (rule != null || walls || system) Apply(element, rule, set, outcome);
+        if (rules.Count > 0 || walls || system) Apply(element, rules, set, outcome);
     }
 
     /// <summary>Writes only differing values. Each element is independent; a failure is counted, never thrown.</summary>
-    internal static void Apply(Element element, EngineeringRule? rule, EngineeringRuleSet set, EngineeringOutcome outcome)
+    internal static void Apply(Element element, IReadOnlyList<EngineeringRule> rules, EngineeringRuleSet set, EngineeringOutcome outcome)
     {
         var doc = element.Document;
         if (doc.IsWorkshared && WorksharingUtils.GetCheckoutStatus(doc, element.Id) == CheckoutStatus.OwnedByOtherUser)
@@ -291,35 +293,37 @@ internal static class EngineeringEngine
         bool changed = false, failed = false;
         try
         {
-            if (rule is { NameEnabled: true })
+            foreach (var rule in rules)
             {
-                string name = EngineeringRulesPolicy.ComposeName(rule.Parts, s => Text(element, s, set.WallThickness));
-                var target = Writable(element, rule.NameTarget, outcome);
-                if (target is null) failed = true;
-                else if (target.StorageType != StorageType.String) { outcome.Skip($"«{rule.NameTarget}» не текстовый"); failed = true; }
-                else if ((target.AsString() ?? "") != name) { target.Set(name); changed = true; }
-            }
-            if (rule is { QuantityEnabled: true })
-            {
-                var source = Source(element, rule.QuantitySource);
-                if (source is null)
+                if (rule is { NameEnabled: true })
                 {
-                    // As in BIM2B: a duct fitting family without ADSK_Размер_Площадь is simply not counted.
-                    outcome.Skip(rule.QuantitySource == EngineeringRulesPolicy.FittingAreaParameter
-                        ? $"семейство без «{EngineeringRulesPolicy.FittingAreaParameter}» — проигнорировано"
-                        : $"нет значения «{rule.QuantitySource}»");
-                    failed = true;
+                    string name = EngineeringRulesPolicy.ComposeName(rule.Parts, s => Text(element, s, set.WallThickness));
+                    var target = Writable(element, rule.NameTarget, outcome);
+                    if (target is null) failed = true;
+                    else if (target.StorageType != StorageType.String) { outcome.Skip($"«{rule.NameTarget}» не текстовый"); failed = true; }
+                    else if ((target.AsString() ?? "") != name) { target.Set(name); changed = true; }
                 }
-                else
+                if (rule is { QuantityEnabled: true })
                 {
-                    double reserve = EngineeringRulesPolicy.ReserveFor(rule, rule.ReserveBySize.Count > 0 ? SizeMm(element) : null,
-                        rule.ReserveBySize.Count > 0 ? SystemTypes(element).Select(t => t.Type) : []);
-                    var q = EngineeringRulesPolicy.Quantity(rule, source.Value.Kind, source.Value.Value, out string? error, reserve);
-                    var target = q is null ? null : Writable(element, rule.QuantityTarget, outcome);
-                    if (q is null) { outcome.Skip(error!); failed = true; }
-                    else if (target is null) failed = true;
-                    else if (WriteNumber(target, q.Value, rule.Decimals, outcome, rule.QuantityTarget) is { } wrote) changed |= wrote;
-                    else failed = true;
+                    var source = Source(element, rule.QuantitySource);
+                    if (source is null)
+                    {
+                        // As in BIM2B: a duct fitting family without ADSK_Размер_Площадь is simply not counted.
+                        outcome.Skip(rule.QuantitySource == EngineeringRulesPolicy.FittingAreaParameter
+                            ? $"семейство без «{EngineeringRulesPolicy.FittingAreaParameter}» — проигнорировано"
+                            : $"нет значения «{rule.QuantitySource}»");
+                        failed = true;
+                    }
+                    else
+                    {
+                        double reserve = rule.Reserve;
+                        var q = EngineeringRulesPolicy.Quantity(rule, source.Value.Kind, source.Value.Value, out string? error, reserve);
+                        var target = q is null ? null : Writable(element, rule.QuantityTarget, outcome);
+                        if (q is null) { outcome.Skip(error!); failed = true; }
+                        else if (target is null) failed = true;
+                        else if (WriteNumber(target, q.Value, rule.Decimals, outcome, rule.QuantityTarget) is { } wrote) changed |= wrote;
+                        else failed = true;
+                    }
                 }
             }
             if (set.SystemNames.Enabled && SystemCategory(element))
@@ -412,10 +416,20 @@ internal static class EngineeringEngine
         return outcome;
     }
 
+    internal static EngineeringOutcome ApplyAll(Document doc, EngineeringRuleSet set)
+    {
+        var outcome = new EngineeringOutcome();
+        foreach (var category in Watched())
+            foreach (var element in new FilteredElementCollector(doc).OfCategory(category).WhereElementIsNotElementType().ToList())
+                Process(element, set, outcome);
+        return outcome;
+    }
+
     internal static EngineeringOutcome ApplyScope(Document doc, EngineeringRuleSet set, string category, string? mark)
     {
         var outcome = new EngineeringOutcome();
-        foreach (var element in Instances(doc, category, mark).ToList()) Process(element, set, outcome);
+        var elements = set.ConditionalGroups.Any(g => g.Category == category) ? All(doc, category) : Instances(doc, category, mark);
+        foreach (var element in elements.ToList()) Process(element, set, outcome);
         return outcome;
     }
 }
@@ -456,7 +470,7 @@ internal sealed class EngineeringUpdater : IUpdater
         {
             var doc = data.GetDocument();
             var set = EngineeringRulesStore.Read(doc);
-            if (set.Rules.Count == 0 && set.WallThickness.Target.Length == 0 && !set.SystemNames.Enabled) return;
+            if (set.Rules.Count == 0 && set.ConditionalGroups.Count == 0 && set.WallThickness.Target.Length == 0 && !set.SystemNames.Enabled) return;
             var ids = new HashSet<ElementId>(data.GetAddedElementIds());
             ids.UnionWith(data.GetModifiedElementIds());
             var outcome = new EngineeringOutcome();
@@ -484,9 +498,22 @@ internal sealed class EngineeringUpdater : IUpdater
 internal sealed class RevitUpdaterModel(Document doc) : IUpdaterModel
 {
     readonly Dictionary<(string, string?), List<Element>> samples = [];
+    string? previewCategory;
+    List<Element> preview = [];
+
+    public (bool Exists, string? Mark) SelectPreview(string category, ConditionalRuleGroup group, EngineeringRule formula, WallThicknessSettings walls)
+    {
+        previewCategory = category;
+        var element = new FilteredElementCollector(doc).OfCategory(Enum.Parse<BuiltInCategory>(category)).WhereElementIsNotElementType()
+            .FirstOrDefault(e => !EngineeringRulesPolicy.IsIgnored(EngineeringEngine.TypeMark(e)) && ReferenceEquals(formula,
+                group.Select(p => p == "Маркировка типоразмера" ? EngineeringEngine.TypeMark(e) ?? "" : EngineeringEngine.Text(e, p, walls))));
+        preview = element is null ? [] : [element];
+        return (element != null, element is null ? null : EngineeringEngine.TypeMark(element));
+    }
 
     List<Element> Scoped(string category, string? mark)
     {
+        if (previewCategory == category) return preview;
         if (!samples.TryGetValue((category, mark), out var list))
             samples[(category, mark)] = list = EngineeringEngine.Instances(doc, category, mark).Take(30).ToList();
         return list;

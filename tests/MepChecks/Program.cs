@@ -1,4 +1,4 @@
-using HeatLossViewer.Mep;
+﻿using HeatLossViewer.Mep;
 
 void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
 bool Near(double a, double b, double tol = 1e-9) => Math.Abs(a - b) < tol;
@@ -45,10 +45,10 @@ Fails(() => set.Put(new EngineeringRule { Category = "OST_DuctCurves", NameEnabl
 Check(set.Rules.Count == 1, "Invalid edit keeps the stored rule");
 Fails(() => set.Put(new EngineeringRule { Category = "OST_DuctCurves", QuantityEnabled = true, Reserve = 0.5 }), "Reserve below 1 must fail");
 var copy = EngineeringRuleSet.FromJson(set.ToJson());
-Check(copy.Version == 2 && copy.Rules.Count == 1 && copy.Rules[0].Parts[0].Parameter == "@Тип" && copy.Resolve("OST_DuctCurves", null) != null, "JSON round trip");
+Check(copy.Version == EngineeringRuleSet.CurrentVersion && copy.Rules.Count == 1 && copy.Rules[0].Parts[0].Parameter == "@Тип" && copy.Resolve("OST_DuctCurves", null) != null, "JSON round trip");
 Check(set.ToJson().Contains("ADSK_Наименование") && !set.ToJson().Contains("TypeKey"), "Readable Cyrillic JSON without legacy keys");
 Check(EngineeringRuleSet.FromJson(null).Rules.Count == 0 && EngineeringRuleSet.FromJson("").Rules.Count == 0, "Empty storage");
-Fails(() => EngineeringRuleSet.FromJson("{\"Version\":3,\"Rules\":[]}"), "Unknown version must fail");
+Fails(() => EngineeringRuleSet.FromJson("{\"Version\":99,\"Rules\":[]}"), "Unknown version must fail");
 Fails(() => EngineeringRuleSet.FromJson("{broken"), "Broken JSON must fail with a message");
 Console.WriteLine("PASS rule scope: «Маркировка типоразмера», «Без типа», «игнорировать», removal, validation, storage round trip");
 
@@ -58,12 +58,133 @@ var v1 = EngineeringRuleSet.FromJson("{\"Version\":1,\"Rules\":[" +
     "{\"Category\":\"OST_PipeCurves\",\"TypeKey\":\"uid-steel\",\"NameEnabled\":true,\"Parts\":[{\"Parameter\":\"@Размер\"}]}," +
     "{\"Category\":\"OST_PipeCurves\",\"TypeKey\":\"uid-unmarked\",\"QuantityEnabled\":true,\"QuantitySource\":\"Длина\",\"Unit\":\"Meter\"}," +
     "{\"Category\":\"OST_PipeCurves\",\"TypeKey\":\"uid-ignored\",\"NameEnabled\":true,\"Parts\":[{\"Parameter\":\"@Тип\"}]}]}");
-Check(v1.Version == 2, "v1 upgraded");
+Check(v1.Version == EngineeringRuleSet.CurrentVersion, "v1 upgraded");
 Check(v1.Migrate(k => k switch { "uid-steel" => "Сталь", "uid-ignored" => "игнорировать", _ => null }), "Migration ran");
 Check(v1.Resolve("OST_PipeCurves", "Сталь")!.Parts[0].Parameter == "@Размер", "Type rule → its mark");
 Check(v1.Resolve("OST_PipeCurves", null)!.QuantityEnabled, "Unmarked type rule wins over the former category rule");
 Check(v1.Rules.Count == 2 && !v1.Migrate(_ => null), "Ignored type dropped; second migration is a no-op");
 Console.WriteLine("PASS version 1 rules migrate to type marks");
+
+// Category rules: first matching condition, fallback, independent name/quantity and migration.
+var conditional = new EngineeringRuleSet();
+EngineeringRule NameFormula(string source) => new() { Category = "OST_PipeCurves", NameEnabled = true, Parts = [new() { Parameter = source }] };
+var nameGroup = new ConditionalRuleGroup
+{
+    Category = "OST_PipeCurves", Target = "ADSK_Наименование",
+    Conditions = [new() { Parameter = "Комментарии к типоразмеру", Value = "Труба стальная электросварная прямошовная", Formula = NameFormula("Внешний диаметр") },
+        new() { Parameter = "Комментарии к типоразмеру", Comparison = ConditionComparison.Contains, Value = "стальная", Formula = NameFormula("Диаметр") }],
+    Otherwise = NameFormula("@Тип")
+};
+conditional.ConditionalGroups.Add(nameGroup);
+var quantityGroup = new ConditionalRuleGroup
+{
+    Category = "OST_PipeCurves", IsQuantity = true, Target = "ADSK_Количество",
+    Otherwise = new EngineeringRule { Category = "OST_PipeCurves", QuantityEnabled = true, QuantitySource = "Длина", Unit = QuantityUnit.Meter, Reserve = 1.15 }
+};
+conditional.ConditionalGroups.Add(quantityGroup);
+foreach (var g in conditional.ConditionalGroups) g.Validate();
+IReadOnlyList<EngineeringRule> Selected(string? comment) => conditional.ResolveConditionals("OST_PipeCurves", null, _ => comment);
+Check(Selected(" ТРУБА СТАЛЬНАЯ ЭЛЕКТРОСВАРНАЯ ПРЯМОШОВНАЯ ").First(r => r.NameEnabled).Parts[0].Parameter == "Внешний диаметр", "Exact type comment, trim/case and first-match priority");
+Check(Selected("Труба стальная водогазопроводная").First(r => r.NameEnabled).Parts[0].Parameter == "Диаметр", "Second condition has a different formula");
+Check(Selected("Полипропилен").First(r => r.NameEnabled).Parts[0].Parameter == "@Тип" && Selected(null).First(r => r.NameEnabled).Parts[0].Parameter == "@Тип", "Fallback on unmatched or missing parameter");
+Check(Selected("Полипропилен").First(r => r.QuantityEnabled).Reserve == 1.15, "Quantity conditions independent from name");
+var firstCondition = nameGroup.Conditions[0]; nameGroup.Conditions.Reverse();
+Check(Selected(firstCondition.Value).First(r => r.NameEnabled).Parts[0].Parameter == "Диаметр", "Changing condition order changes priority");
+nameGroup.Conditions.Reverse();
+firstCondition.Formula.NameEnabled = false;
+Check(!Selected(firstCondition.Value).Any(r => r.NameEnabled), "Disabled matched formula skips write rather than using fallback");
+firstCondition.Formula.NameEnabled = true;
+Check(conditional.ResolveConditionals("OST_PipeCurves", "игнорировать", _ => firstCondition.Value).Count == 0, "Ignore mark retained");
+Check(conditional.ResolveConditionals("OST_DuctCurves", null, _ => firstCondition.Value).Count == 0, "Conditions isolated by category");
+var comparison = new FormulaCondition { Parameter = "x", Comparison = ConditionComparison.Empty };
+Check(comparison.Matches(_ => "") && !comparison.Matches(_ => null), "Empty existing parameter differs from missing parameter");
+comparison.Comparison = ConditionComparison.NotEmpty;
+Check(comparison.Matches(_ => "a") && !comparison.Matches(_ => " "), "Not empty");
+comparison.Comparison = ConditionComparison.NotEquals; comparison.Value = "a";
+Check(comparison.Matches(_ => "b") && !comparison.Matches(_ => null), "Missing value never satisfies not equals");
+comparison.Comparison = ConditionComparison.StartsWith; comparison.Value = "труба";
+Check(comparison.Matches(_ => "Труба стальная"), "Starts with");
+var roundTrip = EngineeringRuleSet.FromJson(conditional.ToJson());
+Check(roundTrip.Version == 3 && roundTrip.ConditionalGroups.Count == 2 && roundTrip.ResolveConditionals("OST_PipeCurves", null, _ => firstCondition.Value).First(r => r.NameEnabled).Parts[0].Parameter == "Внешний диаметр", "Conditions and fallback survive JSON round trip");
+var migratedGroups = new EngineeringRuleSet { Rules = EngineeringRuleSet.DefaultRules() };
+migratedGroups.EnsureConditionalGroups();
+foreach (var old in migratedGroups.Rules)
+{
+    var resolved = migratedGroups.ResolveConditionals(old.Category, old.TypeMark, _ => null);
+    Check(resolved.First(r => r.NameEnabled).Parts.Select(p => p.Parameter).SequenceEqual(old.Parts.Select(p => p.Parameter)), "Legacy name formula retained");
+    Check(resolved.First(r => r.QuantityEnabled).QuantitySource == old.QuantitySource, "Legacy quantity formula retained");
+}
+Check(migratedGroups.ResolveConditionals("OST_PipeCurves", "Неизвестная", _ => null).Count == 0, "Migration preserves coverage; unmatched old marks stay untouched");
+int convertedCount = migratedGroups.ConditionalGroups.Count;
+migratedGroups.ConditionalGroups[0].Conditions.Clear(); migratedGroups.EnsureConditionalGroups();
+Check(migratedGroups.ConditionalGroups.Count == convertedCount && migratedGroups.ConditionalGroups[0].Conditions.Count == 0, "Migration does not restore deleted conditions");
+var differentTargets = new EngineeringRuleSet();
+differentTargets.Put(NameFormula("@Тип"));
+var customTarget = NameFormula("Диаметр"); customTarget.TypeMark = "Другая"; customTarget.NameTarget = "Комментарии"; differentTargets.Put(customTarget);
+differentTargets.EnsureConditionalGroups();
+Check(differentTargets.ResolveConditionals("OST_PipeCurves", "Другая", _ => null).Single().NameTarget == "Комментарии", "Legacy custom target not lost during conversion");
+var invalidGroup = new ConditionalRuleGroup { Category = "OST_PipeCurves", Conditions = [new() { Parameter = "", Formula = NameFormula("@Тип") }] };
+Fails(invalidGroup.Validate, "Condition without a parameter rejected");
+Console.WriteLine("PASS conditional rules: type comments, priority, fallback, independent quantity, comparisons, JSON and legacy migration");
+
+var requestedPipes = new EngineeringRuleSet { Rules = EngineeringRuleSet.DefaultRules() };
+requestedPipes.EnsureConditionalGroups(); requestedPipes.ApplyPipeNameDefaults();
+var pipeNames = requestedPipes.ConditionalGroups.Single(g => g.Category == "OST_PipeCurves" && !g.IsQuantity && g.Target == "ADSK_Наименование");
+Check(pipeNames.Conditions.Count == 1 && pipeNames.Conditions[0].Value == "Труба стальная электросварная прямошовная", "Requested exact type comment");
+string PipeName(string comment, string outer, string nominal, string thickness) => EngineeringRulesPolicy.ComposeName(
+    requestedPipes.ResolveConditionals("OST_PipeCurves", null, p => p == "Комментарии к типоразмеру" ? comment : null).Single(r => r.NameEnabled).Parts,
+    p => p switch { "Комментарии к типоразмеру" => comment, "Внешний диаметр" => outer, "Диаметр" => nominal, "@Толщина стенки" => thickness, _ => null });
+Check(PipeName("Труба стальная электросварная прямошовная", "133", "125", "4") == "Труба стальная электросварная прямошовная ø133x4", "Steel formula uses outer diameter, like screenshot");
+Check(PipeName("Труба полипропиленовая PN20", "25", "20", "3.4") == "Труба полипропиленовая PN20 ø20x3.4", "Fallback uses nominal diameter, like screenshot");
+pipeNames.Otherwise.Parts[1].Prefix = " Изменено "; requestedPipes.ApplyPipeNameDefaults();
+Check(pipeNames.Otherwise.Parts[1].Prefix == " Изменено ", "Pipe defaults do not overwrite later edits");
+requestedPipes.ConditionalGroups.RemoveAll(g => g.Category == "OST_PipeCurves");
+var afterDelete = EngineeringRuleSet.FromJson(requestedPipes.ToJson());
+afterDelete.EnsureConditionalGroups(); afterDelete.ApplyPipeNameDefaults();
+Check(!afterDelete.ConditionalGroups.Any(g => g.Category == "OST_PipeCurves") && afterDelete.ResolveConditionals("OST_PipeCurves", null, _ => "").Count == 0, "Deleted rules stay deleted after JSON/reopen; legacy rules never revive");
+Console.WriteLine("PASS requested pipe defaults and persistent rule deletion");
+
+var enabledDefaults = new EngineeringRuleSet(); enabledDefaults.PrepareDefaults();
+Check(enabledDefaults.ConditionalGroups.Count == 20 && enabledDefaults.ConditionalGroups.All(g => g.IsActive) && enabledDefaults.SystemNames.Enabled, "All ten default categories and system names enabled");
+enabledDefaults.ValidateConditionalGroups();
+foreach (var group in enabledDefaults.ConditionalGroups)
+    Check(group.Conditions.Select(c => c.Formula).Append(group.Otherwise).All(f => group.IsQuantity ? f.QuantityEnabled : f.NameEnabled), "Every default condition and fallback enabled");
+var pipeQuantity = enabledDefaults.ConditionalGroups.First(g => g.Category == "OST_PipeCurves" && g.IsQuantity);
+Check(pipeQuantity.Otherwise.QuantitySource == "Длина" && pipeQuantity.Otherwise.Unit == QuantityUnit.Meter, "Previously empty pipe fallback gets length, not 1 piece");
+pipeQuantity.Otherwise.QuantityEnabled = false;
+enabledDefaults.SystemNames.Enabled = false;
+enabledDefaults.ConditionalGroups.RemoveAll(g => g.Category == "OST_CableTray");
+var enabledRoundTrip = EngineeringRuleSet.FromJson(enabledDefaults.ToJson()); enabledRoundTrip.PrepareDefaults();
+Check(!enabledRoundTrip.SystemNames.Enabled && !enabledRoundTrip.ConditionalGroups.First(g => g.Category == "OST_PipeCurves" && g.IsQuantity).Otherwise.QuantityEnabled && !enabledRoundTrip.ConditionalGroups.Any(g => g.Category == "OST_CableTray"), "Later user disabling and deletion survive default preparation and reopening");
+var userCustom = new EngineeringRuleSet { ConditionalGroups = [new() { Category = "OST_PipeCurves", Target = "Комментарии", Otherwise = new() { Category = "OST_PipeCurves" } }] };
+userCustom.PrepareDefaults();
+Check(!userCustom.ConditionalGroups.First(g => g.Target == "Комментарии").IsActive, "Enabling standard defaults does not enable custom target rules");
+Console.WriteLine("PASS default preparation: all enabled, valid fallbacks, persistence of later changes and custom rule isolation");
+
+var pipeReserves = new EngineeringRuleSet(); pipeReserves.PrepareDefaults();
+var pipeReserveGroup = pipeReserves.ConditionalGroups.Single(g => g.Category == "OST_PipeCurves" && g.IsQuantity);
+Check(pipeReserveGroup.Conditions.Count == 4, "Four exact type comments for 10 percent pipe reserve");
+foreach (string comment in new[] { "Труба стальная водогазопроводная", "Труба стальная водогазопроводная оцинкованная", "Труба стальная электросварная прямошовная", "Труба чугунная SML" })
+{
+    var selected = pipeReserves.ResolveConditionals("OST_PipeCurves", null, _ => " " + comment.ToUpperInvariant() + " ").Single(r => r.QuantityEnabled);
+    Check(selected.Reserve == 1.1 && selected.QuantitySource == "Длина" && selected.Unit == QuantityUnit.Meter && selected.Decimals == 6 && selected.Rounding == QuantityRounding.Nearest, "10 percent, length in meters, no rounding preset: " + comment);
+    Check(Near(EngineeringRulesPolicy.Quantity(selected, SourceKind.Length, 2, out _)!.Value, 2.2), "2 m becomes 2.2 m for special pipe");
+}
+foreach (string? comment in new[] { "Труба полипропиленовая PN20", "Труба стальная водогазопроводная ГОСТ", "", null })
+{
+    var selected = pipeReserves.ResolveConditionals("OST_PipeCurves", null, _ => comment).Single(r => r.QuantityEnabled);
+    Check(selected.Reserve == 1.3 && Near(EngineeringRulesPolicy.Quantity(selected, SourceKind.Length, 2, out _)!.Value, 2.6), "All other/missing type comments get 30 percent");
+}
+pipeReserveGroup.Conditions[0].Formula.Reserve = 1.075; pipeReserveGroup.Otherwise.QuantityEnabled = false;
+var reserveReload = EngineeringRuleSet.FromJson(pipeReserves.ToJson()); reserveReload.PrepareDefaults();
+Check(reserveReload.ConditionalGroups.Single(g => g.Category == "OST_PipeCurves" && g.IsQuantity).Conditions[0].Formula.Reserve == 1.075 && !reserveReload.ConditionalGroups.Single(g => g.Category == "OST_PipeCurves" && g.IsQuantity).Otherwise.QuantityEnabled, "Later reserve edits and disabling survive reopening");
+reserveReload.ConditionalGroups.RemoveAll(g => g.Category == "OST_PipeCurves" && g.IsQuantity);
+reserveReload.PrepareDefaults(); Check(!reserveReload.ConditionalGroups.Any(g => g.Category == "OST_PipeCurves" && g.IsQuantity), "Deleted quantity rule is not restored after one-time upgrade");
+var oldReserveSettings = new EngineeringRuleSet { ConditionalRulesInitialized = true, RuleListInitialized = true, EnabledDefaultsVersion = 1, PipeNameDefaultsVersion = 1,
+    ConditionalGroups = [new() { Category = "OST_PipeCurves", IsQuantity = true, Target = "ADSK_Количество", Otherwise = new() { Category = "OST_PipeCurves", QuantityEnabled = true, Reserve = 1.5 } }] };
+oldReserveSettings.PrepareDefaults();
+Check(oldReserveSettings.ConditionalGroups.Single().Conditions.Count == 4 && oldReserveSettings.ConditionalGroups.Single().Otherwise.Reserve == 1.3, "Existing 2.0.6 project receives new reserve scheme once");
+Console.WriteLine("PASS pipe quantity defaults 2.0.7: four comments at 10 percent, other pipes at 30 percent, upgrade and persistence");
 
 var walls = WallThicknessSettings.Defaults();
 Check(EngineeringRulesPolicy.DuctWall(walls, SectionShape.Round, 200, false) == 0.5 && EngineeringRulesPolicy.DuctWall(walls, SectionShape.Round, 250, false) == 0.6, "Round rows ascending, limit inclusive");
@@ -137,7 +258,7 @@ Check(Sys(("в1", SystemDomain.Pipe)) != null && Sys(("ADSK_Водопровод
 Check(Sys(("В1", SystemDomain.Duct)) == null, "Pipe rules do not name a ventilation system В1");
 Check(Sys(("ADSK_Водопровод_В1", SystemDomain.Pipe), ("ADSK_Водопровод_Т3", SystemDomain.Pipe), ("ADSK_Водопровод_Т4", SystemDomain.Pipe)) ==
     "В1 - Внутренний хозяйственно-питьевой водопровод; Т3,Т4 - Внутренний водопровод горячей воды, подающий и циркуляционный", "Multi-system equipment: distinct names joined");
-Check(Sys() == null && Sys(("Прочее", SystemDomain.Pipe)) == null, "No match → no value");
+Check(Sys() == null && Sys(("Своя система", SystemDomain.Pipe)) == null, "No match → no value");
 systems.Rules.Insert(0, new SystemNameRule { Types = ["ADSK_Водопровод_В1"], Domain = SystemDomain.Any, Name = "Особый" });
 Check(Sys(("ADSK_Водопровод_В1", SystemDomain.Pipe)) == "Особый", "First matching rule wins");
 Fails(() => new SystemNameSettings { Rules = [new() { Types = [" ", ""], Name = "x" }] }.Validate(), "Rule without types");
@@ -146,7 +267,21 @@ Fails(() => new SystemNameSettings { Enabled = true, Target = "" }.Validate(), "
 var sysCopy = EngineeringRuleSet.FromJson(new EngineeringRuleSet { SystemNames = systems }.ToJson());
 Check(sysCopy.SystemNames.Enabled && sysCopy.SystemNames.Rules[0].Name == "Особый", "System rules stored with the rule set");
 var older = EngineeringRuleSet.FromJson("""{"Version":2,"Rules":[]}""");
-Check(!older.SystemNames.Enabled && older.SystemNames.Rules.Count == 10, "Older projects: off, defaults ready");
+Check(!older.SystemNames.Enabled && older.SystemNames.Rules.Count == SystemNameSettings.Defaults().Count, "Older projects: off, defaults ready");
+var fresh = new SystemNameSettings { Enabled = true };
+string? Fresh(string t) => EngineeringRulesPolicy.SystemName(fresh, [(t, SystemDomain.Pipe)]);
+Check(Fresh("ADSK_Отопление_Т11")!.StartsWith("Т11,Т21 - ") && Fresh("ADSK_Отопление_Т21") == Fresh("ADSK_Отопление_Т11"), "Heating Т11/Т21");
+Check(Fresh("ADSK_Теплоснабжение_Т1")!.StartsWith("Т1,Т2 - Теплоснабжение") && Fresh("ADSK_Холодоснабжение_Х2")!.StartsWith("Х1,Х2 - ")
+    && Fresh("ADSK_Кондиционирование_Х4")!.StartsWith("Х3,Х4 - ") && Fresh("ADSK_Кондиционирование_Х5")!.StartsWith("Х5 - "), "Heat supply, chilled water, conditioning");
+Check(Fresh("Холодное водоснабжение")!.StartsWith("В1 - ") && Fresh("Горячее водоснабжение")!.StartsWith("Т3,Т4 - ") && Fresh("Вентиляционное отверстие")!.StartsWith("К1 - ")
+    && Fresh("Водяная система пожаротушения")!.StartsWith("В21 - ") && Fresh("Дренчерная система пожаротушения")!.StartsWith("В22 - ")
+    && Fresh("Газовая система пожаротушения") != null && Fresh("Другие системы пожаротушения") != null && Fresh("Прочее") != null, "Revit standard system types named");
+var oldStored = EngineeringRuleSet.FromJson("""{"Version":2,"Rules":[],"SystemNames":{"Enabled":true,"Rules":[{"Types":["В1"],"Domain":"Pipe","Name":"Мой В1"},{"Types":["Т1","Т2"],"Domain":"Pipe","Name":"Отопление"}]}}""").SystemNames;
+Check(oldStored.Rules[0].Name == "Мой В1" && oldStored.Rules[0].Types.Contains("Холодное водоснабжение") && oldStored.Rules[1].Name == "Отопление"
+    && EngineeringRulesPolicy.SystemName(oldStored, [("ADSK_Отопление_Т11", SystemDomain.Pipe)])!.StartsWith("Т11,Т21 - "), "Stored rules get the new default types once, own names kept");
+oldStored.Rules.RemoveAll(r => r.Types.Contains("Прочее"));
+var reloaded = EngineeringRuleSet.FromJson(new EngineeringRuleSet { SystemNames = oldStored }.ToJson()).SystemNames;
+Check(!reloaded.Rules.Any(r => r.Types.Contains("Прочее")), "A default rule deleted after the upgrade stays deleted");
 var sysTarget = new EngineeringRuleSet();
 sysTarget.Merge(sysCopy, _ => false, false, true);
 Check(sysTarget.SystemNames.Rules[0].Name == "Особый", "System rules imported on request");
@@ -321,3 +456,73 @@ Check(defaults.All(d => d.Reserve == 1 && d.Decimals == 6 && d.Rounding == Quant
 var withDefaults = new EngineeringRuleSet(); foreach (var d in defaults) withDefaults.Put(d);
 Check(withDefaults.Resolve("OST_FlexPipeCurves", "Подводки")!.Parts.Count == 2, "Defaults resolve by type mark");
 Console.WriteLine("PASS default updater formulas");
+
+// ---------- Riser numbering (ADSK Dynamo scripts, native) ----------
+Check(RiserNumberingPolicy.IsVertical(0.3, 0.2, 3000) && !RiserNumberingPolicy.IsVertical(5, 0, 3000) && !RiserNumberingPolicy.IsVertical(0, 0, 0.5), "Vertical: same plan point, real height");
+RiserPipe P(long id, double x, double y, double z, double len, string v = "") => new(id, x, y, z, len, v);
+var riserPipes = new[]
+{
+    // Riser A (left, top row): three floors, one short piece between fittings.
+    P(1, 0, 10000, 0, 2800), P(2, 0.4, 10000.3, 2800, 300), P(3, 0, 10000, 3100, 2700),
+    // Riser B (right, same row, 0.5 mm lower in Y).
+    P(4, 5000, 9999.5, 0, 3000),
+    // Riser C (lower row, left of everything).
+    P(5, -2000, 2000, 0, 3000),
+    // A drop of 400 mm: not a riser.
+    P(6, 3000, 6000, 2600, 400),
+    // Two short pieces at one point: 800 + 800 ≥ 1500 → a riser (whole riser length counts).
+    P(7, 8000, 2000, 0, 800), P(8, 8000, 2000, 800, 800),
+};
+var risers = RiserNumberingPolicy.Group(riserPipes, RiserNumberingPolicy.DefaultMinLengthMm);
+Check(risers.Count == 4 && risers.All(r => !r.Pipes.Any(p => p.Id == 6)), "Drops shorter than the minimum are not risers");
+Check(risers[0].Pipes.Select(p => p.Id).SequenceEqual(new long[] { 1, 2, 3 }), "Segments of one riser grouped bottom to top, short piece included");
+Check(risers.Select(r => r.Pipes[0].Id).SequenceEqual(new long[] { 1, 4, 5, 7 }), "Order: top row first (Y descending, 1 mm tolerance), left to right");
+var auto = RiserNumberingPolicy.Auto(risers, 1).ToDictionary(x => x.Id, x => x.Number);
+Check(auto[1] == 1 && auto[2] == 1 && auto[3] == 1 && auto[4] == 2 && auto[5] == 3 && auto[7] == 4 && auto[8] == 4 && !auto.ContainsKey(6), "Auto: one number per riser, from 1");
+Check(RiserNumberingPolicy.Auto(risers, 10)[0].Number == 10, "Auto: start value");
+Check(RiserNumberingPolicy.Group(riserPipes, 0).Count == 5 && RiserNumberingPolicy.Group(riserPipes, 5000).Count == 1, "Minimum length filters whole risers");
+var given = new[] { P(1, 0, 0, 0, 3000, "Ст В1-1"), P(2, 0, 0, 3000, 3000), P(3, 0, 0, 6000, 3000, " Ст В1-1 "),
+    P(4, 500, 0, 0, 3000), P(5, 500, 0, 3000, 3000),
+    P(6, 900, 0, 0, 3000, "1"), P(7, 900, 0, 3000, 3000, "2") };
+var riserCopy = RiserNumberingPolicy.Copy(RiserNumberingPolicy.Group(given, 1500));
+Check(riserCopy.Writes.Select(w => w.Id).OrderBy(i => i).SequenceEqual(new long[] { 2, 3 }) && riserCopy.Writes.All(w => w.Value == "Ст В1-1"), "Copy: the given number goes to the other segments");
+Check(riserCopy.Empty.Count == 1 && riserCopy.Empty[0].Pipes[0].Id == 4 && riserCopy.Conflicts.Count == 1 && riserCopy.Conflicts[0].Values.Length == 2 && riserCopy.Risers == 3, "Copy: risers without a number and with different numbers are reported, not changed");
+Check(RiserNumberingPolicy.ParseLength("1500") == 1500 && RiserNumberingPolicy.ParseLength("1,5") == 1.5 && RiserNumberingPolicy.ParseLength("-1") is null && RiserNumberingPolicy.ParseLength("x") is null, "Minimum length input");
+Console.WriteLine("PASS riser numbering: vertical pipes, grouping, order, auto numbers, copy of given numbers");
+
+RiserPipe SP(long id, double x, double y, string system, double bottom = 0, double length = 3000, string value = "") => new(id, x, y, bottom, length, value, system);
+var systemsRisers = RiserNumberingPolicy.Group(new[] { SP(101, 0, 0, "В1"), SP(102, 100, 0, "Т3"), SP(103, 200, 0, "Т4"),
+    SP(104, 2000, 0, "В1"), SP(105, 2100, 0, "Т3"), SP(106, 2200, 0, "Т4") }, 1500);
+var bySystem = RiserNumberingPolicy.Auto(systemsRisers, 1).ToDictionary(p => p.Id, p => p.Number);
+Check(bySystem[101] == 1 && bySystem[102] == 1 && bySystem[103] == 1 && bySystem[104] == 2 && bySystem[105] == 2 && bySystem[106] == 2, "Independent system counters start from 1");
+Check(RiserNumberingPolicy.Auto(systemsRisers, 5, false).Select(p => p.Number).SequenceEqual(new[] { 5, 6, 7, 8, 9, 10 }), "Checkbox off: continuous numbering across all systems");
+var waterBundles = RiserNumberingPolicy.Neighbors(systemsRisers, 300);
+Check(waterBundles.Count == 2 && waterBundles.All(r => r.Pipes.Count == 3), "Cold, hot and return form two neighboring bundles");
+var shared = RiserNumberingPolicy.Auto(waterBundles, 1).ToDictionary(p => p.Id, p => p.Number);
+Check(shared[101] == shared[102] && shared[102] == shared[103] && shared[104] == shared[105] && shared[105] == shared[106] && shared[104] == 2, "Neighbors receive one number in all three systems");
+var sameAxes = new[] { SP(1, 0, 0, "В1"), SP(2, 0, 0, "Т3") };
+Check(RiserNumberingPolicy.Group(sameAxes, 1500).Count == 2 && RiserNumberingPolicy.Group(sameAxes, 1500, false).Count == 1, "Coincident axes separated by system when requested");
+Check(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1"), SP(2, 300, 0, "Т3") }, 1500), 300).Count == 1, "Neighbor distance boundary included");
+Check(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1"), SP(2, 301, 0, "Т3") }, 1500), 300).Count == 2, "Beyond distance not combined");
+Check(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1"), SP(2, 100, 0, "В1") }, 1500), 300).Count == 2, "Parallel risers of same type remain independent");
+Check(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, ""), SP(2, 100, 0, "Т3") }, 1500), 300).Count == 2, "Unknown system not combined by proximity alone");
+Check(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1"), SP(2, 100, 0, "Т3", 3000) }, 1500), 300).Count == 2, "Different floors without height overlap stay separate");
+Check(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1"), SP(2, 100, 0, "Т3", 2000) }, 1500), 300).Count == 1, "At least 1 m of common height");
+Check(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1"), SP(2, 100, 0, "Т3", 2001) }, 1500), 300).Count == 2, "Tiny overlap not enough to infer neighbors");
+var neighborChain = RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1"), SP(2, 250, 0, "Т3"), SP(3, 500, 0, "Т4") }, 1500), 300);
+Check(neighborChain.Count == 2, "Complete-link grouping prevents an unbounded chain of near axes");
+var segmentedNeighbors = RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1", 0, 800), SP(2, 0, 0, "В1", 800, 800), SP(3, 100, 0, "Т3", 0, 1600) }, 1500);
+Check(RiserNumberingPolicy.Neighbors(segmentedNeighbors, 300).Count == 1, "Common height sums short segments between fittings");
+var unequal = RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 6000, "В1"), SP(2, 0, 3000, "В1"),
+    SP(3, 0, 0, "В1"), SP(4, 100, 0, "Т3"), SP(5, 0, -3000, "Т3") }, 1500), 300);
+var synchronized = RiserNumberingPolicy.Auto(unequal, 1).ToDictionary(p => p.Id, p => p.Number);
+Check(synchronized[3] == 3 && synchronized[4] == 3 && synchronized[5] == 4, "Mixed bundles synchronize counters without duplicates within a system");
+var neighborCopy = RiserNumberingPolicy.Copy(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1", value: "5"), SP(2, 100, 0, "Т3") }, 1500), 300));
+Check(neighborCopy.Writes.Single() == (2L, "5"), "Copy mode shares given number with neighboring system");
+var neighborConflict = RiserNumberingPolicy.Copy(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1", value: "5"), SP(2, 100, 0, "Т3", value: "6") }, 1500), 300));
+Check(neighborConflict.Conflicts.Count == 1 && neighborConflict.Writes.Count == 0, "Conflicting numbers in neighboring bundle are not overwritten");
+var overflowRisers = RiserNumberingPolicy.Group(new[] { SP(1, 0, 0, "В1"), SP(2, 1000, 0, "Т3") }, 1500);
+Check(RiserNumberingPolicy.Auto(overflowRisers, int.MaxValue).All(w => w.Number == int.MaxValue), "Max int allowed once in each independent system");
+try { RiserNumberingPolicy.Auto(overflowRisers, int.MaxValue, false); throw new Exception("Expected numbering overflow"); } catch (OverflowException) { }
+Check(RiserNumberingPolicy.Neighbors(RiserNumberingPolicy.Group(systemsRisers.SelectMany(r => r.Pipes).Reverse(), 1500), 300).SelectMany(r => r.Pipes).Select(p => p.Id).SequenceEqual(waterBundles.SelectMany(r => r.Pipes).Select(p => p.Id)), "Grouping deterministic across input order");
+Console.WriteLine("PASS riser systems and neighbors: independent counters, common numbers, height overlap, no chains, copy conflicts, overflow");

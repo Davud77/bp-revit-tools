@@ -5,5 +5,6 @@
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/MepGeometry.cs" Link="MepGeometry.cs" />
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/MepAlignGeometry.cs" Link="MepAlignGeometry.cs" />
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/InsulationRules.cs" Link="InsulationRules.cs" />
+    <Compile Include="../../modules/ov/HeatLossViewer/Mep/RiserNumberingPolicy.cs" Link="RiserNumberingPolicy.cs" />
   </ItemGroup>
 </Project>

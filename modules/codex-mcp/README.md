@@ -12,3 +12,4 @@
 - [Компактный Code Mode: поиск, схемы и JavaScript](CODE-MODE.md)
 - [Перенос ресурсов оформления](DOCUMENTATION-RESOURCES.md)
 - [Проверки и ограничения](../../docs/VALIDATION.md)
+- [Сравнение 20 MCP и усиление ядра](../../docs/MCP-COMPARISON-2026-11-17.md)

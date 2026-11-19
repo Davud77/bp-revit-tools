@@ -16,6 +16,14 @@ public static class IfcSurfaceStyles
         public string MaterialName => $"АС стиль IFC #{R:X2}{G:X2}{B:X2} прозр. {Transparency}%";
     }
 
+    /// <summary>
+    /// Archicad draws glass transparent through reflections, but the IFC only carries a dark colour and 25 % transparency, which Revit
+    /// shows as black. A semi-transparent surface of a door or window is glass: its transparency is at least 80 %.
+    /// </summary>
+    public static Style ForKind(string kind, Style style) =>
+        kind is "Window" or "Door" && style.Transparency is > 0 and < GlassTransparency ? style with { Transparency = GlassTransparency } : style;
+    public const int GlassTransparency = 80;
+
     /// <summary>The styles of one record and the style index of each triangle (-1 = none); null when the record has none.</summary>
     public static (IReadOnlyList<Style> Styles, IReadOnlyList<int> Faces)? Read(JsonElement record, int triangleCount)
     {
@@ -28,7 +36,7 @@ public static class IfcSurfaceStyles
             int transparency = style.GetProperty("transparency").GetInt32();
             if (rgb.Length != 3 || rgb.Any(v => v < 0 || v > 255) || transparency < 0 || transparency > 100)
                 throw new InvalidDataException("Invalid IFC surface style");
-            list.Add(new Style(rgb[0], rgb[1], rgb[2], transparency));
+            list.Add(ForKind(record.TryGetProperty("kind", out var kindValue) ? kindValue.GetString() ?? "" : "", new Style(rgb[0], rgb[1], rgb[2], transparency)));
         }
         var perFace = faces.EnumerateArray().Select(v => v.GetInt32()).ToList();
         if (perFace.Count != triangleCount || perFace.Any(i => i < -1 || i >= list.Count))
@@ -46,7 +54,7 @@ public static class IfcSurfaceStyles
             foreach (var style in styles.EnumerateArray())
             {
                 var rgb = style.GetProperty("rgb").EnumerateArray().Select(v => v.GetInt32()).ToArray();
-                wanted.Add(new Style(rgb[0], rgb[1], rgb[2], style.GetProperty("transparency").GetInt32()));
+                wanted.Add(ForKind(record.TryGetProperty("kind", out var kindValue) ? kindValue.GetString() ?? "" : "", new Style(rgb[0], rgb[1], rgb[2], style.GetProperty("transparency").GetInt32())));
             }
         }
         var result = new Dictionary<Style, ElementId>();

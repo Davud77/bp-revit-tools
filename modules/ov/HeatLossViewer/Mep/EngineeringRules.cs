@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -17,6 +17,68 @@ public enum QuantityRounding { Up, Nearest }
 /// <summary>Physical kind of the source value after conversion from Revit internal units.</summary>
 public enum SourceKind { Count, Length, Area, Number }
 public enum SectionShape { Round, Rectangular }
+
+public enum ConditionComparison { Equals, NotEquals, Contains, StartsWith, Empty, NotEmpty }
+
+public sealed class FormulaCondition
+{
+    public string Parameter { get; set; } = "Комментарии к типоразмеру";
+    [JsonConverter(typeof(JsonStringEnumConverter))] public ConditionComparison Comparison { get; set; }
+    public string Value { get; set; } = "";
+    public EngineeringRule Formula { get; set; } = new();
+
+    public bool Matches(Func<string, string?> text)
+    {
+        // Missing parameters must not accidentally satisfy «не равно» or an empty value.
+        var raw = text(Parameter);
+        if (raw is null) return false;
+        string actual = raw.Trim(), expected = Value.Trim();
+        return Comparison switch
+        {
+            ConditionComparison.Equals => actual.Equals(expected, StringComparison.OrdinalIgnoreCase),
+            ConditionComparison.NotEquals => !actual.Equals(expected, StringComparison.OrdinalIgnoreCase),
+            ConditionComparison.Contains => actual.Contains(expected, StringComparison.OrdinalIgnoreCase),
+            ConditionComparison.StartsWith => actual.StartsWith(expected, StringComparison.OrdinalIgnoreCase),
+            ConditionComparison.Empty => actual.Length == 0,
+            ConditionComparison.NotEmpty => actual.Length > 0,
+            _ => false
+        };
+    }
+}
+
+/// <summary>Ordered conditions for one category and target; first match wins, otherwise the fallback formula.</summary>
+public sealed class ConditionalRuleGroup
+{
+    public string Category { get; set; } = "";
+    public bool IsQuantity { get; set; }
+    public string Target { get; set; } = EngineeringRulesPolicy.DefaultNameTarget;
+    public List<FormulaCondition> Conditions { get; set; } = [];
+    public EngineeringRule Otherwise { get; set; } = new();
+    [JsonIgnore] public bool IsActive => Conditions.Select(c => c.Formula).Append(Otherwise)
+        .Any(f => IsQuantity ? f.QuantityEnabled : f.NameEnabled);
+
+    public EngineeringRule Select(Func<string, string?> text) => Conditions.FirstOrDefault(c => c.Matches(text))?.Formula ?? Otherwise;
+
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(Category) || string.IsNullOrWhiteSpace(Target))
+            throw new InvalidOperationException("Укажите категорию и заполняемый параметр правила.");
+        foreach (var c in Conditions)
+        {
+            if (string.IsNullOrWhiteSpace(c.Parameter)) throw new InvalidOperationException("Выберите параметр условия.");
+            if (!Enum.IsDefined(c.Comparison)) throw new InvalidOperationException("Неизвестное сравнение условия.");
+            if (c.Comparison is ConditionComparison.Contains or ConditionComparison.StartsWith && string.IsNullOrWhiteSpace(c.Value))
+                throw new InvalidOperationException("Укажите значение условия.");
+        }
+        foreach (var formula in Conditions.Select(c => c.Formula).Append(Otherwise))
+        {
+            var f = formula.Clone(); f.Category = Category; f.TypeMark = null;
+            f.NameEnabled &= !IsQuantity; f.QuantityEnabled &= IsQuantity;
+            f.NameTarget = f.QuantityTarget = Target;
+            f.Validate();
+        }
+    }
+}
 
 /// <summary>
 /// Rule for one category and one value of the type parameter «Маркировка типоразмера» (as in BIM2B):
@@ -142,8 +204,12 @@ public sealed class SystemNameRule
     public string Name { get; set; } = "";
 }
 
-public sealed class SystemNameSettings
+public sealed class SystemNameSettings : IJsonOnDeserializing
 {
+    /// <summary>Revision of <see cref="Defaults"/>; stored rules of an older revision get the newly added default types once.</summary>
+    public const int CurrentDefaults = 2;
+    public int DefaultsVersion { get; set; } = CurrentDefaults;
+    void IJsonOnDeserializing.OnDeserializing() => DefaultsVersion = 0;
     public bool Enabled { get; set; }
     public string Target { get; set; } = EngineeringRulesPolicy.DefaultSystemTarget;
     public List<SystemNameRule> Rules { get; set; } = Defaults();
@@ -154,17 +220,46 @@ public sealed class SystemNameSettings
         SystemNameRule R(string types, string name) => new() { Types = [.. types.Split(',')], Domain = SystemDomain.Pipe, Name = name };
         return
         [
-            R("В1", "В1 - Внутренний хозяйственно-питьевой водопровод"),
+            R("В1,Холодное водоснабжение", "В1 - Внутренний хозяйственно-питьевой водопровод"),
             R("В2", "В2 - Внутренний противопожарный водопровод"),
             R("В3", "В3 - Внутренний производственный водопровод"),
-            R("Т3,Т4", "Т3,Т4 - Внутренний водопровод горячей воды, подающий и циркуляционный"),
-            R("К1", "К1 - Внутренняя бытовая канализация"),
+            R("Т3,Т4,Горячее водоснабжение", "Т3,Т4 - Внутренний водопровод горячей воды, подающий и циркуляционный"),
+            R("К1,Вентиляционное отверстие", "К1 - Внутренняя бытовая канализация"),
             R("К2", "К2 - Внутренние водостоки"),
             R("К3", "К3 - Внутренняя производственная канализация"),
-            R("В21", "В21 - Автоматическое водяное пожаротушение"),
-            R("В22", "В22 - Дренчерное пожаротушение"),
-            R("Т1,Т2", "Т1,Т2 - Система отопления, подающий и обратный трубопроводы")
+            R("В21,Водяная система пожаротушения", "В21 - Автоматическое водяное пожаротушение"),
+            R("В22,Дренчерная система пожаротушения", "В22 - Дренчерное пожаротушение"),
+            R("Газовая система пожаротушения", "Автоматическое газовое пожаротушение"),
+            R("Другие системы пожаротушения", "Прочие системы пожаротушения"),
+            R("Т1,Т2", "Т1,Т2 - Теплоснабжение, подающий и обратный трубопроводы"),
+            R("Т11,Т21", "Т11,Т21 - Система отопления, подающий и обратный трубопроводы"),
+            R("Х1,Х2", "Х1,Х2 - Холодоснабжение, подающий и обратный трубопроводы"),
+            R("Х3,Х4", "Х3,Х4 - Кондиционирование, подающий и обратный трубопроводы"),
+            R("Х5", "Х5 - Кондиционирование, отвод конденсата"),
+            R("Прочее", "Прочие трубопроводы")
         ];
+    }
+
+    /// <summary>
+    /// Stored rules of an older defaults revision: default types that no rule mentions are added once — to the rule that already
+    /// holds another type of the same default rule, otherwise as a new rule. Names written by the user are not changed.
+    /// </summary>
+    public bool AddNewDefaults()
+    {
+        if (DefaultsVersion >= CurrentDefaults) return false;
+        DefaultsVersion = CurrentDefaults;
+        bool changed = false;
+        bool Known(string t) => Rules.Any(r => r.Types.Contains(t, StringComparer.CurrentCultureIgnoreCase));
+        foreach (var def in Defaults())
+        {
+            var missing = def.Types.Where(t => !Known(t)).ToList();
+            if (missing.Count == 0) continue;
+            var host = Rules.FirstOrDefault(r => r.Domain == def.Domain && def.Types.Any(t => r.Types.Contains(t, StringComparer.CurrentCultureIgnoreCase)));
+            if (host != null) host.Types.AddRange(missing);
+            else Rules.Add(def);
+            changed = true;
+        }
+        return changed;
     }
 
     public void Validate()
@@ -181,11 +276,153 @@ public sealed class SystemNameSettings
 
 public sealed class EngineeringRuleSet
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
     public int Version { get; set; } = CurrentVersion;
     public List<EngineeringRule> Rules { get; set; } = [];
+    public List<ConditionalRuleGroup> ConditionalGroups { get; set; } = [];
+    public bool ConditionalRulesInitialized { get; set; }
+    public bool RuleListInitialized { get; set; }
+    public int PipeNameDefaultsVersion { get; set; }
+    public int PipeQuantityDefaultsVersion { get; set; }
+    public int EnabledDefaultsVersion { get; set; }
     public WallThicknessSettings WallThickness { get; set; } = new();
     public SystemNameSettings SystemNames { get; set; } = new();
+
+    public void PrepareDefaults()
+    {
+        if (!ConditionalRulesInitialized && Rules.Count == 0 && ConditionalGroups.Count == 0 && !RuleListInitialized)
+            Rules.AddRange(DefaultRules());
+        EnsureConditionalGroups();
+        if (!RuleListInitialized)
+        {
+            foreach (var (category, _) in EngineeringRulesPolicy.Categories)
+                foreach (bool quantity in new[] { false, true })
+                    if (!ConditionalGroups.Any(g => g.Category == category && g.IsQuantity == quantity))
+                        ConditionalGroups.Add(new ConditionalRuleGroup { Category = category, IsQuantity = quantity,
+                            Target = quantity ? EngineeringRulesPolicy.DefaultQuantityTarget : EngineeringRulesPolicy.DefaultNameTarget,
+                            Otherwise = EngineeringRulesPolicy.DefaultFormula(category) });
+            RuleListInitialized = true;
+        }
+        ApplyPipeNameDefaults();
+        ApplyPipeQuantityDefaults();
+        if (EnabledDefaultsVersion >= 1) return;
+        foreach (var group in ConditionalGroups.Where(g => g.Target == (g.IsQuantity ? EngineeringRulesPolicy.DefaultQuantityTarget : EngineeringRulesPolicy.DefaultNameTarget)))
+            foreach (var formula in group.Conditions.Select(c => c.Formula).Append(group.Otherwise))
+            {
+                var standard = EngineeringRulesPolicy.DefaultFormula(group.Category);
+                formula.Category = group.Category;
+                if (!formula.IsActive && formula.Parts.Count == 0)
+                {
+                    formula.QuantitySource = standard.QuantitySource; formula.Unit = standard.Unit;
+                    formula.Decimals = standard.Decimals; formula.Reserve = standard.Reserve; formula.Rounding = standard.Rounding;
+                }
+                if (formula.Parts.Count == 0) formula.Parts = standard.Parts;
+                if (string.IsNullOrWhiteSpace(formula.QuantitySource)) formula.QuantitySource = standard.QuantitySource;
+                if (group.IsQuantity) formula.QuantityEnabled = true; else formula.NameEnabled = true;
+            }
+        SystemNames.Enabled = true;
+        EnabledDefaultsVersion = 1;
+    }
+
+    public void ValidateConditionalGroups()
+    {
+        if (ConditionalGroups.GroupBy(g => (g.Category, g.Target)).Any(g => g.Count() > 1))
+            throw new InvalidOperationException("В категории уже есть правило для этого заполняемого параметра.");
+        foreach (var group in ConditionalGroups) group.Validate();
+    }
+
+    /// <summary>Legacy mark rules become explicit conditions, without changing their formulas or coverage.</summary>
+    public void EnsureConditionalGroups()
+    {
+        if (ConditionalRulesInitialized) return;
+        foreach (var category in Rules.Select(r => r.Category).Distinct())
+            foreach (bool quantity in new[] { false, true })
+            {
+                // Once converted, later edits or deletion of conditions must never restore legacy branches.
+                if (ConditionalGroups.Any(g => g.Category == category && g.IsQuantity == quantity)) continue;
+                foreach (var legacy in Rules.Where(r => r.Category == category).GroupBy(r => quantity ? r.QuantityTarget : r.NameTarget))
+                    ConditionalGroups.Add(new ConditionalRuleGroup
+                    {
+                        Category = category, IsQuantity = quantity, Target = legacy.Key,
+                        Conditions = legacy.Select(r => new FormulaCondition
+                        {
+                            Parameter = "Маркировка типоразмера", Value = r.TypeMark ?? "", Formula = r.Clone()
+                        }).ToList(),
+                        Otherwise = new EngineeringRule { Category = category }
+                    });
+            }
+        ConditionalRulesInitialized = true;
+    }
+
+    /// <summary>Requested pipe naming scheme, applied once on the editor copy, never on every reopen.</summary>
+    public void ApplyPipeNameDefaults()
+    {
+        if (PipeNameDefaultsVersion >= 1) return;
+        const string category = "OST_PipeCurves", comment = "Комментарии к типоразмеру";
+        EngineeringRule Formula(string diameter) => new()
+        {
+            Category = category, NameEnabled = true,
+            Parts = [new() { Parameter = comment }, new() { Parameter = diameter, Prefix = " ø" },
+                new() { Parameter = EngineeringRulesPolicy.WallThicknessSource, Prefix = "x" }]
+        };
+        var group = ConditionalGroups.FirstOrDefault(g => g.Category == category && !g.IsQuantity && g.Target == EngineeringRulesPolicy.DefaultNameTarget);
+        if (group == null)
+        {
+            group = new ConditionalRuleGroup { Category = category, Target = EngineeringRulesPolicy.DefaultNameTarget };
+            ConditionalGroups.Add(group);
+        }
+        group.Conditions = [new() { Parameter = comment, Value = "Труба стальная электросварная прямошовная", Formula = Formula("Внешний диаметр") }];
+        group.Otherwise = Formula("Диаметр");
+        PipeNameDefaultsVersion = 1;
+    }
+
+    /// <summary>Pipe length reserve by exact type comments; one-time upgrade, preserving later user edits.</summary>
+    public void ApplyPipeQuantityDefaults()
+    {
+        if (PipeQuantityDefaultsVersion >= 1) return;
+        const string category = "OST_PipeCurves";
+        EngineeringRule Formula(double reserve) => new()
+        {
+            Category = category, QuantityEnabled = true, QuantitySource = "Длина", Unit = QuantityUnit.Meter,
+            Reserve = reserve, Decimals = 6, Rounding = QuantityRounding.Nearest
+        };
+        var group = ConditionalGroups.FirstOrDefault(g => g.Category == category && g.IsQuantity && g.Target == EngineeringRulesPolicy.DefaultQuantityTarget);
+        if (group == null)
+        {
+            group = new ConditionalRuleGroup { Category = category, IsQuantity = true, Target = EngineeringRulesPolicy.DefaultQuantityTarget };
+            ConditionalGroups.Add(group);
+        }
+        group.Conditions = new[] { "Труба стальная водогазопроводная", "Труба стальная водогазопроводная оцинкованная",
+            "Труба стальная электросварная прямошовная", "Труба чугунная SML" }
+            .Select(comment => new FormulaCondition { Parameter = "Комментарии к типоразмеру", Value = comment, Formula = Formula(1.1) }).ToList();
+        group.Otherwise = Formula(1.3);
+        PipeQuantityDefaultsVersion = 1;
+    }
+
+    public IReadOnlyList<EngineeringRule> ResolveConditionals(string category, string? mark, Func<string, string?> text)
+    {
+        if (EngineeringRulesPolicy.IsIgnored(mark)) return [];
+        var groups = ConditionalGroups.Where(g => g.Category == category).ToList();
+        if (groups.Count == 0) return !ConditionalRulesInitialized && Resolve(category, mark) is { } legacy ? [legacy] : [];
+        var results = new List<EngineeringRule>();
+        foreach (var group in groups)
+        {
+            var f = group.Select(p => p == "Маркировка типоразмера" ? mark ?? "" : text(p));
+            var result = new EngineeringRule { Category = category };
+            if (!group.IsQuantity)
+            {
+                result.NameEnabled = f.NameEnabled; result.NameTarget = group.Target; result.Parts = f.Parts;
+            }
+            else
+            {
+                result.QuantityEnabled = f.QuantityEnabled; result.QuantityTarget = group.Target;
+                result.QuantitySource = f.QuantitySource; result.Unit = f.Unit; result.Reserve = f.Reserve;
+                result.Decimals = f.Decimals; result.Rounding = f.Rounding; result.ReserveBySize = f.ReserveBySize;
+            }
+            if (result.IsActive) results.Add(result);
+        }
+        return results;
+    }
 
     /// <summary>Rule of the element's category and type mark. Marks without a rule and «игнорировать» are not processed.</summary>
     public EngineeringRule? Resolve(string category, string? typeMark)
@@ -280,16 +517,19 @@ public sealed class EngineeringRuleSet
         catch (JsonException e) { throw new InvalidOperationException("Повреждены правила апдейтера: " + e.Message); }
         if (set.Version is < 1 or > CurrentVersion) throw new InvalidOperationException($"Неизвестная версия правил апдейтера: {set.Version}.");
         set.Rules ??= [];
+        set.ConditionalGroups ??= [];
         set.WallThickness ??= new();
         set.WallThickness.Rows ??= WallThicknessSettings.Defaults();
         set.SystemNames ??= new();
         set.SystemNames.Rules ??= SystemNameSettings.Defaults();
+        set.SystemNames.AddNewDefaults();
         if (set.Version == 1)
         {
             // In version 1 a rule without a type key covered the whole category; its closest equivalent is «Без типа».
             foreach (var r in set.Rules) r.TypeMark = null;
             set.Version = CurrentVersion;
         }
+        set.Version = CurrentVersion;
         return set;
     }
 }
@@ -297,6 +537,14 @@ public sealed class EngineeringRuleSet
 /// <summary>What the rules window needs from the project; Revit implementation — RevitUpdaterModel.</summary>
 internal interface IUpdaterModel
 {
+    (bool Exists, string? Mark) SelectPreview(string category, ConditionalRuleGroup group, EngineeringRule formula, WallThicknessSettings walls)
+    {
+        foreach (var (mark, _) in Marks(category))
+            if (!EngineeringRulesPolicy.IsIgnored(mark) && HasSample(category, mark) && ReferenceEquals(formula,
+                group.Select(p => p == "Маркировка типоразмера" ? mark ?? "" : Text(category, mark, p, walls))))
+                return (true, mark);
+        return (false, null);
+    }
     /// <summary>Types of the category grouped by «Маркировка типоразмера» (null — without mark).</summary>
     IReadOnlyList<(string? Mark, List<string> Types)> Marks(string category);
     bool HasSample(string category, string? mark);
@@ -327,6 +575,25 @@ public static class EngineeringRulesPolicy
         ("OST_CableTray", "Кабельные лотки"),
         ("OST_Conduit", "Короба")
     ];
+    public static EngineeringRule DefaultFormula(string category, string? mark = null)
+    {
+        var (source, unit, decimals) = category switch
+        {
+            "OST_PipeCurves" or "OST_FlexPipeCurves" or "OST_DuctCurves" or "OST_FlexDuctCurves" or "OST_CableTray" or "OST_Conduit" => ("Длина", QuantityUnit.Meter, 2),
+            "OST_DuctFitting" => (EngineeringRulesPolicy.FittingAreaParameter, QuantityUnit.SquareMeter, 2),
+            "OST_PipeInsulations" => (EngineeringRulesPolicy.HostLengthSource, QuantityUnit.Meter, 2),
+            "OST_DuctInsulations" => (EngineeringRulesPolicy.HostAreaSource, QuantityUnit.SquareMeter, 2),
+            _ => (EngineeringRulesPolicy.CountSource, QuantityUnit.Piece, 0)
+        };
+        string size = category is "OST_DuctFitting" or "OST_PipeFitting" ? EngineeringRulesPolicy.FittingSizeSource : EngineeringRulesPolicy.SortedSizeSource;
+        return new EngineeringRule
+        {
+            Category = category, TypeMark = mark, NameEnabled = true, QuantityEnabled = true,
+            Parts = [new NamePart { Parameter = EngineeringRulesPolicy.TypeNameSource }, new NamePart { Parameter = size, Prefix = " " }],
+            QuantitySource = source, Unit = unit, Decimals = decimals, Reserve = EngineeringRulesPolicy.DefaultReserve
+        };
+    }
+
     public static string CategoryLabel(string key) => Categories.FirstOrDefault(c => c.Key == key).Label ?? key;
 
     public const string DefaultNameTarget = "ADSK_Наименование";

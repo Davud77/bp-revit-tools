@@ -53,7 +53,8 @@ internal static class ScheduleNumbering
     }
 
     // A temporary shared parameter exposes exact element identities in native row order.
-    // The whole probe (binding, values, duplicate schedule) is rolled back before writing.
+    // One uncommitted transaction holds the entire probe, avoiding intermediate transaction
+    // commits for temporary IDs/group markers. Refresh the temporary table explicitly for reading.
     internal static IReadOnlyList<IReadOnlyList<long>> ReadRows(Document doc, ViewSchedule original, IReadOnlyList<Element> elements)
     {
         string previous = doc.Application.SharedParametersFilename;
@@ -66,15 +67,15 @@ internal static class ScheduleNumbering
             var definitionFile = doc.Application.OpenSharedParameterFile() ?? throw new InvalidOperationException("Не удалось открыть временный файл параметров.");
             var external = definitionFile.Groups.Create("BotPlus probe").Definitions.Create(
                 new ExternalDefinitionCreationOptions("BP_Row_" + guid.ToString("N"), SpecTypeId.String.Text) { GUID = guid, Visible = false });
-            using var probe = new TransactionGroup(doc, "BotPlus: чтение строк спецификации");
+            using var probe = new Transaction(doc, "BotPlus: чтение строк спецификации");
             if (probe.Start() != TransactionStatus.Started) throw new InvalidOperationException("Нельзя начать чтение строк.");
             try
             {
                 ViewSchedule clone;
                 int markerColumn;
-                using (var t = new Transaction(doc, "Временная таблица"))
+                int[] sortColumns;
+                int countColumn;
                 {
-                    t.Start();
                     var categories = doc.Application.Create.NewCategorySet();
                     foreach (var category in elements.Select(e => e.Category).Where(c => c != null).DistinctBy(c => c.Id.Value))
                         if (category.AllowsBoundParameters) categories.Insert(category);
@@ -96,46 +97,91 @@ internal static class ScheduleNumbering
                     var sort = clone.Definition.GetSortGroupFields();
                     foreach (var field in sort) { field.ShowHeader = false; field.ShowFooter = false; field.ShowBlankLine = false; }
                     clone.Definition.SetSortGroupFields(sort);
+                    // Keep filter/formula dependencies, but do not render the whole user table per instance.
+                    var sortIds = sort.Select(g => g.FieldId).ToHashSet();
+                    foreach (var fieldId in clone.Definition.GetFieldOrder())
+                        clone.Definition.GetField(fieldId).IsHidden = !sortIds.Contains(fieldId);
+                    // Count column: in the collapsed table it tells how many elements each row holds.
+                    var countField = clone.Definition.GetFieldOrder().Select(clone.Definition.GetField).FirstOrDefault(fl => fl.FieldType == ScheduleFieldType.Count)
+                        ?? clone.Definition.AddField(ScheduleFieldType.Count);
+                    countField.IsHidden = false;
                     var parameter = SharedParameterElement.Lookup(doc, guid) ?? throw new InvalidOperationException("Временный параметр отсутствует.");
-                    var marker = clone.Definition.AddField(ScheduleFieldType.Instance, parameter.Id);
-                    markerColumn = clone.Definition.GetFieldOrder().Select(id => clone.Definition.GetField(id)).Count(f => !f.IsHidden) - 1;
-                    Commit(t);
+                    clone.Definition.AddField(ScheduleFieldType.Instance, parameter.Id);
+                    var order = clone.Definition.GetFieldOrder().Where(id => !clone.Definition.GetField(id).IsHidden).ToList();
+                    markerColumn = order.Count - 1;
+                    countColumn = order.IndexOf(countField.FieldId);
+                    sortColumns = clone.Definition.GetSortGroupFields().Select(g => order.IndexOf(g.FieldId)).Where(i => i >= 0).ToArray();
+                    Refresh(doc, clone);
                 }
-                var ordered = ReadTokens(clone, markerColumn, elements.Select(e => e.Id.Value.ToString(CultureInfo.InvariantCulture)).ToHashSet());
-                if (ordered.Count != elements.Count || ordered.Distinct().Count() != elements.Count)
+                var tokens = elements.Select(e => e.Id.Value.ToString(CultureInfo.InvariantCulture)).ToHashSet();
+                var itemRows = ReadItemRows(clone, markerColumn, [], tokens);
+                if (itemRows.Count != elements.Count || itemRows.Select(x => x.Token).Distinct().Count() != elements.Count)
                     throw new InvalidOperationException("Не все строки однозначно сопоставлены. Нумерация отменена.");
+                var ordered = itemRows.Select(x => x.Token).ToList();
                 if (original.Definition.IsItemized)
                     return ordered.Select(id => (IReadOnlyList<long>)new[] { long.Parse(id, CultureInfo.InvariantCulture) }).ToArray();
 
-                // Derive candidate membership from raw sorting values, then validate it against
-                // Revit's own collapsed rows. Any formatted/rounded grouping disagreement fails.
-                var groupFields = original.Definition.GetSortGroupFields().Select(s => original.Definition.GetField(s.FieldId)).ToArray();
-                foreach (var f in groupFields)
-                    if (f.IsCalculatedField || f.IsCombinedParameterField || f.ParameterId == ElementId.InvalidElementId)
-                        throw new InvalidOperationException($"Сортировка или группировка по полю «{f.GetName()}» (вычисляемое или объединённое) не поддерживается.");
-                var finders = groupFields.Select(f => Finder(doc, f.ParameterId.Value)).ToArray();
+                // Exact rows: Revit's collapsed rows are consecutive runs of the itemized order (both follow the same sorting),
+                // and the Count column gives each run's length. The split is then confirmed with one marker per row.
+                var byIdExact = elements.ToDictionary(e => e.Id.Value);
+                clone.Definition.IsItemized = false;
+                Refresh(doc, clone);
+                if (ReadCounts(clone, countColumn) is { } counts && counts.Sum() == itemRows.Count)
+                {
+                    var runs = new List<long[]>(); int at = 0;
+                    foreach (int n in counts)
+                    {
+                        var run = new long[n];
+                        for (int i = 0; i < n; i++) run[i] = long.Parse(itemRows[at++].Token, CultureInfo.InvariantCulture);
+                        runs.Add(run);
+                    }
+                    for (int i = 0; i < runs.Count; i++) foreach (long id in runs[i])
+                        if (!byIdExact[id].get_Parameter(guid).Set("BP_ROW_" + i)) throw new InvalidOperationException("Не удалось проверить строку.");
+                    Refresh(doc, clone);
+                    var labels = runs.Select((_, i) => "BP_ROW_" + i).ToList();
+                    var shown = ReadCollapsed(clone, markerColumn, labels.ToHashSet());
+                    if (shown.SequenceEqual(labels)) return runs;
+                }
+                clone.Definition.IsItemized = true;
+                foreach (var element in elements)
+                    if (!element.get_Parameter(guid).Set(element.Id.Value.ToString(CultureInfo.InvariantCulture)))
+                        throw new InvalidOperationException("Не удалось повторно определить строку элемента.");
+                Refresh(doc, clone);
+                // Sort text is needed only by the fallback, not by the normal count-based path.
+                itemRows = ReadItemRows(clone, markerColumn, sortColumns, tokens);
+
+                // Fallback. Rows of the grouped table: elements are grouped by the sorting columns as Revit displays them, then checked against
+                // Revit's own collapsed rows. A collapsed row with a blank marker merges our neighbouring groups (Revit grouped them
+                // together); if Revit splits a group, raw parameter values refine it on the second attempt.
                 var byId = elements.ToDictionary(e => e.Id.Value);
-                var groups = new List<List<long>>(); string? lastKey = null;
-                foreach (var token in ordered)
+                var groupFields = original.Definition.GetSortGroupFields().Select(g => original.Definition.GetField(g.FieldId)).ToArray();
+                var finders = groupFields.Where(fl => !fl.IsCalculatedField && !fl.IsCombinedParameterField && fl.ParameterId != ElementId.InvalidElementId)
+                    .Select(fl => Finder(doc, fl.ParameterId.Value)).ToArray();
+                string? failure = null;
+                for (int attempt = 0; attempt < 2; attempt++)
                 {
-                    long id = long.Parse(token, CultureInfo.InvariantCulture);
-                    string key = System.Text.Json.JsonSerializer.Serialize(finders.Select(find => GroupValue(doc, byId[id], find)).ToArray());
-                    if (groups.Count == 0 || key != lastKey) { groups.Add([]); lastKey = key; }
-                    groups[^1].Add(id);
+                    var groups = new List<List<long>>(); string? lastKey = null;
+                    foreach (var (token, text) in itemRows)
+                    {
+                        long id = long.Parse(token, CultureInfo.InvariantCulture);
+                        string key = attempt == 0 ? text : text + "\u0001" + string.Join("\u0001", finders.Select(find => GroupValue(doc, byId[id], find)));
+                        if (groups.Count == 0 || key != lastKey) { groups.Add([]); lastKey = key; }
+                        groups[^1].Add(id);
+                    }
+                    {
+                        for (int i = 0; i < groups.Count; i++) foreach (long id in groups[i])
+                            if (!byId[id].get_Parameter(guid).Set("BP_GROUP_" + i)) throw new InvalidOperationException("Не удалось проверить группу.");
+                        clone.Definition.IsItemized = false;
+                        Refresh(doc, clone);
+                    }
+                    var collapsed = ReadCollapsed(clone, markerColumn, groups.Select((_, i) => "BP_GROUP_" + i).ToHashSet());
+                    var rows = ScheduleNumberingPolicy.Reconcile(collapsed.Select(x => x is null ? (int?)null : int.Parse(x[9..], CultureInfo.InvariantCulture)).ToList(), groups.Count, out failure);
+                    if (rows != null) return rows.Select(row => (IReadOnlyList<long>)row.SelectMany(i => groups[i]).ToArray()).ToArray();
+                    clone.Definition.IsItemized = true;
+                    Refresh(doc, clone);
                 }
-                using (var t = new Transaction(doc, "Проверка групп строк"))
-                {
-                    t.Start();
-                    for (int i = 0; i < groups.Count; i++) foreach (long id in groups[i])
-                        if (!byId[id].get_Parameter(guid).Set("BP_GROUP_" + i)) throw new InvalidOperationException("Не удалось проверить группу.");
-                    clone.Definition.IsItemized = false;
-                    Commit(t);
-                }
-                var tokens = groups.Select((_, i) => "BP_GROUP_" + i).ToHashSet();
-                var actual = ReadTokens(clone, markerColumn, tokens);
-                if (actual.Count != groups.Count || actual.Distinct().Count() != groups.Count)
-                    throw new InvalidOperationException("Группировка строк неоднозначна. Параметры не изменены.");
-                return actual.Select(token => (IReadOnlyList<long>)groups[int.Parse(token[9..], CultureInfo.InvariantCulture)].ToArray()).ToArray();
+                throw new InvalidOperationException("Не удалось сопоставить сгруппированные строки спецификации с элементами (" + failure + "). Параметры не изменены. " +
+                    "Включите «Для каждого экземпляра» в спецификации или уберите сортировку по вычисляемым полям.");
             }
             finally
             {
@@ -150,15 +196,51 @@ internal static class ScheduleNumbering
         }
     }
 
-    static List<string> ReadTokens(ViewSchedule schedule, int markerColumn, HashSet<string> expected)
+    static void Refresh(Document doc, ViewSchedule schedule)
+    {
+        doc.Regenerate();
+        if (!schedule.RefreshData()) throw new InvalidOperationException("Не удалось обновить временную таблицу.");
+    }
+
+    /// <summary>Itemized rows: element token and the sorting columns' text.</summary>
+    static List<(string Token, string Key)> ReadItemRows(ViewSchedule schedule, int markerColumn, int[] sortColumns, HashSet<string> expected)
     {
         var body = schedule.GetTableData().GetSectionData(SectionType.Body);
-        var result = new List<string>();
+        var result = new List<(string, string)>();
         for (int row = body.FirstRowNumber; row <= body.LastRowNumber; row++)
         {
             string token = schedule.GetCellText(SectionType.Body, row, body.FirstColumnNumber + markerColumn).Trim();
-            if (expected.Contains(token)) result.Add(token);
+            if (expected.Contains(token))
+                result.Add((token, string.Join("\u0001", sortColumns.Select(c => schedule.GetCellText(SectionType.Body, row, body.FirstColumnNumber + c).Trim()))));
             else if (token.Length != 0) throw new InvalidOperationException("В строке таблицы нет однозначного идентификатора.");
+        }
+        return result;
+    }
+
+    /// <summary>Element count of each collapsed row from the Count column; null if a cell is not a number.</summary>
+    static List<int>? ReadCounts(ViewSchedule schedule, int countColumn)
+    {
+        if (countColumn < 0) return null;
+        var body = schedule.GetTableData().GetSectionData(SectionType.Body);
+        var result = new List<int>();
+        for (int row = body.FirstRowNumber; row <= body.LastRowNumber; row++)
+        {
+            string digits = new(schedule.GetCellText(SectionType.Body, row, body.FirstColumnNumber + countColumn).Where(char.IsDigit).ToArray());
+            if (!int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out int n) || n <= 0) return null;
+            result.Add(n);
+        }
+        return result;
+    }
+
+    /// <summary>Collapsed data rows: our group token, or null where Revit merged several groups (marker cell blank).</summary>
+    static List<string?> ReadCollapsed(ViewSchedule schedule, int markerColumn, HashSet<string> expected)
+    {
+        var body = schedule.GetTableData().GetSectionData(SectionType.Body);
+        var result = new List<string?>();
+        for (int row = body.FirstRowNumber; row <= body.LastRowNumber; row++)
+        {
+            string token = schedule.GetCellText(SectionType.Body, row, body.FirstColumnNumber + markerColumn).Trim();
+            result.Add(expected.Contains(token) ? token : token.Length == 0 ? null : throw new InvalidOperationException("В строке таблицы нет однозначного идентификатора."));
         }
         return result;
     }

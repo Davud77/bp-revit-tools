@@ -5,12 +5,11 @@ using Autodesk.Revit.UI;
 namespace BotPlus.Eom;
 
 /// <summary>
-/// Модуль ЭОМ: своя вкладка «BotPlus ЭОМ» с шестью панелями по этапам работы — проект, оборудование, трассы, ЭТМ, проверки, документация.
-/// В настройках плагина вся вкладка включается и выключается одной галочкой «ЭОМ».
+/// Панели ЭОМ на вкладке BotPlus RT. Состав модуля управляется галочкой «ЭОМ».
 /// </summary>
 public sealed class App : IExternalApplication
 {
-    internal const string Tab = BotPlusSettings.EomTab;
+    const string Tab = "BotPlus RT";
     internal static readonly DockablePaneId EquipmentPaneId = new(new Guid("8D2A6F14-3B7E-4C59-A1D0-6E9F2C4B7A35"));
     internal static EtmPane? Etm;
     internal static EquipmentPane? Equipment;
@@ -26,7 +25,7 @@ public sealed class App : IExternalApplication
 
         var project = app.CreateRibbonPanel(Tab, "Проект и БД");
         project.AddItem(B("Settings", "Настройки\nпроекта", typeof(ProjectSettingsCommand),
-            "Нормы расчёта, запас длины кабеля, допустимая ΔU и маски маркировки. Проверяет семейство условных обозначений проводок ГОСТ 21.210."));
+            "Нормы расчёта, высоты вставки из Базы УГО, запас кабеля, допустимая ΔU и маски маркировки. Проверяет семейство обозначений проводок."));
         project.AddStackedItems(
             B("Catalog", "Менеджер БД", typeof(CatalogCommand), "Каталоги кабелей, автоматов и УЗО, лотков и светильников."),
             B("Import", "Импорт ТЗ", typeof(ImportTaskCommand), Planned.Tip(Planned.ImportTask)));
@@ -47,6 +46,8 @@ public sealed class App : IExternalApplication
             B("Wiring", "Обозначения проводок", typeof(WiringCommand), "Условные обозначения проводок ГОСТ 21.210 у всех лотков и коробов активного плана по способу прокладки, выбранному последним в строке параметров (по умолчанию «Авто»). Существующие обозначения перестраиваются по трассам."));
         routes.AddItem(B("Connect", "Подключить\nк щиту", typeof(ConnectCommand),
             "Выберите приборы, затем щит: создаётся группа (цепь) Revit, приборы подключаются к щиту."));
+        routes.AddItem(B("ConduitThroughLights", "Короб через\nсветильники", typeof(ConduitThroughLightsCommand),
+            "Начните со светильника, короба или распределительной коробки. Щёлкайте по светильникам: у каждого ставится распределительная коробка, трасса продолжается от её свободного выхода. Esc завершает построение."));
         routes.AddStackedItems(
             B("Riser", "Стояки", typeof(RiserCommand), Planned.Tip(Planned.Riser)),
             B("Cable", "Автотрассировка", typeof(AutoRouteCommand), Planned.Tip(Planned.AutoRoute)));

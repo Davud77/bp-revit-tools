@@ -742,6 +742,10 @@ public sealed class Importer
         var vertices = ValidateMesh(mesh);
         var key = e.Payload.S("materialKey");
         var material = string.IsNullOrEmpty(key) ? ElementId.InvalidElementId : materials.TryGetValue(key, out var m) ? m.Id : throw new InvalidDataException("Morph building material missing");
+        // A morph is shown with its own surface (the cladding colours of a facade), not with the building material of its cut.
+        if (e.Raw.ValueKind == System.Text.Json.JsonValueKind.Object && e.Raw.TryGetProperty("details", out var morphDetails) && morphDetails.TryGetProperty("surfaceId", out var surfaceId)
+            && SurfaceMaterials.Find(manifest, surfaceId.S("guid")) is System.Text.Json.JsonElement morphSurface)
+            material = SurfaceMaterials.GetOrCreate(doc, morphSurface);
         using var builder = new TessellatedShapeBuilder();
         builder.OpenConnectedFaceSet(true);
         foreach (var face in mesh.Faces)

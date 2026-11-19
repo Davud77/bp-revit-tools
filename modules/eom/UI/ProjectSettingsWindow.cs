@@ -18,6 +18,10 @@ internal static class ProjectSettingsWindow
         var lighting = new ComboBox { Width = 220, ItemsSource = EomSettings.LightingNorms, SelectedItem = current.LightingNorm };
         TextBox reserve = EomUi.Number(current.CableReserve), drop = EomUi.Number(current.VoltageDropLimit),
             phase = EomUi.Number(current.PhaseVoltage), line = EomUi.Number(current.LineVoltage);
+        var switches = EomUi.Number(current.SwitchHeightMm);
+        var fixtures = EomUi.Number(current.ElectricalFixtureHeightMm);
+        var equipment = EomUi.Number(current.ElectricalEquipmentHeightMm);
+        var lights = EomUi.Number(current.LightingFixtureHeightMm);
         var group = new TextBox { Width = 220, Text = current.GroupMask };
         var cable = new TextBox { Width = 220, Text = current.CableMask };
         var create = new CheckBox { Content = "Проверить семейство обозначений проводок и подгрузить из открытого файла АДСК", IsChecked = !current.LinesCreated, Margin = new Thickness(0, 4, 0, 2) };
@@ -34,6 +38,12 @@ internal static class ProjectSettingsWindow
         panel.Children.Add(EomUi.Row("Линейное напряжение", line, "В"));
         panel.Children.Add(EomUi.Row("Допустимая потеря напряжения в группе", drop, "%"));
         panel.Children.Add(EomUi.Row("Запас длины кабеля на монтаж", reserve, "%"));
+        panel.Children.Add(EomUi.Heading("Высоты вставки из Базы УГО"));
+        panel.Children.Add(EomUi.Hint("От уровня активного вида до точки вставки семейства."));
+        panel.Children.Add(EomUi.Row("Выключатели", switches, "мм"));
+        panel.Children.Add(EomUi.Row("Электрические приборы", fixtures, "мм"));
+        panel.Children.Add(EomUi.Row("Электрооборудование", equipment, "мм"));
+        panel.Children.Add(EomUi.Row("Осветительные приборы", lights, "мм"));
         panel.Children.Add(EomUi.Heading("Маркировка"));
         panel.Children.Add(EomUi.Hint("{Щит} — имя щита, {N} — номер группы."));
         panel.Children.Add(EomUi.Row("Маска группы", group));
@@ -45,7 +55,22 @@ internal static class ProjectSettingsWindow
 
         Result? result = null;
         EomUi.Layout(window, new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }, null, EomUi.Buttons(
-            EomUi.Button("По умолчанию", () => { var d = new EomSettings(); loads.SelectedItem = d.LoadNorm; lighting.SelectedItem = d.LightingNorm; reserve.Text = d.CableReserve.ToString(); drop.Text = d.VoltageDropLimit.ToString(); phase.Text = d.PhaseVoltage.ToString(); line.Text = d.LineVoltage.ToString(); group.Text = d.GroupMask; cable.Text = d.CableMask; }),
+            EomUi.Button("По умолчанию", () =>
+            {
+                var d = new EomSettings();
+                loads.SelectedItem = d.LoadNorm;
+                lighting.SelectedItem = d.LightingNorm;
+                reserve.Text = d.CableReserve.ToString();
+                drop.Text = d.VoltageDropLimit.ToString();
+                phase.Text = d.PhaseVoltage.ToString();
+                line.Text = d.LineVoltage.ToString();
+                group.Text = d.GroupMask;
+                cable.Text = d.CableMask;
+                switches.Text = d.SwitchHeightMm.ToString();
+                fixtures.Text = d.ElectricalFixtureHeightMm.ToString();
+                equipment.Text = d.ElectricalEquipmentHeightMm.ToString();
+                lights.Text = d.LightingFixtureHeightMm.ToString();
+            }),
             EomUi.Button("Сохранить", () =>
             {
                 var settings = current with
@@ -53,7 +78,11 @@ internal static class ProjectSettingsWindow
                     LoadNorm = (string)loads.SelectedItem, LightingNorm = (string)lighting.SelectedItem,
                     CableReserve = EomUi.Parse(reserve, "Запас длины"), VoltageDropLimit = EomUi.Parse(drop, "Потеря напряжения"),
                     PhaseVoltage = EomUi.Parse(phase, "Фазное напряжение"), LineVoltage = EomUi.Parse(line, "Линейное напряжение"),
-                    GroupMask = group.Text.Trim(), CableMask = cable.Text.Trim()
+                    GroupMask = group.Text.Trim(), CableMask = cable.Text.Trim(),
+                    SwitchHeightMm = EomUi.Parse(switches, "Высота выключателей"),
+                    ElectricalFixtureHeightMm = EomUi.Parse(fixtures, "Высота электрических приборов"),
+                    ElectricalEquipmentHeightMm = EomUi.Parse(equipment, "Высота электрооборудования"),
+                    LightingFixtureHeightMm = EomUi.Parse(lights, "Высота осветительных приборов")
                 };
                 settings.Validate();
                 result = new(settings, create.IsChecked == true);

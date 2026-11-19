@@ -11,7 +11,7 @@ public sealed class WallConnector(Document doc, ImportConfig config, Report repo
         double tol = Geometry.Feet(config.WallJoinToleranceMeters);
         var recordList = records.ToList();var recordIndex=recordList.ToDictionary(r=>r.SourceGuid,StringComparer.OrdinalIgnoreCase);
         var sourceGeometry=new Geometry(doc,transform);
-        var walls = imported.Where(p => p.Value is Wall).Select(p => {
+        var walls = imported.Where(p => p.Value is Wall { Location: LocationCurve, SketchId.Value: -1 }).Select(p => {
             var w = (Wall)p.Value;
             return new Item(p.Key, w, ((LocationCurve)w.Location).Curve,sourceGeometry.Curve(recordIndex[p.Key].Payload.GetProperty("curve").Read<Edge>()), w.get_BoundingBox(null));
         }).Where(w => w.Box != null).ToDictionary(w => w.Guid, StringComparer.OrdinalIgnoreCase);

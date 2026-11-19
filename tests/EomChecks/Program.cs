@@ -97,6 +97,19 @@ Check(EomSettings.Mark(s.GroupMask, "ЩР1", "3") == "ЩР1.Гр3" && EomSetting
 var restored = EomSettings.FromJson((s with { CableReserve = 15, GroupMask = "Гр.{N}" }).ToJson());
 Check(restored.CableReserve == 15 && restored.GroupMask == "Гр.{N}", "settings round-trip");
 Check(EomSettings.FromJson("{bad").CableReserve == 10 && EomSettings.FromJson("""{"CableReserve":99}""").CableReserve == 10, "invalid settings fall back to defaults");
+var legacyHeights = EomSettings.FromJson("""{"CableReserve":15}""");
+Check(legacyHeights.CableReserve == 15 && legacyHeights.SwitchHeightMm == 1000
+    && legacyHeights.ElectricalFixtureHeightMm == 300 && legacyHeights.ElectricalEquipmentHeightMm == 1500
+    && legacyHeights.LightingFixtureHeightMm == 2700, "placement heights default in older project settings");
+var customHeights = EomSettings.FromJson((legacyHeights with
+{
+    SwitchHeightMm = 1100, ElectricalFixtureHeightMm = 0, ElectricalEquipmentHeightMm = 1400,
+    LightingFixtureHeightMm = 2600.5
+}).ToJson());
+Check(customHeights.SwitchHeightMm == 1100 && customHeights.ElectricalFixtureHeightMm == 0
+    && customHeights.ElectricalEquipmentHeightMm == 1400 && customHeights.LightingFixtureHeightMm == 2600.5,
+    "placement heights round-trip with zero and fractional offsets");
+Check(EomSettings.FromJson("""{"SwitchHeightMm":-1}""").SwitchHeightMm == 1000, "negative placement height rejected");
 Console.WriteLine("PASS marking masks and settings storage");
 
 string file = Path.Combine(Path.GetTempPath(), "eom-catalog-" + Guid.NewGuid().ToString("N") + ".json");

@@ -7,11 +7,9 @@ namespace HeatLossViewer
     {
         public Result OnStartup(UIControlledApplication application)
         {
-            // Сведения, 3D, библиотека и радиаторы — на отдельной вкладке «BP ОВ»; общие инструменты ИОС остаются на «BotPlus RT».
-            string tabName = BotPlus.Shared.BotPlusSettings.OvTab;
-            foreach (string tab in new[] { "BotPlus RT", tabName })
-                try { application.CreateRibbonTab(tab); }
-                catch (Autodesk.Revit.Exceptions.ArgumentException) { /* Вкладка уже существует */ }
+            const string tabName = "BotPlus RT";
+            try { application.CreateRibbonTab(tabName); }
+            catch (Autodesk.Revit.Exceptions.ArgumentException) { /* Вкладка уже существует */ }
 
             RibbonPanel panel = application.GetRibbonPanels(tabName).FirstOrDefault(p => p.Name == "ОВ")
                 ?? application.CreateRibbonPanel(tabName, "ОВ");
@@ -40,9 +38,10 @@ namespace HeatLossViewer
                 panel.AddItem(new PushButtonData("OVLibrary", "Библиотека", assemblyPath, typeof(OvLibraryCommand).FullName!) { ToolTip = "Материалы, типы конструкций и радиаторы из текущего проекта." });
             if (!panel.GetItems().Any(i => i.Name == "OVRadiators"))
                 panel.AddItem(new PushButtonData("OVRadiators", "Радиаторы", assemblyPath, typeof(OvRadiatorsCommand).FullName!) { ToolTip = "Открыть вкладку подбора радиаторов в библиотеке проекта." });
-            var ios = application.GetRibbonPanels("BotPlus RT").FirstOrDefault(p => p.Name == "ИОС") ?? application.CreateRibbonPanel("BotPlus RT", "ИОС");
+            var ios = application.GetRibbonPanels(tabName).FirstOrDefault(p => p.Name == "ИОС") ?? application.CreateRibbonPanel(tabName, "ИОС");
             AddMepTools(ios, assemblyPath);
             Mep.EngineeringUpdater.Register(application.ActiveAddInId);
+            Mep.EngineeringStartupRefresh.Attach(application);
             Mep.InsulationUpdater.Register(application.ActiveAddInId);
             return Result.Succeeded;
         }
@@ -102,10 +101,13 @@ namespace HeatLossViewer
 
             panel.AddItem(Item("OVMepInsulation", "Изоляция", typeof(Mep.InsulationCommand),
                 "Тип и толщина изоляции для каждой трубы системы по ADSK_Наименование. «OK» строит изоляцию сразу, новые трубы получают её автоматически."));
+            panel.AddItem(Item("OVMepRiserNumbering", "Нумерация\nстояков", typeof(Mep.RiserNumberingCommand),
+                "ADSK_Номер стояка: автоматически 1, 2, 3… сверху вниз и слева направо по плану или копирование номера одного сегмента во все трубы стояка. Трубы активного вида или выделенные."));
         }
 
         public Result OnShutdown(UIControlledApplication application)
         {
+            Mep.EngineeringStartupRefresh.Detach(application);
             Mep.InsulationUpdater.Unregister(application.ActiveAddInId);
             Mep.EngineeringUpdater.Unregister(application.ActiveAddInId);
             return Result.Succeeded;

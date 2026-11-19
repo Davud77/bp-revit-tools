@@ -35,7 +35,8 @@ export function createRevitClient({ port = PORT, timeoutMs = TIMEOUT_MS, tokenLo
 
   return await new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: HOST, port });
-    let data = '';
+    let data = Buffer.allocUnsafe(Math.min(4096, maxResponseBytes));
+    let frameLength = 0;
     let settled = false;
     let bytes = 0;
     const abort = () => finish(new Error('MCP client cancelled the Revit request.'));
@@ -49,21 +50,30 @@ export function createRevitClient({ port = PORT, timeoutMs = TIMEOUT_MS, tokenLo
     };
 
     const deadline = setTimeout(() => finish(new Error('Timed out waiting for Revit. Check the Revit confirmation dialog.')), timeoutMs);
-    socket.setEncoding('utf8');
     signal?.addEventListener('abort', abort, { once: true });
     if (signal?.aborted) { abort(); return; }
     socket.on('connect', () => socket.write(payload));
     socket.on('data', chunk => {
-      bytes += Buffer.byteLength(chunk, 'utf8');
+      const newline = chunk.indexOf(10);
+      const frameChunk = newline < 0 ? chunk : chunk.subarray(0, newline);
+      bytes += frameChunk.length + (newline < 0 ? 0 : 1);
       if (bytes > maxResponseBytes) {
         finish(new Error('Revit response exceeded the 8 MB limit. Narrow the request and retry.'));
         return;
       }
-      data += chunk;
-      const newline = data.indexOf('\n');
+      const required = frameLength + frameChunk.length;
+      if (required > data.length) {
+        const grown = Buffer.allocUnsafe(Math.min(maxResponseBytes, Math.max(required, data.length * 2)));
+        data.copy(grown, 0, 0, frameLength);
+        data = grown;
+      }
+      frameChunk.copy(data, frameLength);
+      frameLength = required;
       if (newline < 0) return;
       try {
-        const response = JSON.parse(data.slice(0, newline));
+        // Search only newly received bytes. Re-scanning the entire growing string
+        // per fragment makes large, fragmented model responses quadratic.
+        const response = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(data.subarray(0, frameLength)));
         if (!response || response.id !== id) throw new Error('Response request ID does not match.');
         if (typeof response.ok !== 'boolean') throw new Error('Response has no boolean ok field.');
         if (!response.ok) finish(new Error(response.error ?? 'Revit returned an unspecified error.'));

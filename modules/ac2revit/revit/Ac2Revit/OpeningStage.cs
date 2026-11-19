@@ -25,6 +25,7 @@ public static class OpeningStage
         // Survives a native Revit crash: the marker lives next to the session's openings plan.
         var guard=new CrashGuard(CrashGuard.SessionFolder(plan),"openingCuts");
         using var process=System.Diagnostics.Process.GetCurrentProcess();process.Refresh();long initialMemory=process.PrivateMemorySize64;
+        var cutClock=System.Diagnostics.Stopwatch.StartNew();
         foreach(var record in records)
         {
             string key=record.S("sourceGuid"),cutKey=record.B("emptyOpening")?key:"opening:"+key;
@@ -72,7 +73,13 @@ public static class OpeningStage
                 // Shape key in the host wall's axes: equal openings in walls of any direction share one void family;
                 // the instance is rotated back. The Boolean check below still compares the actual cut with the IFC void.
                 double angle=hostElement is Wall { Location: LocationCurve { Curve: Line axis } }?Math.Atan2(axis.Direction.Y,axis.Direction.X):0;
-                var local=Transform.CreateRotation(XYZ.BasisZ,-angle).Multiply(Transform.CreateTranslation(center.Negate()));var source=NativeGeometry.MeshSolids(vg,local);
+                var local=Transform.CreateRotation(XYZ.BasisZ,-angle).Multiply(Transform.CreateTranslation(center.Negate()));List<Solid> source;
+                try{source=NativeGeometry.MeshSolids(vg,local);}
+                catch(AggregateException original)
+                {
+                    try{source=NativeGeometry.PrismSolids(vg,local);}
+                    catch(Exception prism){throw new AggregateException("Profile extrusion fallback also failed: "+prism.Message,original);}
+                }
                 var toWorld=local.Inverse;
                 owned.UnionWith(source);
                 var world=source.Select(s=>SolidUtils.CreateTransformed(s,toWorld)).ToList();owned.UnionWith(world);
@@ -140,10 +147,15 @@ public static class OpeningStage
             }
             finally{guard.Exit();foreach(var solid in owned)try{solid.Dispose();}catch(Exception){}}
         }
+        report.Add("opening-cuts-timing","Opening","notice",$"{records.Count} openings cut in {cutClock.Elapsed.TotalSeconds:0.0} s");
         report.Save(Path.Combine(folder,"cut-report.json"));
         foreach(string kind in new[]{"Door","Window"})
         {
             var selected=accepted.Where(r=>r.S("kind")==kind && !r.B("emptyOpening") && !index.ContainsKey(r.S("sourceGuid"))).ToList();
+            if(selected.Count==0)continue;
+            // Real door and window families from the exact IFC bodies; whatever cannot be reproduced to 3 mm stays exact IFC geometry.
+            var nativeFamilies=NativeFillings.Run(doc,project,root.S("ifcSha256"),folder,selected,index,report,(n,total)=>progress?.Invoke("native"+kind,n,total));
+            if(nativeFamilies.Count>0){selected=selected.Where(r=>!nativeFamilies.Contains(r.S("sourceGuid"))).ToList();Checkpoints.Save(doc);}
             if(selected.Count==0)continue;
             string body=Path.Combine(folder,"fillings-"+kind+".json");
             using(var stream=File.Create(body))

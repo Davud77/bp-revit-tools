@@ -82,7 +82,7 @@ public static class PipelineRunner
         Dictionary<string,long> WallIdentities()=>Storage.Index(doc,project).Where(p=>wallKeys.Contains(p.Key) && (p.Value is Wall or DirectShape)).ToDictionary(p=>p.Key,p=>p.Value.Id.Value,StringComparer.OrdinalIgnoreCase);
         var wallsBefore=WallIdentities();
         var config=ImportConfig.Load(Resolve(plan.Mapping));var report=new Report{ProjectId=project,Mode=preview?"pipelinePreview":"pipeline"};
-        string[] order=["resources","site","prepareHatchMapping","hatchMapping","grids","gridLabels","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","roomSeparators","surfacePaint","wallJoinsAndRooms","roomBoundaryAudit","views","serviceCuts","elementHatches","nativeDimensions","roomSeparatorRecheck","separatorAudit","hatchAudit","sourceCoverage"];
+        string[] order=["resources","site","prepareHatchMapping","hatchMapping","grids","gridLabels","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","wallRoofAttach","roomSeparators","surfacePaint","wallJoinsAndRooms","roomBoundaryAudit","views","levelExtents","serviceCuts","elementHatches","nativeDimensions","roomSeparatorRecheck","separatorAudit","hatchAudit","sourceCoverage"];
         if(preview){foreach(var stage in order)report.Add(stage,"PipelineStage","planned");return report;}
         if(plan.EnforceSourceSnapshot)
         {
@@ -283,7 +283,25 @@ public static class PipelineRunner
                     bodyPath=Path.Combine(folder,"wall-bodies.json");
                 }
             }
-            return WallCompletion.Run(doc,manifest,bodyPath,Path.Combine(output,"wall-completion"),progress);
+            // Walls that Archicad trimmed (a stair, a roof) are nominal prisms in the API; their exact IFC profile makes them native profile walls.
+            Report? trimmedReport=null;
+            using(var ifcReference=JsonDocument.Parse(File.ReadAllText(Resolve(plan.BeamBodies))))
+            {
+                string trimmedFolder=Path.Combine(output,"trimmed-walls");
+                try
+                {
+                    var trimmedArgs=new List<string>{"--manifest",Resolve(plan.SourceManifest),"--ifc",Resolve(ifcReference.RootElement.S("ifcPath")),"--out",trimmedFolder};
+                    string trimmedPart=plan.IfcParts.Length>0?Path.Combine(Path.GetDirectoryName(Resolve(plan.IfcParts))!,"walls.ifc"):"";
+                    if(trimmedPart.Length>0 && File.Exists(trimmedPart))trimmedArgs.AddRange(["--ifc-part",trimmedPart]);
+                    ExchangeServices.Run("prepare_trimmed_walls.py",trimmedArgs,line=>File.AppendAllText(Path.Combine(output,"trimmed-walls.log"),line+Environment.NewLine));
+                    trimmedReport=new Report{ProjectId=project,Mode="trimmedWalls"};
+                    TrimmedWalls.Run(doc,manifest,Path.Combine(trimmedFolder,"trimmed-walls.json"),trimmedReport,progress);
+                }
+                catch(Exception ex){trimmedReport??=new Report{ProjectId=project,Mode="trimmedWalls"};trimmedReport.Add("trimmed-walls","Wall","notice","Trimmed walls were not checked: "+ex.Message);}
+            }
+            var wallResult=WallCompletion.Run(doc,manifest,bodyPath,Path.Combine(output,"wall-completion"),progress);
+            if(trimmedReport!=null)wallResult.Items.AddRange(trimmedReport.Items);
+            return wallResult;
         });
         Stage("beamBodies",()=>
         {
@@ -300,6 +318,7 @@ public static class PipelineRunner
         Stage("openingsAndFillings",()=>OpeningStage.Run(doc,Resolve(plan.OpeningsPlan),Resolve(plan.VoidTemplate),Path.Combine(output,"opening-families"),trialLimit,progress,selection?.Included));
         Stage("nativeTerrain",()=>ImportMissing(Resolve(plan.SourceManifest),new HashSet<string>{"Mesh"},config));
         if(plan.SupplementalBodiesPlan.Length>0)Stage("supplementalBodies",()=>SupplementalBodiesStage.Run(doc,Resolve(plan.SupplementalBodiesPlan),Path.Combine(output,"supplemental-inputs"),progress,selection?.Included));
+        Stage("wallRoofAttach",()=>WallRoofAttach.Run(doc,project,progress));
         if(plan.RoomSeparators.Length>0)Stage("roomSeparators",()=>RoomSeparatorStage.Run(doc,manifest,Resolve(plan.SourceManifest),Resolve(plan.RoomSeparators),Path.Combine(output,"room-separators"),progress));
         // Faces are painted before joins and rooms exist: with them in the model every commit recomputes them
         // (hours on a large project), and the paint survives the later joins.
@@ -382,6 +401,7 @@ public static class PipelineRunner
             t.Commit();
         }
         progress?.Invoke("pipeline:end:views",Array.IndexOf(order,"views")+1,order.Length);
+        Stage("levelExtents",()=>LevelExtents.Run(doc,project,progress));
         Stage("serviceCuts",()=>ServiceCutsStage.Run(doc,project));
         if(plan.HatchRules.Length>0)Stage("elementHatches",()=>ElementHatchStage.PrepareAndRun(doc,manifest,Resolve(plan.SourceManifest),Resolve(plan.HatchRules),Path.Combine(output,"element-hatches"),selection));
         Stage("nativeDimensions",()=>NativeDimensionStage.Run(doc,manifest,progress,ui));

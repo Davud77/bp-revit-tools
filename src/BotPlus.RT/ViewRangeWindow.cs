@@ -26,7 +26,10 @@ internal sealed class ViewRangeWindow : Window
     readonly LevelInfo associated;
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0), MinHeight = 18 };
     // Live update while dragging: the first change applies at once, further ones at most every 30 ms (the latest value wins).
-    readonly DispatcherTimer delay = new() { Interval = TimeSpan.FromMilliseconds(30) };
+    // The pause adapts to the model: on a heavy plan one apply (regeneration) takes a second or more, and applying again right away
+    // froze Revit and the slider. Between applies the window stays responsive; the latest value is always applied in the end.
+    readonly DispatcherTimer delay = new() { Interval = TimeSpan.FromMilliseconds(MinPauseMs) };
+    const int MinPauseMs = 60, MaxPauseMs = 1500;
     bool queued;
     bool loading;
     string? lastApplied;
@@ -143,7 +146,9 @@ internal sealed class ViewRangeWindow : Window
         if (!Validate()) return false;
         string key = Key();
         if (key == lastApplied) return true;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         string? error = Apply?.Invoke(Rows);
+        delay.Interval = TimeSpan.FromMilliseconds(Math.Clamp(watch.ElapsedMilliseconds * 0.5, MinPauseMs, MaxPauseMs));
         if (error != null)
         {
             status.SetResourceReference(TextBlock.ForegroundProperty, "BP.Error");

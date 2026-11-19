@@ -6,38 +6,19 @@ namespace BotPlus.RT;
 
 internal static class RibbonStyle
 {
-    public static void Apply(UIControlledApplication app)
+    public static void Apply(IEnumerable<RibbonPanel> panels)
     {
-        var panels=Panels(app.GetRibbonPanels);
-        foreach(var (panel,_) in panels)foreach(var item in panel.GetItems().OfType<PushButton>())
-        {item.Image=Icon(item.Name,16);item.LargeImage=Icon(item.Name,32);}
-        foreach(var (panel,_) in panels)foreach(var menu in panel.GetItems().OfType<PulldownButton>())
+        foreach (var panel in panels)
+        foreach (var item in panel.GetItems().OfType<RibbonButton>())
         {
-            menu.Image=Icon(menu.Name,16);menu.LargeImage=Icon(menu.Name,32);
-            foreach(var item in menu.GetItems()){item.Image=Icon(item.Name,16);item.LargeImage=Icon(item.Name,32);}
-        }
-        ApplyVisibility(panels);
-    }
-    /// <summary>Панели вкладок плагина с ключом модуля: на «BotPlus RT» ключ — имя панели, на вкладке ЭОМ — «ЭОМ». Вкладки ЭОМ нет, если модуль не запущен.</summary>
-    internal static List<(RibbonPanel Panel,string Key)> Panels(Func<string,List<RibbonPanel>> get)
-    {
-        var result=get("BotPlus RT").Select(p=>(p,p.Name)).ToList();
-        // Вкладки модулей создаются только при включённом модуле; отсутствующую пропускаем.
-        foreach(var tab in new[]{BotPlus.Shared.BotPlusSettings.OvTab,BotPlus.Shared.BotPlusSettings.VkTab})
-            try{result.AddRange(get(tab).Select(p=>(p,p.Name)));}catch(Autodesk.Revit.Exceptions.ArgumentException){}
-        try{result.AddRange(get(BotPlus.Shared.BotPlusSettings.EomTab).Select(p=>(p,"ЭОМ")));}
-        catch(Autodesk.Revit.Exceptions.ArgumentException){}
-        return result;
-    }
-    /// <summary>Скрывает панели, снятые в настройках. Панель «Настройки» не входит в список и остаётся всегда.</summary>
-    internal static void ApplyVisibility(IEnumerable<(RibbonPanel Panel,string Key)> panels)
-    {
-        BotPlus.Shared.BotPlusSettings.Load();
-        foreach(var (panel,key) in panels)
-        {
-            if(!BotPlus.Shared.BotPlusSettings.Panels.Contains(key))continue;
-            bool visible=!BotPlus.Shared.BotPlusSettings.HiddenPanels.Contains(key);
-            if(panel.Visible!=visible)panel.Visible=visible;
+            item.Image = Icon(item.Name, 16);
+            item.LargeImage = Icon(item.Name, 32);
+            if (item is not PulldownButton menu) continue;
+            foreach (var child in menu.GetItems())
+            {
+                child.Image = Icon(child.Name, 16);
+                child.LargeImage = Icon(child.Name, 32);
+            }
         }
     }
     /// <summary>Иконки модуля ЭОМ: жёлто-оранжевый акцент «электрики» поверх общей палитры.</summary>
@@ -58,6 +39,7 @@ internal static class RibbonStyle
             case "Isolux":for(int i=0;i<4;i++)d.DrawEllipse(new SolidColorBrush(Color.FromArgb(255,(byte)(255-i*10),(byte)(90+i*45),(byte)(40+i*45))),i==3?outline:null,new Point(16,16),13-i*3.5,10-i*2.6);break;
             case "RouteTray":Shape("M2,14 L30,14 L30,22 L2,22 Z",paper);Line(2,18,30,18);Line(9,14,9,22);Line(16,14,16,22);Line(23,14,23,22);d.DrawLine(new Pen(blue,2),new Point(2,10),new Point(30,10));break;
             case "RouteConduit":d.DrawRoundedRectangle(paper,outline,new Rect(2,12,28,8),4,4);d.DrawLine(new Pen(blue,2){DashStyle=DashStyles.Dash},new Point(4,16),new Point(28,16));break;
+            case "ConduitThroughLights":d.DrawLine(new Pen(blue,3),new Point(2,16),new Point(30,16));d.DrawRoundedRectangle(paper,outline,new Rect(10,9,12,14),2,2);d.DrawEllipse(blue,null,new Point(16,16),2,2);break;
             case "Wiring":Line(2,16,30,16);foreach(var x in new[]{7.0,16,25})Shape(FormattableString.Invariant($"M{x-3},13 L{x-3},19 L{x+3},19 L{x+3},13"),paper);d.DrawLine(new Pen(blue,2),new Point(2,26),new Point(30,26));break;
             case "Riser":d.DrawRectangle(paper,outline,new Rect(12,2,8,28));Line(2,10,30,10);Line(2,22,30,22);Shape("M16,4 L20,9 L12,9 Z M16,28 L20,23 L12,23 Z",blue,null);break;
             case "Connect":d.DrawRectangle(paper,outline,new Rect(19,4,10,24));Line(22,9,26,9);Line(22,14,26,14);d.DrawEllipse(amber,outline,new Point(6,9),3,3);d.DrawEllipse(amber,outline,new Point(6,23),3,3);Shape("M9,9 L19,12 M9,23 L19,20",null,new Pen(green,2));break;
@@ -105,6 +87,9 @@ internal static class RibbonStyle
                 var heat=new Pen(new SolidColorBrush(Color.FromRgb(221,102,48)),2){StartLineCap=PenLineCap.Round,EndLineCap=PenLineCap.Round};
                 for(int x=12;x<=20;x+=4)Shape($"M{x},24 C{x-3},21 {x+3},19 {x},16",null,heat);
             }
+            else if(name=="BotPlusRTFavorites"){Shape("M16,2 L20,11 L30,12 L23,19 L25,29 L16,24 L7,29 L9,19 L2,12 L12,11 Z",new SolidColorBrush(Color.FromRgb(236,184,75)));}
+            else if(name=="BotPlusRTFeedback"){Shape("M3,5 L29,5 L29,23 L15,23 L8,29 L8,23 L3,23 Z",paper);Line(8,11,24,11);Line(8,17,20,17);}
+            else if(name=="BotPlusRTSearch"){d.DrawEllipse(paper,new Pen(blue,2.6),new Point(13,13),8,8);d.DrawLine(new Pen(blue,3.2),new Point(19,19),new Point(28,28));}
             else if(name.Contains("Settings")){for(int i=0;i<8;i++){d.PushTransform(new RotateTransform(i*45,16,16));d.DrawRoundedRectangle(paper,outline,new Rect(13,2.5,6,6.5),1,1);d.Pop();}d.DrawEllipse(paper,outline,new Point(16,16),9.5,9.5);d.DrawEllipse(blue,null,new Point(16,16),4.2,4.2);d.DrawEllipse(Brushes.White,null,new Point(16,16),1.7,1.7);}
             else if(name.Contains("Information")||name.Contains("Service")){Shape("M5,3 L22,3 L28,9 L28,29 L5,29 Z",paper);Line(21,3,21,10);Line(21,10,28,10);d.DrawEllipse(blue,null,new Point(17,20),6,6);d.DrawLine(new Pen(Brushes.White,2),new Point(17,19),new Point(17,24));d.DrawEllipse(Brushes.White,null,new Point(17,16),1,1);}
             else if(name.Contains("Update")||name.Contains("Continue")){d.DrawEllipse(paper,outline,new Point(16,16),12,12);Shape("M7,13 C9,5 23,5 25,13 M25,13 L25,6 M25,13 L18,13",null,new Pen(blue,2.2));Shape("M25,20 C22,28 9,27 7,20 M7,20 L7,27 M7,20 L14,20",null,new Pen(green,2.2));}

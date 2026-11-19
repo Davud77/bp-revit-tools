@@ -42,6 +42,7 @@ internal sealed class ExchangeWindow : Window
     public bool CreateNewProject=>newProject.IsChecked==true;
     public string TemplatePath=>template.Text.Trim();
     readonly TextBox outputPath=new(){Margin=new Thickness(0,0,8,0),VerticalContentAlignment=VerticalAlignment.Center};
+    string defaultOutput="";
     readonly Button outputBrowse=new(){Content="Обзор…",Padding=new Thickness(12,4,12,4)};
     public string OutputPath=>outputPath.Text.Trim();
 
@@ -66,7 +67,7 @@ internal sealed class ExchangeWindow : Window
         exportMode.Items.Add("JSON + IFC — комбинированный перенос");exportMode.Items.Add("Только JSON — параметры и нативные адаптеры");exportMode.Items.Add("Только IFC — сохранить файл для обмена");exportMode.SelectedIndex=0;
         top.Children.Add(exportMode);
         var scope=new Expander{Header="Элементы экспорта — по умолчанию все",Content=categories,IsExpanded=true,Margin=new Thickness(0,8,0,4)};top.Children.Add(scope);
-        foreach(var (kind,label) in new[]{("Wall","Стены"),("Slab","Перекрытия"),("Door","Двери"),("Window","Окна"),("Zone","Помещения"),("Column","Колонны"),("Beam","Балки"),("Roof","Кровли"),("Mesh","Рельеф Mesh → Топотело"),("Morph","Морфы"),("Stair","Лестницы"),("Railing","Ограждения"),("CurtainWall","Витражи"),("Object","Объекты"),("Shell","Оболочки"),("Skylight","Световые люки"),("Lamp","Светильники"),("Opening","Проёмы"),("Grid","Оси IFC"),("Dimension","Нативные размеры")})
+        foreach(var (kind,label) in new[]{("Wall","Стены"),("Slab","Перекрытия"),("Door","Двери"),("Window","Окна"),("Zone","Помещения"),("Column","Колонны"),("Beam","Балки"),("Roof","Кровли"),("Mesh","Рельеф"),("Morph","Морфы"),("Stair","Лестницы"),("Railing","Ограждения"),("CurtainWall","Витражи"),("Object","Объекты"),("Shell","Оболочки"),("Skylight","Световые люки"),("Lamp","Светильники"),("Opening","Проёмы"),("Grid","Оси IFC"),("Dimension","Нативные размеры")})
         {var box=new CheckBox{Content=label,IsChecked=true,Margin=new Thickness(0,3,16,3),MinWidth=130};exportKinds[kind]=box;categories.Children.Add(box);}
         if(resumeSession.Length>0){exportMode.IsEnabled=false;scope.IsEnabled=false;using var saved=JsonDocument.Parse(File.ReadAllText(resumeSession));exportMode.SelectedIndex=saved.RootElement.S("exportMode") switch{"json"=>1,"ifc"=>2,_=>0};}
         top.Children.Add(new TextBlock{Text=resumeSession.Length>0?"Подготовка сохранённых JSON и IFC":"IFC-транслятор Archicad",Margin=new Thickness(0,0,0,5)});top.Children.Add(translators);
@@ -78,7 +79,7 @@ internal sealed class ExchangeWindow : Window
         if(build)
         {
             top.Children.Add(new TextBlock{Text="Файл импортируемой модели RVT",Margin=new Thickness(0,4,0,4)});
-            outputPath.Text=Path.Combine(ExchangeServices.Outputs,"Archicad-"+DateTime.Now.ToString("yyyyMMdd-HHmmss")+".rvt");
+            outputPath.Text=defaultOutput=Path.Combine(ExchangeServices.Outputs,SessionPaths.OutputFileName("",DateTime.Now,candidate=>File.Exists(Path.Combine(ExchangeServices.Outputs,candidate))));
             var destination=new DockPanel{Margin=new Thickness(0,0,0,8)};DockPanel.SetDock(outputBrowse,Dock.Right);destination.Children.Add(outputBrowse);destination.Children.Add(outputPath);top.Children.Add(destination);
             outputBrowse.Click+=(_,_)=>{var dialog=new SaveFileDialog{Filter="Модель Revit|*.rvt",FileName=OutputPath,OverwritePrompt=false};if(dialog.ShowDialog(this)==true)outputPath.Text=dialog.FileName;};
             newProject.IsEnabled=hasProject;top.Children.Add(newProject);
@@ -141,6 +142,7 @@ internal sealed class ExchangeWindow : Window
             using var parsed=JsonDocument.Parse(File.ReadAllText(result));connection=parsed.RootElement.Clone();
             var info=connection.Value;var project=info.GetProperty("project");
             source.Text=project.S("projectName")+"\n"+project.S("projectPath")+"\nTapir: "+info.D("port")+" · окно: "+info.S("windowType");
+            if(outputPath.Text==defaultOutput)outputPath.Text=defaultOutput=Path.Combine(ExchangeServices.Outputs,SessionPaths.OutputFileName(project.S("projectName"),DateTime.Now,candidate=>File.Exists(Path.Combine(ExchangeServices.Outputs,candidate))));
             foreach(var t in info.GetProperty("translators").EnumerateArray())translators.Items.Add(t.S("name"));
             // Same preference as tools/revit_session.py choose_translator: exact geometry, then general export, then similar names.
             var available=translators.Items.Cast<string>().ToList();

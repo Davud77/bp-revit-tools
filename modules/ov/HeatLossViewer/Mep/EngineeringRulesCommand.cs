@@ -1,4 +1,4 @@
-using System.Windows.Interop;
+﻿using System.Windows.Interop;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
@@ -18,9 +18,6 @@ public sealed class EngineeringRulesCommand : IExternalCommand
             var doc = ui.Document;
             if (doc.IsFamilyDocument) { TaskDialog.Show("Апдейтер", "Откройте проект."); return Result.Cancelled; }
             var rules = EngineeringRulesStore.Read(doc);
-            var stored = rules;
-            // No saved rules yet: the window opens with the default formulas; they take effect once saved.
-            if (rules.Rules.Count == 0) { rules = EngineeringRuleSet.FromJson(rules.ToJson()); rules.Rules.AddRange(EngineeringRuleSet.DefaultRules()); }
             var picked = ui.Selection.GetElementIds().Select(doc.GetElement).FirstOrDefault(e => e != null && EngineeringEngine.CategoryKey(e) != null);
             var window = new EngineeringRulesWindow(new RevitUpdaterModel(doc), rules, picked is null ? null : EngineeringEngine.CategoryKey(picked),
                 picked is null ? null : EngineeringEngine.TypeMark(picked));
@@ -32,12 +29,7 @@ public sealed class EngineeringRulesCommand : IExternalCommand
             {
                 t.Start();
                 EngineeringRulesStore.Write(doc, window.Rules);
-                if (window.UpdateScope is { } scope)
-                    outcome = EngineeringEngine.ApplyScope(doc, window.Rules, scope.Category, scope.Mark);
-                // Existing elements get ADSK_Система_Имя right away when the rules changed (the updater only reacts to later edits).
-                bool systemsChanged = System.Text.Json.JsonSerializer.Serialize(window.Rules.SystemNames) != System.Text.Json.JsonSerializer.Serialize(stored.SystemNames);
-                if (window.Rules.SystemNames.Enabled && (window.UpdateSystems || systemsChanged))
-                    outcome = EngineeringEngine.ApplySystemNames(doc, window.Rules, outcome);
+                outcome = EngineeringEngine.ApplyAll(doc, window.Rules);
                 // The command already wrote every value; the updater would only re-check them on commit.
                 EngineeringUpdater.Suspended = true;
                 try { if (t.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Revit отменил сохранение правил."); }
@@ -62,7 +54,7 @@ public sealed class EngineeringRefreshCommand : IExternalCommand
             if (ui is null) return Result.Cancelled;
             var doc = ui.Document;
             var rules = EngineeringRulesStore.Read(doc);
-            if (rules.Rules.Count == 0 && rules.WallThickness.Target.Length == 0 && !rules.SystemNames.Enabled) { TaskDialog.Show("Апдейтер", "В проекте нет правил. Настройте их командой «Апдейтер»."); return Result.Cancelled; }
+            if (rules.Rules.Count == 0 && rules.ConditionalGroups.Count == 0 && rules.WallThickness.Target.Length == 0 && !rules.SystemNames.Enabled) { TaskDialog.Show("Апдейтер", "В проекте нет правил. Настройте их командой «Апдейтер»."); return Result.Cancelled; }
             var selected = ui.Selection.GetElementIds().Select(doc.GetElement).Where(e => e != null && (EngineeringEngine.CategoryKey(e) != null || EngineeringEngine.SystemCategory(e))).ToList();
             IEnumerable<Element> targets = selected.Count > 0 ? selected
                 : EngineeringEngine.Watched().SelectMany(c => new FilteredElementCollector(doc).OfCategory(c).WhereElementIsNotElementType());
