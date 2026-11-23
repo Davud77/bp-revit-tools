@@ -137,10 +137,7 @@ internal static class ConduitSelectionToolbar
                 Post(selection, (active, selected) =>
                 {
                     var targets = WiringTargets(selected);
-                    if (targets.Count == 0) throw new InvalidOperationException("У выбранных фитингов нет подключённых участков трассы.");
-                    (int Reversed, int Skipped) result = default;
-                    Edit(active.Document, "ЭОМ: групповой разворот УГО", () => result = WiringSymbols.Reverse(active.Document, targets, active.ActiveView));
-                    if (result.Skipped > 0) TaskDialog.Show("BotPlus ЭОМ", $"Развёрнуто участков: {result.Reversed}. Пропущено без подходящего УГО: {result.Skipped}.");
+                    WiringSymbols.Reverse(active.Document, targets, active.ActiveView);
                 }));
             controls.Children.Add(reverse);
         }

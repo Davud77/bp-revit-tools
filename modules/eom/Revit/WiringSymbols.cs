@@ -187,11 +187,14 @@ internal static class WiringSymbols
     }
 
     /// <summary>Разворачивает только условные обозначения. Трасса и её соединители не меняются.</summary>
-    internal static (int Reversed, int Skipped) Reverse(Document doc, IReadOnlyCollection<Element> hosts, View activeView)
+    internal static void Reverse(Document doc, IReadOnlyCollection<Element> hosts, View activeView)
     {
+        if (hosts.Count == 0) return;
         var symbols = ForHosts(doc, hosts);
         Dictionary<string, FamilySymbol>? types = null;
-        int reversed = 0;
+        using var batch = new TransactionGroup(doc, "ЭОМ: групповой разворот УГО");
+        if (batch.Start() != TransactionStatus.Started) return;
+        var failures = new SilentReverseFailures();
         foreach (var host in hosts)
         {
             if (PlanLine(host, activeView) == null) continue;
@@ -206,15 +209,40 @@ internal static class WiringSymbols
                 targets.Add((activeView, symbol));
             }
             var ids = existing.Select(i => i.Id).ToList();
-            EomStore.SaveWiringDirection(host, !EomStore.IsWiringReversed(host));
-            if (ids.Count > 0) doc.Delete(ids);
-            foreach (var (view, symbol) in targets)
-                if (view == null || Place(doc, view, host, symbol).Count == 0)
-                    throw new InvalidOperationException("Не удалось разместить развёрнутое УГО. Изменение отменено.");
-            reversed++;
+            using var edit = new Transaction(doc, "ЭОМ: разворот УГО участка");
+            try
+            {
+                if (edit.Start() != TransactionStatus.Started) continue;
+                edit.SetFailureHandlingOptions(edit.GetFailureHandlingOptions().SetFailuresPreprocessor(failures).SetClearAfterRollback(true));
+                EomStore.SaveWiringDirection(host, !EomStore.IsWiringReversed(host));
+                if (ids.Count > 0) doc.Delete(ids);
+                if (targets.Any(t => t.View == null || Place(doc, t.View, host, t.Symbol).Count == 0))
+                {
+                    edit.RollBack();
+                    continue;
+                }
+                edit.Commit();
+            }
+            catch (Exception error) when (error is InvalidOperationException or Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                if (edit.HasStarted()) edit.RollBack();
+                System.Diagnostics.Trace.WriteLine($"ЭОМ: разворот УГО участка {host.Id.Value} пропущен: {error.Message}");
+            }
         }
-        if (reversed == 0) throw new InvalidOperationException("Нет участков с УГО. Проверьте длину участков и наличие семейства «ADSK_Обозначение проводок».");
-        return (reversed, hosts.Count - reversed);
+        batch.Assimilate();
+    }
+
+    sealed class SilentReverseFailures : IFailuresPreprocessor
+    {
+        public FailureProcessingResult PreprocessFailures(FailuresAccessor accessor)
+        {
+            foreach (var message in accessor.GetFailureMessages())
+            {
+                if (message.GetSeverity() == FailureSeverity.Warning) accessor.DeleteWarning(message);
+                else return FailureProcessingResult.ProceedWithRollBack;
+            }
+            return FailureProcessingResult.Continue;
+        }
     }
 
     /// <summary>Обозначения следуют за трассой: при изменении ставятся заново тем же типом, при удалении трассы удаляются.</summary>
