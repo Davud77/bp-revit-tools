@@ -12,50 +12,56 @@ namespace BotPlus.Eom;
 [Transaction(TransactionMode.Manual)]
 public sealed partial class ConduitThroughLightsCommand : EomCommand
 {
-    const string Title = "Короб, труба";
+    const string Title = "Гофра, труба";
     const string BoxFamily = "TSL_CNF_т_Короб_Коробка распределительная";
     const string ElbowFamily = "TSL_CNF_т_Короб_Поворот на 90°";
     const double PointTolerance = 0.0001; // футы
     const double DirectionTolerance = 0.99999;
 
-    sealed record Port(int? Id, XYZ Point, XYZ Axis, double? Diameter, bool NeedsBox = false)
+    sealed record Port(int? Id, XYZ Point, XYZ Axis, double? Diameter, bool NeedsBox = false, bool Tap = false, bool TerminalElbow = false)
     {
-        public override string ToString() => Id is { } id
-            ? $"№{id} · Ø{Mm(Diameter!.Value):0.##} мм · {Direction(Axis.X)}/{Direction(Axis.Y)}/{Direction(Axis.Z)}"
-            : "Вывод распределительной коробки";
+        public override string ToString()
+        {
+            var direction = $"{Direction(Axis.X)}/{Direction(Axis.Y)}/{Direction(Axis.Z)}";
+            if (Tap) return $"Ответвление · Ø{Mm(Diameter!.Value):0.##} мм · {direction}";
+            return Id is { } id ? $"№{id} · Ø{Mm(Diameter!.Value):0.##} мм · {direction}" : "Вывод распределительной коробки";
+        }
         static string Direction(double component) => component.ToString("+0.##;-0.##;0");
     }
 
     sealed record Leg(Port Start, Port End, XYZ Shift, XYZ[] Points, bool PlanarLights, BoxPath BoxPath = BoxPath.Standard);
-    sealed record Pick(Element Element, XYZ Point, int? PortId = null);
-    sealed record HoverLeg(XYZ[] Points, XYZ ConnectorPoint);
+    sealed record Pick(Element? Element, XYZ Point, int? PortId = null);
+    sealed record HoverLeg(XYZ[] Points, XYZ ConnectorPoint, string? Hint = null, bool Invalid = false);
 
     protected override Result Run(UIDocument ui) => Route(ui);
 
-    internal static Result Route(UIDocument ui)
+    internal static Result Route(UIDocument ui, Conduit? exemplar = null)
     {
+        ConduitSelectionToolbar.Hide();
         using var tools = RouteTools.OpenConduit(ui);
         Result result;
-        try { result = Draw(ui, tools); }
+        try { result = Draw(ui, tools, exemplar); }
         catch (RevitCanceled) { result = Result.Cancelled; }
         return tools.BuiltRiser ? Result.Succeeded : result;
     }
 
-    static Result Draw(UIDocument ui, RouteTools tools)
+    static Result Draw(UIDocument ui, RouteTools tools, Conduit? exemplar)
     {
         var doc = ui.Document;
         var settings = EomStore.Settings(doc);
         var boxTypes = BoxTypes(doc);
         var elbowType = FittingType(doc, ElbowFamily);
-        var start = tools.Pick(() => PickBody(ui, e => IsLight(e) || e is Conduit || IsFitting(e), null,
-            "Выберите начальный вывод. Shift+щелчок — поставить выключатель на стену."));
-        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift)) return PlaceRoutedSwitch(ui, start);
-        var source = start.Element;
-        var type = ChooseType(doc, source);
+        var start = tools.Pick(() => PickBody(ui, IsRouteTarget, null,
+            "Выберите вывод, точку на коробе или начало свободной трассы на плане. Shift+щелчок по выводу — поставить выключатель.", allowFree: true));
+        if (start.Element is not { } source)
+            return DrawFreeFromPoint(ui, tools, start.Point, elbowType, exemplar) ? Result.Succeeded : Result.Cancelled;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) && (source is not Conduit || start.PortId != null))
+            return PlaceRoutedSwitch(ui, start);
+        var type = ChooseType(doc, source is Conduit ? source : exemplar ?? source);
         var visited = new HashSet<ElementId> { source.Id };
         XYZ? sourceHit = start.Point;
         int? sourcePortId = start.PortId;
-        double? diameter = source is Conduit conduit ? conduit.Diameter : null;
+        double? diameter = source is Conduit conduit ? conduit.Diameter : exemplar?.Diameter;
         bool built = false;
 
         while (true)
@@ -67,10 +73,13 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
                     : Nearest(FreePorts(source, null).Where(port => sourcePortId == null || port.Id == sourcePortId),
                         sourceHit, ui.ActiveView is ViewPlan).FirstOrDefault()?.Diameter);
                 tools.UseConduit(type.Id, selectedSize);
-                pick = tools.Pick(() => PickBody(ui, e => !visited.Contains(e.Id) && (IsLight(e) || IsSwitch(e)), selectedSize,
-                    "Щёлкните по метке нужного вывода. Щелчок по корпусу открывает выбор. Esc — завершить.",
-                    (element, point, portId) => PreviewPath(ui, source, sourceHit, (FamilyInstance)element, point, diameter,
-                        Feet(settings.RouteAlignmentMm), sourcePortId, portId)));
+                var elevation = IsRiser(source) && sourcePortId == null ? (double?)null : RoutingPoint(source, sourceHit, sourcePortId).Z;
+                pick = tools.Pick(() => PickBody(ui, e => !visited.Contains(e.Id) && IsRouteTarget(e), selectedSize,
+                    "Выберите прибор или короб. Щелчок в пустом месте задаёт точку свободной трассы. Esc — завершить.",
+                    (element, point, portId) => PreviewPath(ui, source, sourceHit, element, point, diameter,
+                        Feet(settings.RouteAlignmentMm), sourcePortId, portId),
+                    point => PreviewFirstFree(source, sourceHit, sourcePortId, diameter, point),
+                    allowFree: true, riserElevation: elevation, excluded: e => visited.Contains(e.Id)));
             }
             catch (RevitCanceled) { return built ? Result.Succeeded : Result.Cancelled; }
             catch (Exception error) when (error is InvalidOperationException or Autodesk.Revit.Exceptions.ApplicationException)
@@ -79,23 +88,28 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
                 return built ? Result.Succeeded : Result.Cancelled;
             }
 
-            var target = (FamilyInstance)pick.Element;
+            if (pick.Element is not { } target)
+            {
+                var freeBuilt = DrawFreeFromElement(ui, tools, source, sourceHit, sourcePortId, diameter, type, boxTypes, elbowType, pick.Point);
+                if (freeBuilt == null) continue;
+                return built || freeBuilt.Value ? Result.Succeeded : Result.Cancelled;
+            }
             try
             {
                 bool switchBox = IsSwitch(target);
                 var targetPoint = switchBox
-                    ? SwitchBoxPlacement.Find(ui, target, Feet(settings.SwitchBoxOffsetMm))
+                    ? SwitchBoxPlacement.Find(ui, (FamilyInstance)target, Feet(settings.SwitchBoxOffsetMm))
                     : null;
                 var changePort = Keyboard.Modifiers.HasFlag(ModifierKeys.Shift);
                 var choices = PrepareLeg(ui, source, sourceHit, target, pick.Point, targetPoint, diameter,
-                    Feet(settings.RouteAlignmentMm), false, sourcePortId, changePort ? null : pick.PortId);
+                    Feet(settings.RouteAlignmentMm), false, sourcePortId, changePort && target is not Conduit ? null : pick.PortId);
                 Leg? leg;
                 if (switchBox)
                 {
-                    var verified = VerifySwitchBoxChoices(ui, type, boxTypes, elbowType, source, target, choices);
+                    var verified = VerifySwitchBoxChoices(ui, type, boxTypes, elbowType, source, (FamilyInstance)target, choices);
                     leg = ReviewLeg(ui, verified, true, false);
                 }
-                else if (changePort || pick.PortId == null && choices.Ends(choices.Starts[0]).Length > 1)
+                else if (changePort || target is not Conduit && pick.PortId == null && choices.Ends(choices.Starts[0]).Length > 1)
                     leg = ReviewLeg(ui, choices, false, false);
                 else
                 {
@@ -104,9 +118,10 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
                         continue;
                 }
                 if (leg == null) continue;
+                if (!ConfirmDiameter(leg.Start.Diameter, leg.End.Diameter)) continue;
                 if (!built) RouteCommand.PrepareWiring(ui);
                 var (next, size, _) = switchBox
-                    ? CommitSwitchConnection(ui, type, boxTypes, elbowType, source, target, leg)
+                    ? CommitSwitchConnection(ui, type, boxTypes, elbowType, source, (FamilyInstance)target, leg)
                     : CommitLeg(doc, type, boxTypes, elbowType, source, target, leg);
                 source = next;
                 sourceHit = null;
@@ -115,6 +130,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
                 visited.Add(target.Id);
                 built = true;
                 ui.RefreshActiveView();
+                if (target is Conduit) return Result.Succeeded;
 
                 if (FreePorts(source, diameter).Length == 0)
                 {
@@ -123,6 +139,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
                 }
             }
             catch (RevitCanceled) { }
+            catch (OperationCanceledException) { }
             catch (Exception error) when (error is InvalidOperationException or Autodesk.Revit.Exceptions.ApplicationException)
             {
                 TaskDialog.Show(Title, error.Message);
@@ -154,7 +171,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
         return dialog.Show() == TaskDialogResult.CommandLink1;
     }
 
-    static HoverLeg? PreviewPath(UIDocument ui, Element source, XYZ? sourceHit, FamilyInstance target, XYZ hit,
+    static HoverLeg? PreviewPath(UIDocument ui, Element source, XYZ? sourceHit, Element target, XYZ hit,
         double? diameter, double alignment, int? sourcePortId, int? targetPortId)
     {
         if (IsSwitch(target)) return null;
@@ -168,22 +185,27 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
     sealed record LegChoices(Port[] Starts, Func<Port, Port[]> Ends, Func<Port, Port, bool> CanAlign,
         Func<Port, Port, bool, Leg> MakeLeg);
 
-    static LegChoices PrepareLeg(UIDocument ui, Element source, XYZ? sourceHit, FamilyInstance target, XYZ targetHit,
+    static LegChoices PrepareLeg(UIDocument ui, Element source, XYZ? sourceHit, Element target, XYZ targetHit,
         XYZ? switchBox, double? diameter, double alignment, bool branch, int? sourcePortId = null, int? targetPortId = null)
     {
-        var sourcePorts = FreePorts(source, diameter).Where(port => sourcePortId == null || port.Id == sourcePortId).ToArray();
+        bool inPlan = ui.ActiveView is ViewPlan;
+        var targetAnchor = switchBox ?? RoutingPoint(target, targetHit, targetPortId);
+        var targetAxis = IsRiser(source) ? Nearest(FreePorts(target, null), targetHit, inPlan).FirstOrDefault()?.Axis : null;
+        var from = CandidatePorts(source, sourceHit, sourcePortId, targetAnchor, inPlan, targetAnchor.Z, targetAxis);
+        var toward = from.FirstOrDefault()?.Point ?? sourceHit ?? targetHit;
+        var to = switchBox == null ? CandidatePorts(target, targetHit, targetPortId, toward, inPlan, toward.Z, from.FirstOrDefault()?.Axis) : [];
+        var sourcePorts = from;
+        var targetPorts = to;
         bool sourceBox = sourcePortId == null && sourcePorts.Length == 0 && IsLight(source) && Ports(source).Length == 0;
         if (sourcePorts.Length == 0 && !sourceBox)
-            throw new InvalidOperationException("У начала трассы нет свободного круглого вывода нужного диаметра.");
-
-        var targetPorts = switchBox == null
-            ? FreePorts(target, diameter).Where(port => targetPortId == null || port.Id == targetPortId).ToArray()
-            : [];
+            throw new InvalidOperationException(PortMessage(source, diameter, from));
         bool targetBox = switchBox != null || !branch && IsLight(target) && Ports(target).Length == 0;
         if (targetPorts.Length == 0 && !targetBox)
-            throw new InvalidOperationException("У прибора нет свободного круглого вывода нужного диаметра.");
+            throw new InvalidOperationException(PortMessage(target, diameter ?? sourcePorts.FirstOrDefault()?.Diameter, to));
 
-        var destination = switchBox ?? (targetBox ? FixturePoint(target) : targetPorts[0].Point);
+        var destination = switchBox ?? (targetBox ? FixturePoint((FamilyInstance)target) : targetPorts[0].Point);
+        if (source is Conduit main && sourceHit != null && sourcePortId == null && !IsRiser(main))
+            sourcePorts = TapPorts(main, sourceHit, destination, inPlan);
         if (sourceBox)
         {
             var fixture = (FamilyInstance)source;
@@ -197,8 +219,8 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
             sourcePorts = [new(null, point, axis, null, true)];
         }
 
-        bool plan = IsLight(target);
-        bool canMove = plan && !target.Pinned && target.GroupId == ElementId.InvalidElementId && target.Location is LocationPoint;
+        bool plan = IsLight(source) && IsLight(target);
+        bool canMove = IsLight(target) && !target.Pinned && target.GroupId == ElementId.InvalidElementId && target.Location is LocationPoint;
         var orderedSources = sourceHit != null
             ? Nearest(sourcePorts, sourceHit, ui.ActiveView is ViewPlan)
             : sourcePorts.OrderByDescending(p => p.Axis.DotProduct((destination - p.Point).Normalize())).ToArray();
@@ -206,8 +228,16 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
         Port[] CandidateEnds(Port start)
         {
             if (!targetBox)
-                return Nearest(targetPorts.Where(p => start.Diameter == null || SameSize(p.Diameter, start.Diameter)),
-                    targetHit, ui.ActiveView is ViewPlan);
+            {
+                var ends = targetPorts;
+                if (IsRiser(target) && inPlan && targetPortId == null)
+                {
+                    try { ends = CandidatePorts(target, targetHit, null, start.Point, true, start.Point.Z, start.Axis); }
+                    catch (InvalidOperationException) { return []; }
+                }
+                var nearest = Nearest(ends, targetHit, inPlan);
+                return targetPortId != null ? nearest : nearest.OrderByDescending(p => SameSize(p.Diameter, start.Diameter ?? diameter)).ToArray();
+            }
 
             var point = destination;
             if (switchBox == null)
@@ -222,7 +252,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
         {
             if (OrientBoxToTarget(start, end))
                 start = start with { Axis = -end.Axis, Diameter = end.Diameter };
-            var shift = align ? AlignmentShift(start, end, alignment) : XYZ.Zero;
+            var shift = align && IsLight(target) && !start.Tap && !start.TerminalElbow ? AlignmentShift(start, end, alignment) : XYZ.Zero;
             if (!canMove && shift.GetLength() > PointTolerance)
                 throw new InvalidOperationException("Для прямой трассы требуется сдвиг светильника. Revit запрещает сдвиг закреплённого прибора или прибора в группе.");
             var moved = end with { Point = end.Point + shift };
@@ -234,7 +264,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
 
         bool CanAlign(Port start, Port to)
         {
-            if (!canMove) return false;
+            if (!canMove || start.Tap || start.TerminalElbow) return false;
             if (OrientBoxToTarget(start, to)) start = start with { Axis = -to.Axis };
             return AlignmentShift(start, to, alignment).GetLength() > PointTolerance;
         }
@@ -247,8 +277,20 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
 
         Port[] Ends(Port start) => CandidateEnds(start).OrderByDescending(end => CanBuild(start, end))
             .ThenByDescending(end => plan && start.Axis.DotProduct(-end.Axis) >= DirectionTolerance).ToArray();
-        orderedSources = orderedSources.OrderByDescending(start => CandidateEnds(start).Any(end => CanBuild(start, end))).ToArray();
+        orderedSources = orderedSources.OrderByDescending(start => CandidateEnds(start).Any(end => CanBuild(start, end)))
+            .ThenByDescending(start => SameSize(start.Diameter, diameter)).ToArray();
         return new(orderedSources, Ends, CanAlign, MakeLeg);
+    }
+
+    static XYZ RoutingPoint(Element element, XYZ? hit, int? portId)
+    {
+        if (portId != null && Ports(element).FirstOrDefault(port => port.Id == portId) is { } port)
+            return port.Origin;
+        if (element is Conduit && element.Location is LocationCurve { Curve: Line line })
+            return hit == null ? line.Evaluate(0.5, true) : AxisPoint(line, hit, true);
+        var ports = FreePorts(element, null);
+        if (ports.Length > 0) return hit == null ? ports[0].Point : Nearest(ports, hit, true).First().Point;
+        return (element.Location as LocationPoint)?.Point ?? hit ?? XYZ.Zero;
     }
 
     static bool OrientBoxToTarget(Port start, Port end) =>
@@ -314,7 +356,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
     }
 
     static (Element Next, double Diameter, XYZ[] Points) CommitLeg(Document doc, ConduitType type, FamilySymbol[] boxTypes,
-        FamilySymbol? elbowType, Element source, FamilyInstance target, Leg leg)
+        FamilySymbol? elbowType, Element source, Element target, Leg leg)
     {
         var level = doc.GetElement(source.LevelId) as Level
             ?? new FilteredElementCollector(doc).OfClass(typeof(Level)).Cast<Level>()
@@ -333,10 +375,10 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
         {
             using var move = new Transaction(doc, "ЭОМ: выравнивание светильника");
             var moveFailures = StartRouteTransaction(move);
-            expected = FixturePoint(target) + leg.Shift;
+            expected = FixturePoint((FamilyInstance)target) + leg.Shift;
             ElementTransformUtils.MoveElement(doc, target.Id, leg.Shift);
             doc.Regenerate();
-            if (FixturePoint(target).DistanceTo(expected) > PointTolerance)
+            if (FixturePoint((FamilyInstance)target).DistanceTo(expected) > PointTolerance)
                 throw new InvalidOperationException("Основа или ограничения светильника не позволяют сдвинуть его с сохранением отметки.");
             FinishRouteTransaction(move, moveFailures, "Не удалось выровнять светильник. Проверьте его основу и существующие соединения.");
         }
@@ -345,27 +387,31 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
         var routeFailures = StartRouteTransaction(transaction);
         if (leg.Start.NeedsBox)
             source = PutCompatibleBox(doc, boxTypes, level, leg.Start.Point, leg.Start.Axis, size);
-        var start = ResolvePort(source, leg.Start, size);
+        var start = leg.Start.Tap ? InsertTap(doc, (Conduit)source, leg.Start) : ResolvePort(source, leg.Start, size);
         size ??= start.Radius * 2;
 
         Element next = target;
         if (leg.End.NeedsBox)
             next = PutCompatibleBox(doc, boxTypes, level, leg.End.Point + leg.Shift, leg.End.Axis, size);
-        var end = ResolvePort(next, leg.End, size);
+        var end = leg.End.Tap ? InsertTap(doc, (Conduit)next, leg.End) : ResolvePort(next, leg.End, leg.End.NeedsBox ? size : leg.End.Diameter);
+        double nextDiameter = end.Radius * 2;
 
+        var actualStart = leg.Start.TerminalElbow ? leg.Start with { Point = start.Origin } : Snapshot(start);
+        var actualEnd = leg.End.TerminalElbow ? leg.End with { Point = end.Origin } : Snapshot(end);
         var points = leg.BoxPath == BoxPath.Standard
-            ? Path(Snapshot(start), Snapshot(end), doc.Application.ShortCurveTolerance, leg.PlanarLights)
+            ? Path(actualStart, actualEnd, doc.Application.ShortCurveTolerance, leg.PlanarLights)
             : SwitchPath(Snapshot(start), Snapshot(end), doc.Application.ShortCurveTolerance);
-        if (expected != null && (FixturePoint(target).DistanceTo(expected) > PointTolerance || points.Length != 2))
+        if (expected != null && (FixturePoint((FamilyInstance)target).DistanceTo(expected) > PointTolerance || points.Length != 2))
             throw new InvalidOperationException("После сдвига выводы не совпали по оси на исходной отметке. Проверьте ограничения светильника.");
-        BuildPath(doc, type, level, elbowType, start, end, points, size.Value);
-        if (expected != null && FixturePoint(target).DistanceTo(expected) > PointTolerance)
+        BuildPath(doc, type, level, elbowType, start, end, points, size.Value,
+            startElbow: leg.Start.TerminalElbow, endElbow: leg.End.TerminalElbow);
+        if (expected != null && FixturePoint((FamilyInstance)target).DistanceTo(expected) > PointTolerance)
             throw new InvalidOperationException("При подключении Revit изменил положение выровненного светильника.");
 
         FinishRouteTransaction(transaction, routeFailures, "Revit отменил построение участка. Проверьте соединители и место для отводов.");
         if (group != null && group.Assimilate() != TransactionStatus.Committed)
             throw new InvalidOperationException("Revit отменил выравнивание и построение участка.");
-        return (next, size.Value, points);
+        return (next, nextDiameter, points);
     }
 
     internal static RouteFailures StartRouteTransaction(Transaction transaction)
@@ -427,6 +473,20 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
     }
 
     static bool SameSize(double? a, double? b) => a == null || b == null || Math.Abs(a.Value - b.Value) <= PointTolerance;
+    static bool ConfirmDiameter(double? first, double? second)
+    {
+        if (SameSize(first, second)) return true;
+        var dialog = new TaskDialog(Title)
+        {
+            MainInstruction = $"Соединить выводы разных диаметров: Ø{Mm(first!.Value):0.##} и Ø{Mm(second!.Value):0.##} мм?",
+            MainContent = "BotPlus попробует поставить переход или соединить выводы напрямую, если Revit это допускает.",
+            CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No,
+            DefaultButton = TaskDialogResult.No
+        };
+        return dialog.Show() == TaskDialogResult.Yes;
+    }
+
+    static bool IsRouteTarget(Element e) => e is Conduit || IsFitting(e) || IsLight(e) || IsSwitch(e) || (e is FamilyInstance && Ports(e).Length > 0);
     static bool IsLight(Element e) => e.Category?.BuiltInCategory == BuiltInCategory.OST_LightingFixtures && e is FamilyInstance;
     static bool IsSwitch(Element e) => e.Category?.BuiltInCategory == BuiltInCategory.OST_LightingDevices && e is FamilyInstance;
     static bool IsFitting(Element e) => e.Category?.BuiltInCategory == BuiltInCategory.OST_ConduitFitting && e is FamilyInstance;

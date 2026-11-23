@@ -4,9 +4,11 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
 using System.Windows.Shapes;
+using System.Windows.Media.Imaging;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Events;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.UI;
-using Brush = System.Windows.Media.Brush;
 using Color = System.Windows.Media.Color;
 using Grid = System.Windows.Controls.Grid;
 using Line = System.Windows.Shapes.Line;
@@ -14,53 +16,57 @@ using Orientation = System.Windows.Controls.Orientation;
 using Rectangle = System.Windows.Shapes.Rectangle;
 using Ellipse = System.Windows.Shapes.Ellipse;
 using Panel = System.Windows.Controls.Panel;
-using Path = System.Windows.Shapes.Path;
+using Visibility = System.Windows.Visibility;
 
 namespace BotPlus.Eom;
 
 /// <summary>
-/// Закрепляемая панель «BotPlus ЭТМ»: схема сети — источник → ВРУ и щиты в ряд, под каждым щитом компактный столбец автоматов групп,
-/// нижестоящие щиты — ниже, под столбцом, с проводом от питающего автомата. Тип группы показан УГО по ГОСТ 21.614 вместо надписи.
+/// Схема питания по реальным цепям проекта, с эскизами типов семейств Revit.
 /// Любую ветку можно свернуть (кнопка ± на блоке) или свернуть/развернуть всё. Клик по блоку показывает элемент на плане,
 /// двойной клик по щиту выделяет всё, что от него питается. Точки на блоках — те же индикаторы статуса, что на плане.
 /// Открывается немодальным окном поверх Revit.
 /// </summary>
 internal sealed class EtmPane
 {
-    enum Layout { Down, Column }
-    enum Symbol { None, Source, Vru, Panel, Lighting, Socket, Power }
-
     sealed class Node
     {
         public string Key = "", Title = "", Sub = "", Details = "";
         public Color Accent;
         /// <summary>Индикаторы как на плане: статус подключения и цвет группы (null — без точек, например у щитов).</summary>
         public Color? Status, Group;
-        public Symbol Icon;
+        public BitmapSource? Preview;
         public ElementId[] Select = [];
         public bool Floating;
-        public Layout Layout = Layout.Down;
         public double BoxW = 150, BoxH = 46, W, H, X, Y;
         public readonly List<Node> Children = [];
         public Rectangle? Frame;
         public int Count => Children.Count + Children.Sum(c => c.Count);
     }
 
-    const double HGap = 18, VGap = 34, RowGap = 4, Indent = 18;
-    static readonly Color SourceColor = Color.FromRgb(140, 140, 140), VruColor = Color.FromRgb(130, 70, 190), PanelColor = Color.FromRgb(6, 150, 215),
+    const double HGap = 18, RowGap = 4, Indent = 18;
+    static readonly Color VruColor = Color.FromRgb(130, 70, 190), PanelColor = Color.FromRgb(6, 150, 215),
         LightColor = Color.FromRgb(230, 160, 20), SocketColor = Color.FromRgb(50, 160, 90), PowerColor = Color.FromRgb(210, 70, 60),
         FeederColor = Color.FromRgb(6, 150, 215), AirColor = Color.FromRgb(150, 150, 150);
 
     readonly DockPanel root = new();
     readonly Canvas canvas = new();
     readonly ScrollViewer scroll = new() { HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+    readonly Border devicesPane = new() { Width = 310, Visibility = Visibility.Collapsed, BorderThickness = new Thickness(1, 0, 0, 0) };
+    readonly StackPanel devicesList = new() { Margin = new Thickness(10, 0, 10, 8) };
+    readonly Button devicesToggle = new() { Padding = new Thickness(10, 3, 10, 3), Margin = new Thickness(0, 0, 4, 2) };
+    List<(string Level, List<Node> Devices)> deviceFloors = [];
+    bool devicesNeedLayout = true;
     readonly ScaleTransform zoom = new(1, 1);
     readonly TextBlock details = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(8, 6, 8, 6) };
     readonly TextBlock status = new() { Margin = new Thickness(8, 0, 8, 4), Opacity = 0.7, TextWrapping = TextWrapping.Wrap, FontSize = 11 };
     /// <summary>Свёрнутые ветки по ключу элемента: сохраняются при «Обновить».</summary>
     readonly HashSet<string> collapsed = [];
-    Node? selected, tree;
+    Node? selected;
+    List<Node> roots = [];
     List<Node> air = [];
+    Document? shownDocument;
+    bool refreshPending;
+    HashSet<ElementId> displayedNetworkIds = [];
 
     internal EtmPane()
     {
@@ -82,12 +88,27 @@ internal sealed class EtmPane
             b.Click += (_, _) => action(); bar.Children.Add(b);
         }
         B("Обновить", () => App.Queue?.Post(app => { if (app.ActiveUIDocument is { } ui) Refresh(ui.Document); }), "Перечитать сеть активного проекта");
-        B("Свернуть всё", () => { collapsed.Clear(); if (tree != null) foreach (var n in All(tree).Where(n => n.Children.Count > 0 && n.Icon != Symbol.Source)) collapsed.Add(n.Key); collapsed.Add("AIR"); Redraw(); }, "Свернуть все щиты: видны только щиты верхнего уровня");
+        B("Свернуть всё", () => { collapsed.Clear(); foreach (var n in roots.SelectMany(All).Where(n => n.Children.Count > 0)) collapsed.Add(n.Key); collapsed.Add("AIR"); Redraw(); }, "Свернуть все ветки оборудования");
         B("Развернуть всё", () => { collapsed.Clear(); Redraw(); }, "Развернуть все щиты и группы");
         B("−", () => Zoom(1 / 1.25), "Уменьшить (Ctrl + колесо)");
         B("+", () => Zoom(1.25), "Увеличить (Ctrl + колесо)");
         B("Вписать", Fit, "Показать схему целиком по ширине панели");
+        devicesToggle.Click += (_, _) =>
+        {
+            devicesPane.Visibility = devicesPane.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            UpdateDevicesPane();
+        };
+        bar.Children.Add(devicesToggle);
         bar.Children.Add(Legend());
+
+        var right = new DockPanel();
+        var caption = new TextBlock { Text = "Неподключённые приборы", FontWeight = FontWeights.SemiBold, Margin = new Thickness(10, 8, 10, 6) };
+        DockPanel.SetDock(caption, Dock.Top);
+        right.Children.Add(caption);
+        right.Children.Add(new ScrollViewer { Content = devicesList, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        devicesPane.Child = right;
+        devicesPane.Themed(Border.BorderBrushProperty, "BP.Border").Themed(Border.BackgroundProperty, "BP.Panel");
+        UpdateDevicesPane();
 
         var info = new Border { BorderThickness = new Thickness(0, 1, 0, 0), Height = 130 };
         info.Themed(Border.BorderBrushProperty, "BP.Border").Themed(Border.BackgroundProperty, "BP.Panel");
@@ -95,7 +116,8 @@ internal sealed class EtmPane
         details.Text = "Нажмите «Менеджер ЭТМ» или «Обновить», чтобы построить схему сети активного проекта. Щелчок по блоку — показать элемент на плане, двойной щелчок по щиту — выделить всё, что от него питается, ± — свернуть или развернуть ветку.";
 
         DockPanel.SetDock(bar, Dock.Top); DockPanel.SetDock(status, Dock.Bottom); DockPanel.SetDock(info, Dock.Bottom);
-        root.Children.Add(bar); root.Children.Add(status); root.Children.Add(info); root.Children.Add(scroll);
+        DockPanel.SetDock(devicesPane, Dock.Right);
+        root.Children.Add(bar); root.Children.Add(status); root.Children.Add(info); root.Children.Add(devicesPane); root.Children.Add(scroll);
     }
 
     static IEnumerable<Node> All(Node n) => n.Children.SelectMany(All).Prepend(n);
@@ -103,12 +125,12 @@ internal sealed class EtmPane
     static UIElement Legend()
     {
         var panel = new WrapPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
-        foreach (var (symbol, color, text) in new[] { (Symbol.Source, SourceColor, "Источник"), (Symbol.Vru, VruColor, "ВРУ"), (Symbol.Panel, PanelColor, "Щит"),
-                     (Symbol.Lighting, LightColor, "Освещение"), (Symbol.Socket, SocketColor, "Розетки"), (Symbol.Power, PowerColor, "Силовая"), (Symbol.None, AirColor, "Не подключено") })
+        foreach (var (color, text) in new[] { (VruColor, "ВРУ"), (PanelColor, "Щит"), (LightColor, "Освещение"),
+                     (SocketColor, "Розетки"), (PowerColor, "Силовая"), (AirColor, "Не подключено") })
         {
-            UIElement mark = symbol == Symbol.None
+            UIElement mark = color == AirColor
                 ? new Rectangle { Width = 14, Height = 10, Stroke = new SolidColorBrush(color), StrokeDashArray = [2, 1.5], StrokeThickness = 1.4 }
-                : Glyph(symbol, new SolidColorBrush(color));
+                : Dot(color);
             panel.Children.Add(new Border { Child = mark, Margin = new Thickness(8, 0, 3, 0), VerticalAlignment = VerticalAlignment.Center });
             panel.Children.Add(new TextBlock { Text = text, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
         }
@@ -122,29 +144,21 @@ internal sealed class EtmPane
     static Color C((byte R, byte G, byte B) c) => Color.FromRgb(c.R, c.G, c.B);
     static Ellipse Dot(Color color) => new() { Width = 8, Height = 8, Fill = new SolidColorBrush(color), Margin = new Thickness(1, 0, 1, 0), VerticalAlignment = VerticalAlignment.Center };
 
-    /// <summary>
-    /// УГО по ГОСТ 21.614 в упрощённом виде (16×16): светильник — круг с крестом, розетка — полуокружность с выводом,
-    /// электроприёмник — круг с «М», щит — прямоугольник с зачернённой половиной, ВРУ — зачернённый прямоугольник, источник — трансформатор.
-    /// </summary>
-    static FrameworkElement Glyph(Symbol symbol, Brush brush)
+    Window? window;
+
+    internal void OnDocumentChanged(DocumentChangedEventArgs e)
     {
-        var c = new Canvas { Width = 16, Height = 16, SnapsToDevicePixels = true };
-        Shape S(Shape s) { s.Stroke = brush; s.StrokeThickness = 1.4; c.Children.Add(s); return s; }
-        Path P(string data, bool fill = false) { var p = (Path)S(new Path { Data = Geometry.Parse(data), StrokeLineJoin = PenLineJoin.Round }); if (fill) p.Fill = brush; return p; }
-        Ellipse E(double x, double y, double d) { var e = (Ellipse)S(new Ellipse { Width = d, Height = d }); Canvas.SetLeft(e, x); Canvas.SetTop(e, y); return e; }
-        switch (symbol)
-        {
-            case Symbol.Lighting: E(2, 2, 12); P("M3.8,3.8 L12.2,12.2 M12.2,3.8 L3.8,12.2"); break;
-            case Symbol.Socket: P("M2,12 A6,6 0 0 1 14,12 Z M8,6 L8,1.5"); break;
-            case Symbol.Power: E(1.5, 1.5, 13); P("M5,11 L5,5.2 L8,9 L11,5.2 L11,11"); break;
-            case Symbol.Panel: P("M1.5,4 L14.5,4 L14.5,12 L1.5,12 Z"); P("M1.5,12 L14.5,4 L14.5,12 Z", true); break;
-            case Symbol.Vru: P("M1.5,4 L14.5,4 L14.5,12 L1.5,12 Z", true); break;
-            case Symbol.Source: E(1, 4, 9); E(6, 4, 9); break;
-        }
-        return c;
+        if (window?.IsVisible != true || !e.GetDocument().Equals(shownDocument)) return;
+        var doc = e.GetDocument();
+        refreshPending |= e.GetDeletedElementIds().Any(displayedNetworkIds.Contains) || e.GetAddedElementIds().Concat(e.GetModifiedElementIds())
+            .Select(doc.GetElement).Any(element => element is ElectricalSystem || element?.Category?.BuiltInCategory == BuiltInCategory.OST_ElectricalEquipment);
     }
 
-    Window? window;
+    internal void OnIdling(UIApplication app)
+    {
+        if (window?.IsVisible != true || app.ActiveUIDocument?.Document is not { IsFamilyDocument: false } doc) return;
+        if (refreshPending || !doc.Equals(shownDocument)) Refresh(doc);
+    }
 
     /// <summary>Показывает схему в немодальном окне поверх Revit (одно окно; закрытое создаётся заново).</summary>
     internal void ShowWindow(IntPtr owner)
@@ -152,6 +166,7 @@ internal sealed class EtmPane
         if (window == null)
         {
             window = EomUi.Window("Менеджер ЭТМ", 1150, 760);
+            window.MinWidth = 660;
             window.Content = root;
             new System.Windows.Interop.WindowInteropHelper(window) { Owner = owner };
             window.Closed += (_, _) => { if (window != null) window.Content = null; window = null; };
@@ -179,51 +194,57 @@ internal sealed class EtmPane
 
     Dictionary<ElementId, int> groupIndex = [];
 
-    Node PanelNode(PanelInfo p, Network net, EomSettings settings, EomCatalog catalog, HashSet<ElementId> visited)
+    Node PanelNode(PanelInfo p, Network net, EomSettings settings, EomCatalog catalog, HashSet<ElementId> visited,
+        Func<ElementId, BitmapSource?> preview, HashSet<ElementId> sources)
     {
         visited.Add(p.Id);
         var load = EomCalc.PanelLoad(p.Circuits.Select(c => c.Input));
         double cos = load.S > 0 ? load.P / load.S : 1;
         bool vru = p.Name.Contains("ВРУ", StringComparison.OrdinalIgnoreCase) || p.Name.Contains("ГРЩ", StringComparison.OrdinalIgnoreCase);
         var feeder = p.FeedCircuit == null ? null : net.AllCircuits.FirstOrDefault(c => c.Id == p.FeedCircuit);
-        string source = feeder == null ? "от источника (питающая группа не задана)" : $"от {feeder.Input.Panel}, группа {feeder.Input.Number}";
+        string source = feeder == null ? "питающая группа не назначена" : $"от {feeder.Input.Panel}, группа {feeder.Input.Number}";
+        string kind = sources.Contains(p.Id) ? "Источник" : vru ? "ВРУ" : "Щит";
         var kinds = p.Circuits.GroupBy(c => c.Kind).ToDictionary(g => g.Key, g => g.Count());
         int K(CircuitKind k) => kinds.TryGetValue(k, out var n) ? n : 0;
         var node = new Node
         {
-            Key = "P" + p.Id.Value, Title = p.Name, Sub = $"{p.Circuits.Count} гр. · Pр {Kw(load.P)} кВт", Accent = vru ? VruColor : PanelColor,
-            Icon = vru ? Symbol.Vru : Symbol.Panel, Select = [p.Id], BoxW = 160, Layout = Layout.Column,
-            Details = $"{(vru ? "ВРУ" : "Щит")} {p.Name} ({p.Type})\nПитание: {source}\n" +
+            Key = "P" + p.Id.Value, Title = p.Name,
+            Sub = sources.Contains(p.Id) ? $"Источник · {p.Circuits.Count} гр." : $"{p.Circuits.Count} гр. · Pр {Kw(load.P)} кВт",
+            Accent = vru ? VruColor : PanelColor,
+            Preview = preview(p.Id), Select = [p.Id], BoxW = 160,
+            Details = $"{kind} {p.Name} ({p.Type})\nПитание: {source}\n" +
                 $"Групп: {p.Circuits.Count} — освещение {K(CircuitKind.Lighting)}, розетки {K(CircuitKind.Sockets)}, силовые {K(CircuitKind.Power)}, питание щитов {K(CircuitKind.Feeder)}\n" +
                 $"Pр = {Kw(load.P)} кВт, Qр = {Kw(load.Q)} квар, Sр = {Kw(load.S)} кВА, cos φ = {cos:0.00}, Iр = {EomCalc.Current(load.P, cos, 3, settings):0.#} А (3ф, Кс = 1)"
         };
         // Группы питания щитов — в конце столбца: их ветки широкие и иначе раздвигают обычные группы.
         foreach (var c in p.Circuits.OrderBy(c => c.Kind == CircuitKind.Feeder ? 1 : 0))
         {
-            var child = CircuitNode(c, settings, catalog, groupIndex);
+            var child = CircuitNode(c, settings, catalog, groupIndex, preview);
             foreach (var fed in net.Panels.Where(x => x.FeedCircuit == c.Id && !visited.Contains(x.Id)))
-                child.Children.Add(PanelNode(fed, net, settings, catalog, visited));
+                child.Children.Add(PanelNode(fed, net, settings, catalog, visited, preview, sources));
             node.Children.Add(child);
         }
         return node;
     }
 
-    static Node CircuitNode(CircuitInfo c, EomSettings settings, EomCatalog catalog, Dictionary<ElementId, int> groups)
+    static Node CircuitNode(CircuitInfo c, EomSettings settings, EomCatalog catalog, Dictionary<ElementId, int> groups, Func<ElementId, BitmapSource?> preview)
     {
         var r = EomCalc.Select(c.Input, settings, catalog);
         string mark = EomSettings.Mark(settings.GroupMask, c.Input.Panel, c.Input.Number);
-        var (color, kind, icon) = c.Kind switch
+        var (color, kind) = c.Kind switch
         {
-            CircuitKind.Lighting => (LightColor, "освещение", Symbol.Lighting),
-            CircuitKind.Sockets => (SocketColor, "розетки", Symbol.Socket),
-            CircuitKind.Feeder => (FeederColor, "питание щита", Symbol.Panel),
-            _ => (PowerColor, "силовая", Symbol.Power)
+            CircuitKind.Lighting => (LightColor, "освещение"),
+            CircuitKind.Sockets => (SocketColor, "розетки"),
+            CircuitKind.Feeder => (FeederColor, "питание щита"),
+            _ => (PowerColor, "силовая")
         };
         string breaker = c.RatingA > 0 ? $"{c.RatingA:0} А" : r.Breaker != null ? $"{r.Breaker.Rating:0} А*" : "—";
         string devices = string.Join("\n", c.Devices.GroupBy(d => d.Name).Select(g => $"  {g.Key} — {g.Count()} шт.").Take(8)) + (c.Devices.GroupBy(d => d.Name).Count() > 8 ? "\n  …" : "");
         return new Node
         {
-            Key = "C" + c.Id.Value, Title = $"QF{c.Input.Number}  {breaker}  {Kw(c.Input.ActivePowerW)} кВт", Accent = r.Ok ? color : PowerColor, Icon = icon,
+            Key = "C" + c.Id.Value, Title = $"QF{c.Input.Number}  {breaker}  {Kw(c.Input.ActivePowerW)} кВт", Accent = r.Ok ? color : PowerColor,
+            Preview = c.Devices.OrderByDescending(d => d.IsPanel).ThenBy(d => d.Name, NaturalComparer.Instance)
+                .ThenBy(d => d.Id.Value).Select(d => preview(d.Id)).FirstOrDefault(p => p != null),
             BoxW = 184, BoxH = 24, Status = C(EomColors.Connected), Group = groups.TryGetValue(c.Id, out var g) ? C(EomColors.Group(g)) : null,
             Select = c.Devices.Count > 0 ? c.Devices.Select(d => d.Id).ToArray() : [c.Id],
             Details = $"Группа {mark}{(c.Input.Name.Length > 0 ? " — " + c.Input.Name : "")} ({kind})\n" +
@@ -233,61 +254,123 @@ internal sealed class EtmPane
         };
     }
 
-    static Symbol DeviceSymbol(DeviceInfo d) => d.Cat switch
+    static bool IsSupply(Element? element)
     {
-        BuiltInCategory.OST_LightingFixtures or BuiltInCategory.OST_LightingDevices => Symbol.Lighting,
-        BuiltInCategory.OST_ElectricalFixtures => Symbol.Socket,
-        BuiltInCategory.OST_ElectricalEquipment => Symbol.Panel,
-        _ => Symbol.Power
-    };
+        if (element is not FamilyInstance instance) return false;
+        static bool Transformer(Element element) => element.get_Parameter(BuiltInParameter.FAMILY_CONTENT_PART_TYPE)
+            is { StorageType: StorageType.Integer } part && part.AsInteger() == (int)PartType.Transformer;
+        if (Transformer(instance) || Transformer(instance.Symbol) || Transformer(instance.Symbol.Family)) return true;
+        var names = new[] { instance.Symbol.FamilyName, instance.Symbol.Name };
+        return names.Any(name =>
+            new[] { "источник", "source", "ТП" }.Contains(name.Trim(), StringComparer.OrdinalIgnoreCase)
+            || new[] { "трансформатор", "transformer", "генератор", "generator", "источник питания", "power source" }
+                .Any(text => name.Contains(text, StringComparison.OrdinalIgnoreCase)));
+    }
 
-    static Node AirNode(string key, string title, string sub, Symbol icon, ElementId id, string details) =>
-        new() { Key = key, Title = title, Sub = sub, Icon = icon, Accent = AirColor, Floating = true, Select = [id], BoxW = 160, BoxH = 40, Details = details,
-            Status = icon == Symbol.Panel ? null : C(EomColors.Unconnected), Group = icon == Symbol.Panel ? null : C(EomColors.NoGroup) };
+    static Node AirNode(string key, string title, string sub, BitmapSource? preview, ElementId id, string details, bool device = false) =>
+        new() { Key = key, Title = title, Sub = sub, Preview = preview, Accent = AirColor, Floating = true, Select = [id], BoxW = 160, BoxH = 40, Details = details,
+            Status = device ? C(EomColors.Unconnected) : null, Group = device ? C(EomColors.NoGroup) : null };
+
+    static Level? DeviceLevel(Document doc, Element? element)
+    {
+        if (element == null) return null;
+        if (doc.GetElement(element.LevelId) is Level level) return level;
+        foreach (var id in new[] { BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM, BuiltInParameter.INSTANCE_REFERENCE_LEVEL_PARAM, BuiltInParameter.FAMILY_LEVEL_PARAM })
+            if (element.get_Parameter(id) is { StorageType: StorageType.ElementId } p && doc.GetElement(p.AsElementId()) is Level reference)
+                return reference;
+        if (element is FamilyInstance { Host: { } host } && host.Document.Equals(doc))
+            return host as Level ?? doc.GetElement(host.LevelId) as Level;
+        return null;
+    }
+
+    void UpdateDevicesPane()
+    {
+        bool visible = devicesPane.Visibility == Visibility.Visible;
+        int count = deviceFloors.Sum(f => f.Devices.Count);
+        devicesToggle.Content = $"{(visible ? "Скрыть" : "Показать")} неподключённые ({count})";
+        if (!visible || !devicesNeedLayout) return;
+
+        devicesList.Children.Clear();
+        if (count == 0) devicesList.Children.Add(new TextBlock { Text = "Неподключённых приборов нет", Margin = new Thickness(0, 6, 0, 0) });
+        foreach (var floor in deviceFloors)
+        {
+            devicesList.Children.Add(new TextBlock { Text = $"{floor.Level} · {floor.Devices.Count}", TextWrapping = TextWrapping.Wrap,
+                FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 9, 0, 5) });
+            foreach (var device in floor.Devices)
+            {
+                var tile = CreateBox(device, false);
+                tile.Width = double.NaN;
+                tile.Margin = new Thickness(0, 0, 0, 4);
+                devicesList.Children.Add(tile);
+            }
+        }
+        devicesNeedLayout = false;
+    }
 
     /// <summary>Перечитывает сеть и перестраивает схему. Вызывать в контексте Revit API.</summary>
     internal void Refresh(Document doc)
     {
+        if (!doc.Equals(shownDocument)) collapsed.Clear();
+        shownDocument = doc;
+        refreshPending = false;
         var settings = EomStore.Settings(doc);
         var catalog = EomCatalog.Load();
         var net = Network.Read(doc, settings);
+        displayedNetworkIds = net.Panels.Select(p => p.Id).Concat(net.AllCircuits.Select(c => c.Id))
+            .Concat(net.AllCircuits.SelectMany(c => c.Devices).Select(d => d.Id)).Concat(net.Unconnected.Select(d => d.Id)).ToHashSet();
         var inPanels = net.Panels.SelectMany(p => p.Circuits).Select(c => c.Id).ToHashSet();
         var visited = new HashSet<ElementId>();
         // Тот же порядок, что у индикаторов на плане: индекс группы в Network.AllCircuits.
         groupIndex = net.AllCircuits.Select((c, i) => (c.Id, i)).GroupBy(x => x.Id).ToDictionary(g => g.Key, g => g.First().i);
 
-        var sourceNode = new Node
+        var previews = new Dictionary<ElementId, BitmapSource?>();
+        BitmapSource? Preview(ElementId id)
         {
-            Key = "S", Title = "Источник", Sub = "ТП / внешняя сеть", Accent = SourceColor, Icon = Symbol.Source, BoxW = 150,
-            Details = "Условный источник питания (трансформаторная подстанция или внешняя сеть). К нему подключены щиты, у которых нет питающей группы в модели — обычно ВРУ."
-        };
+            if (doc.GetElement(id) is not FamilyInstance instance) return null;
+            var type = instance.Symbol;
+            if (!previews.TryGetValue(type.Id, out var image)) previews[type.Id] = image = EquipmentPane.Preview(type, 48);
+            return image;
+        }
+        var sources = net.Panels.Where(p => IsSupply(doc.GetElement(p.Id))).Select(p => p.Id).ToHashSet();
+        roots = [];
         air = [];
         foreach (var p in net.Panels.Where(p => p.FeedCircuit == null || !inPanels.Contains(p.FeedCircuit))
-                     .OrderByDescending(p => p.Name.Contains("ВРУ", StringComparison.OrdinalIgnoreCase) || p.Name.Contains("ГРЩ", StringComparison.OrdinalIgnoreCase)))
+                     .OrderByDescending(p => sources.Contains(p.Id))
+                     .ThenByDescending(p => p.Name.Contains("ВРУ", StringComparison.OrdinalIgnoreCase) || p.Name.Contains("ГРЩ", StringComparison.OrdinalIgnoreCase)))
         {
-            if (p.Circuits.Count == 0 && p.FeedCircuit == null)
-                air.Add(AirNode("P" + p.Id.Value, p.Name, "Щит без групп", Symbol.Panel, p.Id, $"Щит {p.Name} ({p.Type}) не подключён: нет питающей группы и нет отходящих групп."));
-            else sourceNode.Children.Add(PanelNode(p, net, settings, catalog, visited));
+            if (p.Circuits.Count == 0 && p.FeedCircuit == null && !sources.Contains(p.Id))
+                air.Add(AirNode("P" + p.Id.Value, p.Name, "Щит без групп", Preview(p.Id), p.Id, $"Щит {p.Name} ({p.Type}) не подключён: нет питающей группы и нет отходящих групп."));
+            else roots.Add(PanelNode(p, net, settings, catalog, visited, Preview, sources));
         }
         foreach (var p in net.Panels.Where(p => !visited.Contains(p.Id) && !air.Any(a => a.Select[0] == p.Id)))
-            sourceNode.Children.Add(PanelNode(p, net, settings, catalog, visited));
+            roots.Add(PanelNode(p, net, settings, catalog, visited, Preview, sources));
         foreach (var c in net.Orphans)
         {
-            var n = CircuitNode(c, settings, catalog, groupIndex); n.Floating = true; n.Accent = AirColor;
+            var n = CircuitNode(c, settings, catalog, groupIndex, Preview); n.Floating = true; n.Accent = AirColor;
             n.Details = "Группа без щита. " + n.Details; air.Add(n);
         }
-        foreach (var d in net.Unconnected)
-            air.Add(AirNode("D" + d.Id.Value, d.Name.Split(':')[0], d.Category, DeviceSymbol(d), d.Id, $"Не подключено: {d.Category} — {d.Name} (ID {d.Id.Value}).\nПодключите командой «Подключить к щиту»."));
+        deviceFloors = net.Unconnected.Select(d => (Device: d, Level: DeviceLevel(doc, doc.GetElement(d.Id))))
+            .GroupBy(x => x.Level?.Id)
+            .OrderByDescending(g => g.First().Level?.ProjectElevation ?? double.NegativeInfinity)
+            .ThenBy(g => g.First().Level?.Name ?? "", NaturalComparer.Instance)
+            .Select(g => (Level: g.First().Level?.Name ?? "Без уровня", Devices: g.OrderBy(x => x.Device.Name, NaturalComparer.Instance)
+                .ThenBy(x => x.Device.Id.Value).Select(x =>
+                {
+                    var d = x.Device;
+                    return AirNode("D" + d.Id.Value, d.Name, d.Category, Preview(d.Id), d.Id,
+                        $"Не подключено: {d.Category} — {d.Name} (ID {d.Id.Value}).\nУровень: {x.Level?.Name ?? "Без уровня"}.\nПодключите командой «Подключить к щиту».", device: true);
+                }).ToList())).ToList();
+        devicesList.Children.Clear();
+        devicesNeedLayout = true;
+        selected = null;
+        UpdateDevicesPane();
 
-        tree = sourceNode;
         Redraw();
         status.Text = $"{doc.Title}: щитов {net.Panels.Count}, групп {net.AllCircuits.Count()}, не подключено {net.Unconnected.Count + net.Orphans.Count}. Обновлено {DateTime.Now:HH:mm}.";
-        selected = null;
     }
 
     // ---------- раскладка ----------
-    // Дерево идёт сверху вниз. Down — дети в ряд под блоком (источник → щиты верхнего уровня).
-    // Column — щит: под ним компактный столбец автоматов, ниже столбца в ряд — щиты, питающиеся от его автоматов.
+    // Независимые ветки начинаются с оборудования верхнего уровня. Под каждым щитом — столбец его групп.
     // Провод к нижестоящему щиту выходит из питающего автомата вправо, по своей вертикали опускается под столбец и идёт к щиту.
 
     const double Lane = 6, Drop = 18;
@@ -302,14 +385,6 @@ internal sealed class EtmPane
     {
         n.W = n.BoxW; n.H = n.BoxH;
         if (!Open(n)) return;
-        if (n.Layout == Layout.Down)
-        {
-            foreach (var c in n.Children) Measure(c);
-            n.W = Math.Max(n.BoxW, n.Children.Sum(c => c.W) + HGap * (n.Children.Count - 1));
-            n.H = n.BoxH + VGap + n.Children.Max(c => c.H);
-            return;
-        }
-        // Column
         double colW = n.Children.Max(c => c.BoxW), colH = n.Children.Sum(c => c.BoxH) + RowGap * (n.Children.Count - 1);
         int lanes = Feeders(n).Count; var subs = Subs(n);
         foreach (var s in subs) Measure(s);
@@ -322,14 +397,8 @@ internal sealed class EtmPane
     void Place(Node n, double left, double top)
     {
         n.Y = top;
-        n.X = n.Layout == Layout.Down ? left + (n.W - n.BoxW) / 2 : left;
+        n.X = left;
         if (!Open(n)) return;
-        if (n.Layout == Layout.Down)
-        {
-            double x = left + (n.W - (n.Children.Sum(c => c.W) + HGap * (n.Children.Count - 1))) / 2;
-            foreach (var c in n.Children) { Place(c, x, top + n.BoxH + VGap); x += c.W + HGap; }
-            return;
-        }
         double y = top + n.BoxH + 10;
         foreach (var c in n.Children) { c.X = left + Indent; c.Y = y; c.W = c.BoxW; c.H = c.BoxH; y += c.BoxH + RowGap; }
         var subs = Subs(n);
@@ -343,10 +412,16 @@ internal sealed class EtmPane
     void Redraw()
     {
         canvas.Children.Clear();
-        if (tree == null) return;
-        Measure(tree); Place(tree, 20, 20);
-        double width = Math.Max(tree.W + 40, 900), y = tree.Y + tree.H + 40;
-        DrawTree(tree);
+        double xNext = 20, y = 20;
+        foreach (var branch in roots)
+        {
+            Measure(branch);
+            Place(branch, xNext, 20);
+            DrawTree(branch);
+            xNext += branch.W + HGap;
+            y = Math.Max(y, branch.Y + branch.H + 40);
+        }
+        double width = Math.Max(xNext - HGap + 20, 900);
         if (air.Count > 0)
         {
             bool open = !collapsed.Contains("AIR");
@@ -367,21 +442,13 @@ internal sealed class EtmPane
             }
         }
         canvas.Width = width; canvas.Height = y + 20;
-        if (selected != null) foreach (var n in All(tree).Concat(air)) if (n.Key == selected.Key && n.Frame != null) { n.Frame.StrokeThickness = 3; selected = n; }
+        if (selected != null) foreach (var n in roots.SelectMany(All).Concat(air)) if (n.Key == selected.Key && n.Frame != null) { n.Frame.StrokeThickness = 3; selected = n; }
     }
 
     void DrawTree(Node n)
     {
         Box(n, n.Children.Count > 0);
         if (!Open(n)) return;
-        if (n.Layout == Layout.Down)
-        {
-            double cx = n.X + n.BoxW / 2, busY = n.Y + n.BoxH + VGap / 2;
-            Wire(cx, n.Y + n.BoxH, cx, busY);
-            Wire(n.Children.Min(c => c.X + c.BoxW / 2), busY, n.Children.Max(c => c.X + c.BoxW / 2), busY);
-            foreach (var c in n.Children) { Wire(c.X + c.BoxW / 2, busY, c.X + c.BoxW / 2, c.Y); DrawTree(c); }
-            return;
-        }
         // Щит: столбец автоматов на общей вертикальной шине.
         double spine = n.X + Indent / 2, last = n.Children[^1].Y + n.Children[^1].BoxH / 2;
         Wire(spine, n.Y + n.BoxH, spine, last);
@@ -422,6 +489,13 @@ internal sealed class EtmPane
 
     void Box(Node n, bool toggle)
     {
+        var tile = CreateBox(n, toggle);
+        Canvas.SetLeft(tile, n.X); Canvas.SetTop(tile, n.Y);
+        canvas.Children.Add(tile);
+    }
+
+    Grid CreateBox(Node n, bool toggle)
+    {
         var accent = new SolidColorBrush(n.Accent);
         bool compact = n.BoxH < 30;
         var grid = new Grid { Width = n.BoxW, Height = n.BoxH, Cursor = Cursors.Hand, ToolTip = n.Details };
@@ -430,8 +504,12 @@ internal sealed class EtmPane
         if (n.Floating) { frame.StrokeDashArray = [4, 3]; grid.Effect = new DropShadowEffect { BlurRadius = 10, ShadowDepth = 5, Opacity = 0.35 }; }
         grid.Children.Add(frame);
         var row = new DockPanel { Margin = new Thickness(5, 0, 4, 0), LastChildFill = true };
-        var icon = Glyph(n.Icon, accent); icon.VerticalAlignment = VerticalAlignment.Center; icon.Margin = new Thickness(0, 0, 5, 0);
-        DockPanel.SetDock(icon, Dock.Left); row.Children.Add(icon);
+        if (n.Preview is { } preview)
+        {
+            double size = compact ? 18 : 32;
+            var icon = new Image { Source = preview, Width = size, Height = size, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 5, 0) };
+            DockPanel.SetDock(icon, Dock.Left); row.Children.Add(icon);
+        }
         if (toggle)
         {
             bool open = !collapsed.Contains(n.Key);
@@ -457,8 +535,7 @@ internal sealed class EtmPane
         grid.Children.Add(row);
         n.Frame = frame;
         grid.MouseLeftButtonDown += (_, e) => { if (e.ClickCount == 2 && n.Children.Count > 0) PickBranch(n); else Pick(n); e.Handled = true; };
-        Canvas.SetLeft(grid, n.X); Canvas.SetTop(grid, n.Y);
-        canvas.Children.Add(grid);
+        return grid;
     }
 
     /// <summary>Двойной клик по щиту: выделить щит и всё, что от него питается — приборы его групп и нижестоящие щиты со своими приборами.</summary>
@@ -466,7 +543,7 @@ internal sealed class EtmPane
     {
         var ids = All(n).SelectMany(x => x.Select).Distinct().ToArray();
         Pick(n, ids);
-        int panels = All(n).Count(x => x.Icon is Symbol.Panel or Symbol.Vru && x.Layout == Layout.Column) - 1, groups = All(n).Count(x => x.Key.StartsWith('C'));
+        int panels = All(n).Skip(1).Count(x => x.Key.StartsWith('P')), groups = All(n).Count(x => x.Key.StartsWith('C'));
         details.Text = $"Выделено всё, что питается от «{n.Title}»: {ids.Length} элементов — групп {groups}, нижестоящих щитов {panels}.\n\n" + n.Details;
     }
 
@@ -480,9 +557,10 @@ internal sealed class EtmPane
         details.Text = n.Details;
         if (select.Length == 0) return;
         var ids = select.ToList();
+        var source = shownDocument;
         App.Queue?.Post(app =>
         {
-            if (app.ActiveUIDocument is not { } ui) return;
+            if (app.ActiveUIDocument is not { } ui || !ui.Document.Equals(source)) return;
             var existing = ids.Where(id => ui.Document.GetElement(id) != null).ToList();
             if (existing.Count == 0) return;
             ui.Selection.SetElementIds(existing);

@@ -27,7 +27,7 @@ public sealed partial class ConduitThroughLightsCommand
         var level = ui.ActiveView.GenLevel
             ?? throw new InvalidOperationException("Откройте план этажа для установки выключателя на проектной высоте.");
         var settings = EomStore.Settings(doc);
-        var source = pick.Element;
+        var source = pick.Element ?? throw new InvalidOperationException("Выберите начальный вывод для подключения выключателя.");
         var wall = SwitchBoxPlacement.PickWall(ui);
         if (ChooseSwitchType(ui, wall) is not { } symbol) return Result.Cancelled;
 

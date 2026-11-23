@@ -16,6 +16,7 @@ namespace BotPlus.Eom;
 internal sealed class RouteTools : IDisposable
 {
     static RouteTools? native;
+    static RouteTools? active;
     // Revit исполняет PostCommand после выхода из контекста API. Идентификатор живёт до выгрузки модуля.
     static RevitCommandId? trayCommandId;
     static RevitCommandId TrayCommandId => trayCommandId ??= RevitCommandId.LookupPostableCommandId(PostableCommand.CableTray);
@@ -45,6 +46,7 @@ internal sealed class RouteTools : IDisposable
 
         palette = new Window
         {
+            Title = "Floating Toolbar",
             WindowStyle = WindowStyle.None,
             ResizeMode = ResizeMode.NoResize,
             SizeToContent = SizeToContent.WidthAndHeight,
@@ -68,15 +70,19 @@ internal sealed class RouteTools : IDisposable
         };
         AutomationProperties.SetName(riser, "Установить стояк");
         riser.Click += (_, _) => RequestRiser(owner);
+        var mode = SystemModeToggle.Create(() => ReturnDrawingFocus(owner));
+        mode.Margin = new Thickness(4, 0, 0, 0);
         var close = new Button
         {
-            Content = "×", Width = 22, Height = 22, FontSize = 15, Padding = new Thickness(0),
+            Content = FloatingToolbarIcons.Draw(FloatingToolbarIcons.Close, 13), Width = 22, Height = 22, Padding = new Thickness(0),
             Margin = new Thickness(4, 0, 0, 0), ToolTip = "Закрыть панель"
         };
         AutomationProperties.SetName(close, "Закрыть панель");
         close.Click += (_, _) => palette.Close();
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4) };
+        controls.Children.Add(new TextBlock { Text = "Floating Toolbar", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 8, 0) });
         controls.Children.Add(riser);
+        controls.Children.Add(mode);
         controls.Children.Add(close);
         palette.Content = new Border { Child = controls, BorderThickness = new Thickness(1) }
             .Themed(Border.BorderBrushProperty, "BP.Border");
@@ -85,23 +91,40 @@ internal sealed class RouteTools : IDisposable
         {
             var handle = new WindowInteropHelper(palette).Handle;
             HwndSource.FromHwnd(handle)?.AddHook(RememberDrawingFocus);
-            foreach (var view in ui.GetOpenUIViews())
-            {
-                using (view)
-                {
-                    if (view.ViewId != viewId) continue;
-                    var bounds = view.GetWindowRectangle();
-                    SetWindowPos(handle, IntPtr.Zero, bounds.Left + 12, bounds.Top + 12, 0, 0, 0x0015);
-                }
-            }
+            AnchorPalette(palette, ui, viewId);
         };
         palette.Show();
+        active = this;
+    }
+
+    internal static bool IsEmergency => SystemModeToggle.IsEmergency;
+    internal static bool IsDrawing => active != null;
+
+    internal static void AnchorPalette(Window palette, UIDocument ui, ElementId viewId)
+    {
+        var handle = new WindowInteropHelper(palette).Handle;
+        foreach (var view in ui.GetOpenUIViews())
+        {
+            using (view)
+            {
+                if (view.ViewId != viewId) continue;
+                var bounds = view.GetWindowRectangle();
+                SetWindowPos(handle, IntPtr.Zero, bounds.Left + 12, bounds.Top + 12, 0, 0, 0x0015);
+            }
+        }
+    }
+
+    internal static bool TryMode(Document doc, out bool emergency)
+    {
+        emergency = IsEmergency;
+        return active is { } session && doc.Equals(session.ui.Document) && doc.ActiveView.Id == session.viewId;
     }
 
     internal static RouteTools OpenConduit(UIDocument ui) => new(ui, false);
 
     internal static void StartTray(UIDocument ui)
     {
+        ConduitSelectionToolbar.Hide();
         CloseNative();
         var command = TrayCommandId;
         if (!ui.Application.CanPostCommand(command))
@@ -209,9 +232,7 @@ internal sealed class RouteTools : IDisposable
         riser.IsEnabled = false;
 
         // Завершаем только текущий выбор Revit. Транзакции запускаются после возврата из PickPoint или в Idling.
-        SetActiveWindow(owner);
-        if (drawingFocus != IntPtr.Zero && (drawingFocus == owner || IsChild(owner, drawingFocus)))
-            SetFocus(drawingFocus);
+        ReturnDrawingFocus(owner);
         var target = GetFocus();
         if (target == IntPtr.Zero || target != owner && !IsChild(owner, target)) target = owner;
         const uint keyDown = 0x0100, keyUp = 0x0101;
@@ -223,8 +244,15 @@ internal sealed class RouteTools : IDisposable
         }
     }
 
+    void ReturnDrawingFocus(IntPtr owner)
+    {
+        SetActiveWindow(owner);
+        if (drawingFocus != IntPtr.Zero && (drawingFocus == owner || IsChild(owner, drawingFocus))) SetFocus(drawingFocus);
+    }
+
     public void Dispose()
     {
+        if (ReferenceEquals(active, this)) active = null;
         if (!closed) palette.Close();
     }
 

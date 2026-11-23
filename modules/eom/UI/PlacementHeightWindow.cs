@@ -20,6 +20,7 @@ internal sealed class PlacementHeightWindow : Window
     PlacementHeightWindow(IntPtr owner, int left, int top, double? defaultHeight, Func<double, double?> elevation)
     {
         this.owner = owner;
+        Title = "Floating Toolbar";
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.Manual;
@@ -42,6 +43,9 @@ internal sealed class PlacementHeightWindow : Window
         field.Children.Add(height);
         field.Children.Add(hint);
         var content = new StackPanel { Orientation = Orientation.Horizontal };
+        var mode = SystemModeToggle.Create(ReturnRevitFocus);
+        mode.Margin = new Thickness(0, 0, 6, 0);
+        content.Children.Add(mode);
         content.Children.Add(new TextBlock { Text = "H=", Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center });
         content.Children.Add(field);
         Content = new Border { Child = content, Padding = new Thickness(5, 3, 5, 3), BorderThickness = new Thickness(1) }
@@ -66,8 +70,7 @@ internal sealed class PlacementHeightWindow : Window
         {
             if (e.Key != Key.Enter) return;
             e.Handled = true;
-            SetActiveWindow(owner);
-            if (previousFocus != IntPtr.Zero && IsChild(owner, previousFocus)) SetFocus(previousFocus);
+            ReturnRevitFocus();
         };
         ReadInput();
 
@@ -77,6 +80,12 @@ internal sealed class PlacementHeightWindow : Window
             SetWindowPos(handle, IntPtr.Zero, left, top, 0, 0, 0x0015); // без изменения размера, Z-порядка и активации
             HwndSource.FromHwnd(handle)?.AddHook(RememberRevitFocus);
         };
+    }
+
+    void ReturnRevitFocus()
+    {
+        SetActiveWindow(owner);
+        if (previousFocus != IntPtr.Zero && IsChild(owner, previousFocus)) SetFocus(previousFocus);
     }
 
     internal static PlacementHeightWindow? TryShow(UIDocument ui, double? defaultHeight, Func<double, double?> elevation)

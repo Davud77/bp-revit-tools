@@ -6,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.DirectContext3D;
+using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.DB.ExternalService;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
@@ -16,9 +17,10 @@ namespace BotPlus.Eom;
 public sealed partial class ConduitThroughLightsCommand
 {
     static Pick PickBody(UIDocument ui, Predicate<Element> eligible, double? diameter, string prompt,
-        Func<Element, XYZ, int?, HoverLeg?>? route = null)
+        Func<Element, XYZ, int?, HoverLeg?>? route = null, Func<XYZ, FreeSketch>? freePath = null,
+        bool allowFree = false, double? riserElevation = null, Predicate<Element>? excluded = null)
     {
-        if (PlanBodyPick.TryPick(ui, eligible, diameter, prompt, route) is { } planPick) return planPick;
+        if (PlanBodyPick.TryPick(ui, eligible, prompt, route, freePath, allowFree, riserElevation, excluded) is { } planPick) return planPick;
         using var filter = new BodyFilter(ui, eligible, diameter);
         var reference = ui.Selection.PickObject(ObjectType.PointOnElement, filter, prompt);
         var element = ui.Document.GetElement(reference.ElementId);
@@ -28,7 +30,9 @@ public sealed partial class ConduitThroughLightsCommand
             LocationCurve curve => curve.Curve.Evaluate(0.5, true),
             _ => null
         });
-        return new(element, point ?? throw new InvalidOperationException("Revit не определил точку на корпусе. Укажите грань или линию прибора."));
+        if (point == null) throw new InvalidOperationException("Revit не определил точку на корпусе. Укажите грань или линию прибора.");
+        var end = element is Conduit ? FreePorts(element, null).MinBy(port => port.Point.DistanceTo(point)) : null;
+        return new(element, point, end != null && end.Point.DistanceTo(point) <= Feet(25) ? end.Id : null);
     }
 
     sealed class BodyFilter(UIDocument ui, Predicate<Element> eligible, double? diameter) : ISelectionFilter, IDisposable
@@ -280,11 +284,12 @@ public sealed partial class ConduitThroughLightsCommand
 
         void Show(XYZ[] points, XYZ[] markers)
         {
-            var cyan = new ColorWithTransparency(0, 175, 255, 0);
+            var (r, g, b) = RouteService.SystemColor(RouteTools.IsEmergency);
+            var routeColor = new ColorWithTransparency(r, g, b, 0);
             var green = new ColorWithTransparency(70, 240, 65, 0);
             var segments = new List<(XYZ, XYZ, ColorWithTransparency)>();
             for (int i = 1; i < points.Length; i++)
-                segments.Add((points[i - 1], points[i], cyan));
+                segments.Add((points[i - 1], points[i], routeColor));
             foreach (var point in markers)
                 foreach (var direction in new[] { XYZ.BasisX, XYZ.BasisY, XYZ.BasisZ })
                     segments.Add((point - direction * markerSize, point + direction * markerSize, green));

@@ -54,7 +54,8 @@ internal static class WiringSymbols
         double z = view is ViewPlan { GenLevel: { } level } ? level.ProjectElevation : view.Origin.Z;
         XYZ a = line.GetEndPoint(0), b = line.GetEndPoint(1);
         a = new XYZ(a.X, a.Y, z); b = new XYZ(b.X, b.Y, z);
-        return a.DistanceTo(b) < MinLength ? null : Line.CreateBound(a, b);
+        if (a.DistanceTo(b) < MinLength) return null;
+        return EomStore.IsWiringReversed(host) ? Line.CreateBound(b, a) : Line.CreateBound(a, b);
     }
 
     /// <summary>Описание семейства для диагностики: категория и способ размещения.</summary>
@@ -85,7 +86,14 @@ internal static class WiringSymbols
             result.AddRange(PlacePointBased(doc, view, line, symbol));
         else throw new InvalidOperationException($"Семейство «{Family}» нельзя поставить вдоль трассы: {Describe(symbol)}.");
         // Закрепляем: перетаскивание мышью двигает трассу, а не обозначение (выбор перенаправляется на трассу, см. RouteService).
-        foreach (var id in result) { var e = doc.GetElement(id); EomStore.SaveWiringHost(e, host.Id); e.Pinned = true; }
+        var emergency = EomStore.RouteEmergency(host);
+        foreach (var id in result)
+        {
+            var e = doc.GetElement(id);
+            EomStore.SaveWiringHost(e, host.Id);
+            if (emergency is { } mode) RouteService.SetRouteColor(view, id, mode);
+            e.Pinned = true;
+        }
         return result;
     }
 
@@ -151,6 +159,63 @@ internal static class WiringSymbols
     static IEnumerable<FamilyInstance> Placed(Document doc, View? view) =>
         (view == null ? new FilteredElementCollector(doc) : new FilteredElementCollector(doc, view.Id))
             .OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>().Where(i => i.Symbol?.FamilyName == Family);
+
+    static ILookup<long, FamilyInstance> ForHosts(Document doc, IReadOnlyCollection<Element> hosts)
+    {
+        var targetIds = hosts.Select(e => e.Id.Value).ToHashSet();
+        return Placed(doc, null).Select(i => (Instance: i, Host: EomStore.WiringHost(i)))
+            .Where(x => x.Host is { } id && targetIds.Contains(id)).ToLookup(x => x.Host!.Value, x => x.Instance);
+    }
+
+    internal static void Recolor(Document doc, IReadOnlyCollection<Element> elements, View activeView, bool emergency)
+    {
+        var hosts = elements.Where(e => e is Conduit or CableTray).ToList();
+        foreach (var element in elements)
+        {
+            EomStore.SaveRouteMode(element, emergency);
+            RouteService.SetRouteColor(activeView, element.Id, emergency);
+        }
+        if (hosts.Count == 0) return;
+        var symbols = ForHosts(doc, hosts);
+        foreach (var host in hosts)
+            foreach (var group in symbols[host.Id.Value].GroupBy(i => i.OwnerViewId))
+            {
+                if (doc.GetElement(group.Key) is not View view) continue;
+                if (view.Id != activeView.Id) RouteService.SetRouteColor(view, host.Id, emergency);
+                foreach (var symbol in group) RouteService.SetRouteColor(view, symbol.Id, emergency);
+            }
+    }
+
+    /// <summary>Разворачивает только условные обозначения. Трасса и её соединители не меняются.</summary>
+    internal static (int Reversed, int Skipped) Reverse(Document doc, IReadOnlyCollection<Element> hosts, View activeView)
+    {
+        var symbols = ForHosts(doc, hosts);
+        Dictionary<string, FamilySymbol>? types = null;
+        int reversed = 0;
+        foreach (var host in hosts)
+        {
+            if (PlanLine(host, activeView) == null) continue;
+            var existing = symbols[host.Id.Value];
+            var targets = existing.GroupBy(i => i.OwnerViewId)
+                .Select(g => (View: doc.GetElement(g.Key) as View, Symbol: g.First().Symbol)).ToList();
+            if (targets.Count == 0)
+            {
+                string choice = RouteService.Current == None ? Auto : RouteService.Current;
+                var symbol = Resolve(types ??= Types(doc), MethodFor(host, choice));
+                if (symbol == null) continue;
+                targets.Add((activeView, symbol));
+            }
+            var ids = existing.Select(i => i.Id).ToList();
+            EomStore.SaveWiringDirection(host, !EomStore.IsWiringReversed(host));
+            if (ids.Count > 0) doc.Delete(ids);
+            foreach (var (view, symbol) in targets)
+                if (view == null || Place(doc, view, host, symbol).Count == 0)
+                    throw new InvalidOperationException("Не удалось разместить развёрнутое УГО. Изменение отменено.");
+            reversed++;
+        }
+        if (reversed == 0) throw new InvalidOperationException("Нет участков с УГО. Проверьте длину участков и наличие семейства «ADSK_Обозначение проводок».");
+        return (reversed, hosts.Count - reversed);
+    }
 
     /// <summary>Обозначения следуют за трассой: при изменении ставятся заново тем же типом, при удалении трассы удаляются.</summary>
     internal static void Follow(Document doc, ICollection<ElementId> modified, ICollection<ElementId> deleted)

@@ -356,7 +356,7 @@ internal static class LightingWindow
 
     internal static Outcome? Show(List<LightRow> rows, LightingContext ctx, HashSet<string> preselected)
     {
-        var window = EomUi.Window("Светотехнический расчёт", 1400, 780);
+        var window = EomUi.Window("Расчёт по Ки", 1400, 780);
         bool dirty = false;
         var filter = new TextBox { Width = 240, ToolTip = "Номер, название или источник помещения" };
         var view = CollectionViewSource.GetDefaultView(rows);

@@ -12,7 +12,8 @@ internal sealed class EquipmentLibraryWindow : Window
     readonly StackPanel categoryChoices = new();
     readonly Dictionary<BuiltInCategory, CheckBox> checks = [];
 
-    internal EquipmentLibraryWindow(IntPtr owner, EquipmentLibrary library, EquipmentLibraryIndexer indexer, Action<string> startIndex,
+    internal EquipmentLibraryWindow(IntPtr owner, EquipmentLibrary library, EquipmentLibraryIndexer indexer,
+        Action<string> startIndex, Action<string> openIndex,
         IReadOnlyDictionary<BuiltInCategory, string> available, HashSet<BuiltInCategory> selected, Action<HashSet<BuiltInCategory>> saveCategories,
         EomSettings? heights, string? projectTitle, Action<EomSettings, Action<string>> saveHeights)
     {
@@ -27,14 +28,14 @@ internal sealed class EquipmentLibraryWindow : Window
         BotPlusTheme.Apply(this);
 
         var tabs = new TabControl();
-        tabs.Items.Add(new TabItem { Header = "Библиотека", Content = BuildLibraryTab(library, indexer, startIndex) });
+        tabs.Items.Add(new TabItem { Header = "Библиотека", Content = BuildLibraryTab(library, indexer, startIndex, openIndex) });
         tabs.Items.Add(new TabItem { Header = "Категории", Content = BuildCategoriesTab(saveCategories) });
         tabs.Items.Add(new TabItem { Header = "Высоты вставки", Content = BuildHeightsTab(heights, projectTitle, saveHeights) });
         AddCategories(available, selected);
         EomUi.Layout(this, tabs, null, EomUi.Buttons(EomUi.Button("Закрыть", Close)));
     }
 
-    FrameworkElement BuildLibraryTab(EquipmentLibrary library, EquipmentLibraryIndexer indexer, Action<string> startIndex)
+    FrameworkElement BuildLibraryTab(EquipmentLibrary library, EquipmentLibraryIndexer indexer, Action<string> startIndex, Action<string> openIndex)
     {
         var content = new StackPanel { Margin = new Thickness(12) };
         content.Children.Add(new TextBlock { Text = "Папка с семействами Revit (.rfa)" });
@@ -53,24 +54,32 @@ internal sealed class EquipmentLibraryWindow : Window
             if (dialog.ShowDialog(this) == true) folder.Text = dialog.FolderName;
         };
 
-        var result = EomUi.Hint(library.Folder.Length == 0 ? "Выберите папку и запустите индексацию."
+        var result = EomUi.Hint(library.Folder.Length == 0 ? "Выберите папку с семействами."
             : $"Семейств в индексе: {library.Entries.Length}.");
         content.Children.Add(result);
         var index = EomUi.Button("Индексация", () => startIndex(folder.Text.Trim()));
-        content.Children.Add(EomUi.Buttons(index));
+        var open = EomUi.Button("Открыть готовый индекс", () => openIndex(folder.Text.Trim()));
+        content.Children.Add(EomUi.Buttons(open, index));
+        content.Children.Add(EomUi.Hint("Для переноса на другой ПК скопируйте BotPlus.UGO.index в корень такой же библиотеки."));
         void Refresh()
         {
             folderRow.IsEnabled = !indexer.IsRunning;
-            index.IsEnabled = !indexer.IsRunning && !string.IsNullOrWhiteSpace(folder.Text);
+            open.IsEnabled = index.IsEnabled = !indexer.IsRunning && !string.IsNullOrWhiteSpace(folder.Text);
             if (indexer.Status.Length > 0) result.Text = indexer.Status;
         }
         folder.TextChanged += (_, _) =>
         {
             Refresh();
-            result.Text = "Запустите индексацию, чтобы сохранить папку и обновить список.";
+            result.Text = "Откройте готовый индекс или создайте его для выбранной папки.";
         };
         indexer.Changed += Refresh;
-        Closed += (_, _) => indexer.Changed -= Refresh;
+        void SetFolder(EquipmentLibrary updated) => folder.Text = updated.Folder;
+        indexer.Completed += SetFolder;
+        Closed += (_, _) =>
+        {
+            indexer.Changed -= Refresh;
+            indexer.Completed -= SetFolder;
+        };
         Refresh();
         return content;
     }

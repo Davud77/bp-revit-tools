@@ -1,16 +1,24 @@
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 
 namespace BotPlus.Eom.Core;
 
-internal sealed record IndexedFamily(string File, string Name, int Category, string CategoryName, byte[]? Preview, long Length, DateTime Modified);
+internal sealed record IndexedFamily(string File, string Name, int Category, string CategoryName,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] byte[]? Preview, long Length, DateTime Modified)
+{
+    public long PreviewOffset { get; init; }
+    public int PreviewSize { get; init; }
+    internal bool HasPreview => Preview != null || PreviewSize > 0;
+}
 
 internal sealed record EquipmentLibrary(string Folder, IndexedFamily[] Entries)
 {
+    internal EquipmentLibraryIndex? Index { get; init; }
     static readonly string SettingsFolder = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotPlus.RT", "eom");
     static readonly Regex BackupName = new(@"\.\d{4}\.rfa$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -27,13 +35,14 @@ internal sealed record EquipmentLibrary(string Folder, IndexedFamily[] Entries)
 
     internal static int[]? LoadCategories() => Read<int[]>("equipment-categories.json");
     internal static void SaveCategories(int[] categories) => Write("equipment-categories.json", categories);
-    internal void Save() => Write("equipment-library.json", this);
+    internal static string? LoadFolder() => Read<string>("equipment-library-folder.json");
+    internal static void SaveFolder(string folder) => Write("equipment-library-folder.json", folder);
 
     [SupportedOSPlatform("windows")]
     internal static Scan ReadFolder(string folder, EquipmentLibrary previous, IReadOnlyDictionary<string, int> categories,
         Action<int, int> progress, CancellationToken cancellation)
     {
-        var basePath = Path.GetFullPath(folder);
+        var basePath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
         var options = new EnumerationOptions
         {
             RecurseSubdirectories = true, IgnoreInaccessible = false,

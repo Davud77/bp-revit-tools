@@ -46,6 +46,7 @@ public sealed class EquipmentCommand : EomCommand
     protected override Result Run(UIDocument ui)
     {
         App.Equipment?.Refresh(ui.Document);
+        App.Equipment?.ReloadLibrary();
         ui.Application.GetDockablePane(App.EquipmentPaneId).Show();
         return Result.Succeeded;
     }
@@ -83,12 +84,14 @@ public sealed class LightingCommand : EomCommand
             var (gridRows, gridCols) = row.PlaceGrid;
             double mount = light.MountM > 0 ? light.MountM : row.Geometry.HeightM;
             var placed = Rooms.Place(doc, row.Room, symbols[row.Result!.Luminaire], gridRows, gridCols, row.PlaceCount, mount);
+            if (outcome.Replace && placed.Count == 0)
+                throw new InvalidOperationException($"{row.Number} {row.Name}: не найдено точек для замены. Расстановка отменена.");
             row.Light = light with { Placed = outcome.Replace ? placed : [.. light.Placed, .. placed] };
             total += placed.Count;
             if (placed.Count < row.PlaceCount) problems.Add($"{row.Number} {row.Name}: размещено {placed.Count} из {row.PlaceCount} — контур слишком сложный для сетки.");
         }
         EomStore.SaveRoomLights(doc, rows.ToDictionary(r => r.Room.Key, r => r.Light));
-        t.Commit();
+        if (t.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Revit отменил сохранение расчёта по Ки.");
         if (outcome.Place.Count == 0) return Result.Succeeded;
         ctx.Catalog.Save();
         new TaskDialog("BotPlus ЭОМ")
@@ -114,7 +117,7 @@ public sealed class LightingCommand : EomCommand
             return (n.Contains("ламп") || n.Contains("lamp")) && !n.Contains("светильн") && !n.Contains("luminaire");
         }
         return new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_LightingFixtures).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
-            .Where(s => s.Family.FamilyPlacementType is FamilyPlacementType.OneLevelBased or FamilyPlacementType.OneLevelBasedHosted)
+            .Where(Rooms.CanPlace)
             .Select(s =>
             {
                 var (total, nested) = instances.TryGetValue(s.Id, out var c) ? c : (0, 0);

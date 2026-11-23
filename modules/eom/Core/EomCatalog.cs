@@ -65,7 +65,7 @@ public sealed class LuminaireItem
     public string Document { get; set; } = "";
     public double Voltage { get; set; } = 220;
     public double MassKg { get; set; }
-    /// <summary>Файл фотометрии .ies/.ldt (справочно).</summary>
+    /// <summary>Абсолютный путь к фотометрии: IES Type C TILT=NONE для точечного расчёта; LDT пока только справочно.</summary>
     public string Photometry { get; set; } = "";
     /// <summary>
     /// Связанное семейство Revit («Семейство: Тип»). При расстановке в этом семействе создаётся тип с именем светильника,

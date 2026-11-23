@@ -57,4 +57,16 @@ internal static class EomStore
     /// <summary>Требует открытой транзакции.</summary>
     internal static void SaveRoomLights(Document doc, Dictionary<string, RoomLight> data) =>
         Write(doc.ProjectInformation, RoomLightId, "BotPlusEomRoomLightV1", System.Text.Json.JsonSerializer.Serialize(data));
+
+    static readonly Guid IsoluxId = new("E3D4A9B2-61C8-4F0A-8E3B-7B5C2D1F9A05");
+    internal static string? IsoluxHost(Element group) => Read(group, IsoluxId);
+    internal static void SaveIsoluxHost(Element group, string key) => Write(group, IsoluxId, "BotPlusEomIsoluxV1", key);
+
+    static readonly Guid RouteModeId = new("E3D4A9B2-61C8-4F0A-8E3B-7B5C2D1F9A06");
+    internal static bool? RouteEmergency(Element route) => Read(route, RouteModeId) switch { "Emergency" => true, "Normal" => false, _ => null };
+    internal static void SaveRouteMode(Element route, bool emergency) => Write(route, RouteModeId, "BotPlusEomRouteModeV1", emergency ? "Emergency" : "Normal");
+
+    static readonly Guid WiringDirectionId = new("E3D4A9B2-61C8-4F0A-8E3B-7B5C2D1F9A07");
+    internal static bool IsWiringReversed(Element route) => Read(route, WiringDirectionId) == "Reversed";
+    internal static void SaveWiringDirection(Element route, bool reversed) => Write(route, WiringDirectionId, "BotPlusEomWiringDirectionV1", reversed ? "Reversed" : "Forward");
 }

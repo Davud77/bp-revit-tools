@@ -31,19 +31,24 @@ public sealed class App : IExternalApplication
         var equipment = app.CreateRibbonPanel(Tab, "Оборудование и светотехника");
         equipment.AddItem(B("Equipment", "База\nУГО", typeof(EquipmentCommand),
             "Панель с типами ЭОМ из проекта и семействами из выбранной папки. Перетащите загруженный тип на план — начнётся размещение."));
-        equipment.AddItem(B("Lighting", "Расчёт\nосвещённости", typeof(LightingCommand),
+        equipment.AddItem(B("Lighting", "Расчёт\nпо Ки", typeof(LightingCommand),
             "Светотехнический расчёт по помещениям проекта и связей АР: прототипы помещений по СП 52.13330, светильник из БД, расчёт методом коэффициента использования (Ки) со сравнением светильников и расстановкой сеткой. Свойства помещений сохраняются в модели. Выделенные помещения открываются выделенными."));
-        equipment.AddItem(B("Isolux", "Изолюксы", typeof(IsoluxCommand), Planned.Tip(Planned.Isolux)));
+        equipment.AddItem(B("LightingGrid", "Групповая\nрасстановка", typeof(LightingGridCommand),
+            "Выберите помещение, тип светильника, шаг сетки по X и Y и высоту. Светильники размещаются в пределах помещения."));
+        equipment.AddItem(B("Isolux", "Точечный метод\nи изолюксы", typeof(IsoluxCommand),
+            "Расчёт прямой освещённости по IES размещённых светильников: цветовая карта, изолинии, Emin/Eср/Emax и равномерность. Вывод изолиний на план, экспорт PNG и CSV."));
 
         var routes = app.CreateRibbonPanel(Tab, "Трассы и подключение");
         routes.AddStackedItems(
-            B("RouteTray", "Лоток", typeof(TrayCommand), "Построение кабельного лотка штатной командой Revit. В плавающей панели можно поставить стояк. Способ прокладки по ГОСТ 21.210 выбирается в строке параметров."),
-            B("RouteConduit", "Короб, труба", typeof(ConduitCommand), "Щёлкните по метке нужного вывода на каждом приборе. Для вертикального участка используйте плавающую панель. Shift+щелчок в начале трассы — поставить выключатель на стене."),
+            B("RouteTray", "Лоток, короб", typeof(TrayCommand), "Построение кабельного лотка штатной командой Revit. В плавающей панели можно поставить стояк. Способ прокладки по ГОСТ 21.210 выбирается в строке параметров."),
+            B("RouteConduit", "Гофра, труба", typeof(ConduitCommand), "Выберите вывод прибора, точку на коробе или пустое место для свободной прокладки на одной отметке. Щелчок по стояку подключает трассу на её отметке. Shift+щелчок по начальному выводу — поставить выключатель на стену."),
             B("Wiring", "Обозначения проводок", typeof(WiringCommand), "Условные обозначения проводок ГОСТ 21.210 у всех лотков и коробов активного плана по способу прокладки, выбранному последним в строке параметров (по умолчанию «Авто»). Существующие обозначения перестраиваются по трассам."));
         routes.AddItem(B("Connect", "Подключить\nк щиту", typeof(ConnectCommand),
             "Выберите приборы, затем щит: создаётся группа (цепь) Revit, приборы подключаются к щиту."));
 
         var etm = app.CreateRibbonPanel(Tab, "ЭТМ и расчёты");
+        etm.AddItem(B("PanelManager", "Менеджер\nщитов", typeof(PanelManagerCommand),
+            "Щиты проекта, вводы, отходящие группы и потребители. Предварительный подбор защиты и кабеля по каталогу ЭОМ."));
         etm.AddItem(B("Etm", "Менеджер\nЭТМ", typeof(EtmCommand), "Схема сети в отдельном окне: источник, щиты, автоматы групп, нижестоящие щиты и неподключённое оборудование."));
         etm.AddStackedItems(
             B("Loads", "Нагрузки и КЗ", typeof(LoadsCommand), "Расчётные мощности щитов, токи групп и потери напряжения."),
@@ -69,7 +74,10 @@ public sealed class App : IExternalApplication
         RouteService.Register(app);
         app.Idling += RouteService.OnIdling;
         app.Idling += RouteTools.OnIdling;
+        app.Idling += ConduitSelectionToolbar.OnIdling;
         app.ControlledApplication.DocumentChanged += RouteTools.OnDocumentChanged;
+        app.ControlledApplication.DocumentChanged += OnEtmDocumentChanged;
+        app.Idling += OnEtmIdling;
         app.SelectionChanged += RouteService.OnSelectionChanged;
         RouteOptionsBar.Start(app.MainWindowHandle);
         return Result.Succeeded;
@@ -81,11 +89,23 @@ public sealed class App : IExternalApplication
         try { Equipment?.Follow(e.Document); } catch (Exception error) { System.Diagnostics.Trace.WriteLine(error); }
     }
 
+    static void OnEtmDocumentChanged(object? sender, Autodesk.Revit.DB.Events.DocumentChangedEventArgs e) => Etm?.OnDocumentChanged(e);
+
+    static void OnEtmIdling(object? sender, Autodesk.Revit.UI.Events.IdlingEventArgs e)
+    {
+        try { if (sender is UIApplication app) Etm?.OnIdling(app); }
+        catch (Exception error) { System.Diagnostics.Trace.WriteLine(error); }
+    }
+
     public Result OnShutdown(UIControlledApplication app)
     {
         app.Idling -= RouteService.OnIdling;
         app.Idling -= RouteTools.OnIdling;
+        app.Idling -= ConduitSelectionToolbar.OnIdling;
+        ConduitSelectionToolbar.Hide();
         app.ControlledApplication.DocumentChanged -= RouteTools.OnDocumentChanged;
+        app.ControlledApplication.DocumentChanged -= OnEtmDocumentChanged;
+        app.Idling -= OnEtmIdling;
         RouteTools.Shutdown();
         if (Equipment is { } equipment)
         {
@@ -137,9 +157,6 @@ public abstract class PlannedCommand : EomCommand
 
 internal static class Planned
 {
-    internal static readonly (string, string, string) Isolux = ("Изолюксы",
-        "Градиент освещённости на полу помещения без создания элементов модели.",
-        "Analysis Visualization Framework: SpatialFieldManager, AnalysisDisplayColoredSurfaceSettings, точечный метод по IES.");
     internal static readonly (string, string, string) AutoRoute = ("Автотрассировка кабеля",
         "Поиск кратчайшего пути по графу лотков и коробов, а где их нет — ортогонально по стенам и перекрытиям. Длина: Lгор + ΔZ + запас.",
         "граф из ConnectorManager трасс, алгоритм Дейкстры, ReferenceIntersector для обхода конструкций.");
@@ -155,7 +172,6 @@ internal static class Planned
     internal static string Tip((string Title, string What, string How) info) => info.What + " (в разработке)";
 }
 
-[Transaction(TransactionMode.Manual)] public sealed class IsoluxCommand : PlannedCommand { protected override (string, string, string) Info => Planned.Isolux; }
 [Transaction(TransactionMode.Manual)] public sealed class AutoRouteCommand : PlannedCommand { protected override (string, string, string) Info => Planned.AutoRoute; }
 [Transaction(TransactionMode.Manual)] public sealed class SpecCommand : PlannedCommand { protected override (string, string, string) Info => Planned.Spec; }
 [Transaction(TransactionMode.Manual)] public sealed class ReportCommand : PlannedCommand { protected override (string, string, string) Info => Planned.Report; }
