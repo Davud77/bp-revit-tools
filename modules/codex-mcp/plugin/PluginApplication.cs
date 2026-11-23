@@ -10,6 +10,7 @@ public sealed class PluginApplication : IExternalApplication
         try
         {
             application.ControlledApplication.DocumentChanged += RevitTools.OnDocumentChanged;
+            application.Idling += BridgeService.OnIdling;
 
             const string tabName = "BotPlus RT";
             try { application.CreateRibbonTab(tabName); }
@@ -41,6 +42,7 @@ public sealed class PluginApplication : IExternalApplication
         catch (Exception exception)
         {
             application.ControlledApplication.DocumentChanged -= RevitTools.OnDocumentChanged;
+            application.Idling -= BridgeService.OnIdling;
             TaskDialog.Show("BP.Revit.AI", $"Не удалось запустить локальный мост:\n{exception.Message}");
             BridgeService.Stop();
             return Result.Failed;
@@ -50,6 +52,7 @@ public sealed class PluginApplication : IExternalApplication
     public Result OnShutdown(UIControlledApplication application)
     {
         application.ControlledApplication.DocumentChanged -= RevitTools.OnDocumentChanged;
+        application.Idling -= BridgeService.OnIdling;
         BridgeService.Stop();
         return Result.Succeeded;
     }

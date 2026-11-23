@@ -11,7 +11,7 @@ namespace BotPlus.RT.Setup;
 
 static partial class Deployment
 {
-    public const string Version = "2.0.3";
+    public static readonly string Version = typeof(Deployment).Assembly.GetName().Version!.ToString(3);
     const string AddinId = "DE07865F-0FBF-4CC3-B71E-AC2B149113E6";
     const string RegistryKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BotPlus.RT";
     static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotPlus.RT");
@@ -74,6 +74,7 @@ static partial class Deployment
         using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BP.Payload.zip")!)
         using (var archive = new ZipArchive(stream))
         {
+            VerifyReleaseVersion(archive);
             var files = archive.Entries.Where(e => !IsDirectory(e)).ToList();
             int completed = 0;
             foreach (var entry in files)
@@ -121,6 +122,14 @@ static partial class Deployment
         Step(96, "Удаление предыдущих версий");
         RemoveSupersededReleases();
         Step(100, "Установка завершена. Подключение AI-клиента и автоподтверждение выбираются на ленте Revit.");
+    }
+
+    static void VerifyReleaseVersion(ZipArchive archive)
+    {
+        using var metadata = Entry(archive, "release.json").Open();
+        var packagedVersion = JsonNode.Parse(metadata)?["version"]?.GetValue<string>();
+        if (packagedVersion != Version)
+            throw new InvalidOperationException($"Версия пакета ({packagedVersion}) не совпадает с версией установщика ({Version}).");
     }
 
     public static void Uninstall(IProgress<SetupProgress>? progress = null)

@@ -22,6 +22,18 @@ test('discovery finds Russian text and exact schema, rejects unknown commands an
   assert.throws(() => catalog.add('list_rooms', '', z.object({}), read, () => {}), /Duplicate/);
 });
 
+test('cached discovery contracts cannot be poisoned and late registrations remain searchable', () => {
+  const { catalog } = fixture();
+  const first = catalog.describe(['list_rooms'])[0];
+  first.inputSchema.properties.limit.maximum = 999;
+  assert.equal(catalog.describe(['list_rooms'])[0].inputSchema.properties.limit.maximum, 2);
+  catalog.add('read_walls', 'Прочитать стены', z.object({}), read, async () => ({}));
+  assert.deepEqual(catalog.search({ query: 'READ стены' }).tools.map(t => t.name), ['read_walls']);
+  assert.equal(catalog.search({ query: 'read помещения' }).total, 0);
+  assert.equal(catalog.search({ limit: 2 }).nextOffset, 2);
+  assert.deepEqual(catalog.search({ offset: 2, limit: 2 }).tools.map(t => t.name), ['read_walls']);
+});
+
 test('pagination and aggregation return only the chosen summary; guest has no host IO', async () => {
   const { catalog, seen } = fixture();
   const r = await executeCode({ toolNames: ['list_rooms'], code: `

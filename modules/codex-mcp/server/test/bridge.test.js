@@ -82,3 +82,24 @@ test('pre-cancelled calls and oversized requests do not open a socket', async ()
 test('invalid token is rejected before connecting', async () => {
   await assert.rejects(createRevitClient({ tokenLoader: async () => 'short' })('read'), /Invalid bridge token/);
 });
+
+test('large fragmented response preserves Unicode and the exact byte budget', async () => {
+  const result = { text: 'Стена 🏠 '.repeat(8000) };
+  await withBridge((socket, request) => {
+    const data = Buffer.from(JSON.stringify({ id: request.id, ok: true, result }) + '\n');
+    for (let offset = 0; offset < data.length; offset += 127) socket.write(data.subarray(offset, offset + 127));
+  }, async call => assert.deepEqual(await call('read'), result), { timeoutMs: 5000 });
+});
+
+test('response byte limit includes newline and malformed UTF-8 cannot become model data', async () => {
+  const response = id => JSON.stringify({ id, ok: true, result: 'я' }) + '\n';
+  // UUID request IDs always have the same ASCII byte length.
+  const size = Buffer.byteLength(response('x'.repeat(36)));
+  await withBridge((socket, request) => socket.end(response(request.id)),
+    async call => assert.equal(await call('read'), 'я'), { maxResponseBytes: size });
+  await withBridge((socket, request) => socket.end(response(request.id)),
+    call => assert.rejects(call('read'), /8 MB limit/), { maxResponseBytes: size - 1 });
+  await withBridge((socket, request) => socket.end(Buffer.concat([
+    Buffer.from(`{"id":"${request.id}","ok":true,"result":"`), Buffer.from([0xff]), Buffer.from('"}\n')
+  ])), call => assert.rejects(call('read'), /Invalid response/));
+});

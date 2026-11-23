@@ -201,6 +201,18 @@ internal static class MepIcons
                 d.DrawEllipse(Metal(true), Outline, new Point(22, 16), 1.6, 3.5);
                 return true;
             }
+            case "OVMepRiserNumbering":
+            {
+                // Стояк из двух сегментов и синяя бирка с номером.
+                VPipe(5, 2, 7, 13, true, true);
+                VPipe(5, 17, 7, 13, true, true);
+                d.DrawRoundedRectangle(Blue, Frozen(new Pen(Brushes.White, 1)), new System.Windows.Rect(15, 9, 15, 14), 2.5, 2.5);
+                var digit = new FormattedText("1", System.Globalization.CultureInfo.InvariantCulture, System.Windows.FlowDirection.LeftToRight,
+                    new Typeface(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.Bold, FontStretches.Normal), 11, Brushes.White, 1.0);
+                d.DrawText(digit, new Point(22.5 - digit.Width / 2, 16 - digit.Height / 2));
+                d.DrawLine(Frozen(new Pen(Blue, 1.6)), new Point(12, 16), new Point(15, 16));
+                return true;
+            }
             case "OVMepUpdater":
             case "OVMepUpdaterSettings":
             case "OVMepUpdaterRefresh":

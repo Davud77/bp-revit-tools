@@ -148,6 +148,7 @@ static partial class Deployment
             throw new InvalidOperationException("Для проверки нужна пустая папка.");
         using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("BP.Payload.zip")!;
         using var archive = new ZipArchive(stream);
+        VerifyReleaseVersion(archive);
         foreach (var entry in archive.Entries)
         {
             var target = Path.GetFullPath(Path.Combine(destination, EntryPath(entry)));

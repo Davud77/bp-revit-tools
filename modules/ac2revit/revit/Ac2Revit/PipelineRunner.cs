@@ -82,7 +82,7 @@ public static class PipelineRunner
         Dictionary<string,long> WallIdentities()=>Storage.Index(doc,project).Where(p=>wallKeys.Contains(p.Key) && (p.Value is Wall or DirectShape)).ToDictionary(p=>p.Key,p=>p.Value.Id.Value,StringComparer.OrdinalIgnoreCase);
         var wallsBefore=WallIdentities();
         var config=ImportConfig.Load(Resolve(plan.Mapping));var report=new Report{ProjectId=project,Mode=preview?"pipelinePreview":"pipeline"};
-        string[] order=["resources","site","prepareHatchMapping","hatchMapping","grids","gridLabels","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","wallRoofAttach","roomSeparators","surfacePaint","wallJoinsAndRooms","roomBoundaryAudit","views","serviceCuts","elementHatches","nativeDimensions","roomSeparatorRecheck","separatorAudit","hatchAudit","sourceCoverage"];
+        string[] order=["resources","site","prepareHatchMapping","hatchMapping","grids","gridLabels","simpleColumns","columnBodies","profileColumns","columnCompletion","columnBehavior","wallsSlabsMorphs","wallCompletion","beamBodies","rectangularBeams","nativeCutBeams","openingsAndFillings","nativeTerrain","supplementalBodies","wallRoofAttach","roomSeparators","surfacePaint","wallJoinsAndRooms","roomBoundaryAudit","views","levelExtents","serviceCuts","elementHatches","nativeDimensions","roomSeparatorRecheck","separatorAudit","hatchAudit","sourceCoverage"];
         if(preview){foreach(var stage in order)report.Add(stage,"PipelineStage","planned");return report;}
         if(plan.EnforceSourceSnapshot)
         {
@@ -401,6 +401,7 @@ public static class PipelineRunner
             t.Commit();
         }
         progress?.Invoke("pipeline:end:views",Array.IndexOf(order,"views")+1,order.Length);
+        Stage("levelExtents",()=>LevelExtents.Run(doc,project,progress));
         Stage("serviceCuts",()=>ServiceCutsStage.Run(doc,project));
         if(plan.HatchRules.Length>0)Stage("elementHatches",()=>ElementHatchStage.PrepareAndRun(doc,manifest,Resolve(plan.SourceManifest),Resolve(plan.HatchRules),Path.Combine(output,"element-hatches"),selection));
         Stage("nativeDimensions",()=>NativeDimensionStage.Run(doc,manifest,progress,ui));

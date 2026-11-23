@@ -22,12 +22,8 @@ namespace BotPlus.Shared;
 internal static class BotPlusSettings
 {
     internal const string Follow = "follow", Light = "light", Dark = "dark";
-    /// <summary>Панели вкладки «BotPlus RT» в порядке следования. Настройки скрыть нельзя.</summary>
-    internal static readonly string[] Panels = ["MCP", "Ac2Revit", "ОВ", "Отверстия", "ВК", "ЭОМ", "Марки", "Спецификации", "Виды"];
-    /// <summary>Модуль ЭОМ живёт на своей вкладке; все её панели включаются одной галочкой «ЭОМ».</summary>
-    internal const string EomTab = "BP ЭОМ и СС";
-    /// <summary>Отдельные вкладки модулей: ОВ (сведения, 3D, библиотека, радиаторы) и ВК (пока пустая).</summary>
-    internal const string OvTab = "BP ОВ", VkTab = "BP ВК";
+    /// <summary>Модули, которыми можно управлять в настройках плагина.</summary>
+    internal static readonly string[] Panels = ["MCP", "Ac2Revit", "ОВ", "Отверстия", "ЭОМ", "Марки", "Спецификации", "Виды"];
     internal static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BotPlus RT", "settings.json");
 
     internal static string ThemeMode { get; private set; } = Follow;

@@ -5,12 +5,11 @@ using Autodesk.Revit.UI;
 namespace BotPlus.Eom;
 
 /// <summary>
-/// Модуль ЭОМ: своя вкладка «BotPlus ЭОМ» с шестью панелями по этапам работы — проект, оборудование, трассы, ЭТМ, проверки, документация.
-/// В настройках плагина вся вкладка включается и выключается одной галочкой «ЭОМ».
+/// Панели ЭОМ на вкладке BotPlus RT. Состав модуля управляется галочкой «ЭОМ».
 /// </summary>
 public sealed class App : IExternalApplication
 {
-    internal const string Tab = BotPlusSettings.EomTab;
+    const string Tab = "BotPlus RT";
     internal static readonly DockablePaneId EquipmentPaneId = new(new Guid("8D2A6F14-3B7E-4C59-A1D0-6E9F2C4B7A35"));
     internal static EtmPane? Etm;
     internal static EquipmentPane? Equipment;
@@ -26,30 +25,23 @@ public sealed class App : IExternalApplication
 
         var project = app.CreateRibbonPanel(Tab, "Проект и БД");
         project.AddItem(B("Settings", "Настройки\nпроекта", typeof(ProjectSettingsCommand),
-            "Нормы расчёта, запас длины кабеля, допустимая ΔU и маски маркировки. Проверяет семейство условных обозначений проводок ГОСТ 21.210."));
-        project.AddStackedItems(
-            B("Catalog", "Менеджер БД", typeof(CatalogCommand), "Каталоги кабелей, автоматов и УЗО, лотков и светильников."),
-            B("Import", "Импорт ТЗ", typeof(ImportTaskCommand), Planned.Tip(Planned.ImportTask)));
+            "Нормы расчёта, запас кабеля, допустимая ΔU и маски маркировки. Проверяет семейство обозначений проводок."));
+        project.AddItem(B("Catalog", "Менеджер БД", typeof(CatalogCommand), "Каталоги кабелей, автоматов и УЗО, лотков и светильников."));
 
         var equipment = app.CreateRibbonPanel(Tab, "Оборудование и светотехника");
         equipment.AddItem(B("Equipment", "База\nУГО", typeof(EquipmentCommand),
-            "Панель с загруженными семействами ЭОМ (розетки, выключатели, щиты, светильники) и их эскизами. Перетащите тип на план — начнётся размещение."));
+            "Панель с типами ЭОМ из проекта и семействами из выбранной папки. Перетащите загруженный тип на план — начнётся размещение."));
         equipment.AddItem(B("Lighting", "Расчёт\nосвещённости", typeof(LightingCommand),
             "Светотехнический расчёт по помещениям проекта и связей АР: прототипы помещений по СП 52.13330, светильник из БД, расчёт методом коэффициента использования (Ки) со сравнением светильников и расстановкой сеткой. Свойства помещений сохраняются в модели. Выделенные помещения открываются выделенными."));
-        equipment.AddStackedItems(
-            B("Layout", "Авторасстановка", typeof(LightingCommand), "Расстановка светильников ровной сеткой (рядов × в ряду) по результату расчёта Ки. Открывает светотехнический расчёт: выделите помещения и нажмите «Поместить в выделенные»; ранее расставленные BotPlus светильники можно заменить."),
-            B("Isolux", "Изолюксы", typeof(IsoluxCommand), Planned.Tip(Planned.Isolux)));
+        equipment.AddItem(B("Isolux", "Изолюксы", typeof(IsoluxCommand), Planned.Tip(Planned.Isolux)));
 
         var routes = app.CreateRibbonPanel(Tab, "Трассы и подключение");
         routes.AddStackedItems(
-            B("RouteTray", "Лоток", typeof(TrayCommand), "Построение кабельного лотка штатной командой Revit. Вдоль нового лотка на плане ставится обозначение проводки ГОСТ 21.210 по способу прокладки, выбранному в строке параметров во время построения."),
-            B("RouteConduit", "Короб, труба", typeof(ConduitCommand), "Построение короба или трубы штатной командой Revit. Вдоль нового короба на плане ставится обозначение проводки ГОСТ 21.210 по способу прокладки, выбранному в строке параметров во время построения."),
+            B("RouteTray", "Лоток", typeof(TrayCommand), "Построение кабельного лотка штатной командой Revit. В плавающей панели можно поставить стояк. Способ прокладки по ГОСТ 21.210 выбирается в строке параметров."),
+            B("RouteConduit", "Короб, труба", typeof(ConduitCommand), "Щёлкните по метке нужного вывода на каждом приборе. Для вертикального участка используйте плавающую панель. Shift+щелчок в начале трассы — поставить выключатель на стене."),
             B("Wiring", "Обозначения проводок", typeof(WiringCommand), "Условные обозначения проводок ГОСТ 21.210 у всех лотков и коробов активного плана по способу прокладки, выбранному последним в строке параметров (по умолчанию «Авто»). Существующие обозначения перестраиваются по трассам."));
         routes.AddItem(B("Connect", "Подключить\nк щиту", typeof(ConnectCommand),
             "Выберите приборы, затем щит: создаётся группа (цепь) Revit, приборы подключаются к щиту."));
-        routes.AddStackedItems(
-            B("Riser", "Стояки", typeof(RiserCommand), Planned.Tip(Planned.Riser)),
-            B("Cable", "Автотрассировка", typeof(AutoRouteCommand), Planned.Tip(Planned.AutoRoute)));
 
         var etm = app.CreateRibbonPanel(Tab, "ЭТМ и расчёты");
         etm.AddItem(B("Etm", "Менеджер\nЭТМ", typeof(EtmCommand), "Схема сети в отдельном окне: источник, щиты, автоматы групп, нижестоящие щиты и неподключённое оборудование."));
@@ -66,18 +58,18 @@ public sealed class App : IExternalApplication
         docs.AddItem(B("SingleLine", "Однолинейная\nсхема", typeof(SingleLineCommand), "Чертёжный вид с однолинейной схемой выбранного щита по данным ЭТМ."));
         docs.AddStackedItems(
             B("Journal", "Кабельный журнал", typeof(JournalCommand), "Выгрузка кабельного журнала и таблиц щитов в CSV для Excel."),
-            B("Spec", "Спецификация", typeof(SpecCommand), Planned.Tip(Planned.Spec)));
-        docs.AddStackedItems(
-            B("Report", "Отчёты", typeof(ReportCommand), Planned.Tip(Planned.Report)),
-            B("Comb", "Гребёнка", typeof(CombCommand), Planned.Tip(Planned.Comb)));
+            B("Spec", "Спецификация", typeof(SpecCommand), Planned.Tip(Planned.Spec)),
+            B("Report", "Отчёты", typeof(ReportCommand), Planned.Tip(Planned.Report)));
 
         Etm = new EtmPane();
-        Equipment = new EquipmentPane();
+        Equipment = new EquipmentPane(app.MainWindowHandle);
         app.RegisterDockablePane(EquipmentPaneId, "BotPlus База УГО", Equipment);
         app.ViewActivated += OnViewActivated;
         Queue = new RevitQueue();
         RouteService.Register(app);
         app.Idling += RouteService.OnIdling;
+        app.Idling += RouteTools.OnIdling;
+        app.ControlledApplication.DocumentChanged += RouteTools.OnDocumentChanged;
         app.SelectionChanged += RouteService.OnSelectionChanged;
         RouteOptionsBar.Start(app.MainWindowHandle);
         return Result.Succeeded;
@@ -92,6 +84,14 @@ public sealed class App : IExternalApplication
     public Result OnShutdown(UIControlledApplication app)
     {
         app.Idling -= RouteService.OnIdling;
+        app.Idling -= RouteTools.OnIdling;
+        app.ControlledApplication.DocumentChanged -= RouteTools.OnDocumentChanged;
+        RouteTools.Shutdown();
+        if (Equipment is { } equipment)
+        {
+            equipment.Close();
+            Equipment = null;
+        }
         app.ViewActivated -= OnViewActivated;
         app.SelectionChanged -= RouteService.OnSelectionChanged;
         RouteOptionsBar.Stop();
@@ -137,15 +137,9 @@ public abstract class PlannedCommand : EomCommand
 
 internal static class Planned
 {
-    internal static readonly (string, string, string) ImportTask = ("Импорт ТЗ (XML / Excel)",
-        "Загрузка технологического задания смежников (ОВ, ВК, ТХ): мощность, cos φ, категория надёжности. Параметры электроприёмников создаются или обновляются.",
-        "чтение XML/XLSX, сопоставление по марке/ID, Parameter.Set в транзакции, отчёт об изменениях.");
     internal static readonly (string, string, string) Isolux = ("Изолюксы",
         "Градиент освещённости на полу помещения без создания элементов модели.",
         "Analysis Visualization Framework: SpatialFieldManager, AnalysisDisplayColoredSurfaceSettings, точечный метод по IES.");
-    internal static readonly (string, string, string) Riser = ("Межэтажные переходы (стояки)",
-        "Связь вертикальных участков трасс между уровнями для сквозной трассировки.",
-        "граф соединителей CableTray/Conduit, общие идентификаторы стояка в Extensible Storage.");
     internal static readonly (string, string, string) AutoRoute = ("Автотрассировка кабеля",
         "Поиск кратчайшего пути по графу лотков и коробов, а где их нет — ортогонально по стенам и перекрытиям. Длина: Lгор + ΔZ + запас.",
         "граф из ConnectorManager трасс, алгоритм Дейкстры, ReferenceIntersector для обхода конструкций.");
@@ -161,9 +155,7 @@ internal static class Planned
     internal static string Tip((string Title, string What, string How) info) => info.What + " (в разработке)";
 }
 
-[Transaction(TransactionMode.Manual)] public sealed class ImportTaskCommand : PlannedCommand { protected override (string, string, string) Info => Planned.ImportTask; }
 [Transaction(TransactionMode.Manual)] public sealed class IsoluxCommand : PlannedCommand { protected override (string, string, string) Info => Planned.Isolux; }
-[Transaction(TransactionMode.Manual)] public sealed class RiserCommand : PlannedCommand { protected override (string, string, string) Info => Planned.Riser; }
 [Transaction(TransactionMode.Manual)] public sealed class AutoRouteCommand : PlannedCommand { protected override (string, string, string) Info => Planned.AutoRoute; }
 [Transaction(TransactionMode.Manual)] public sealed class SpecCommand : PlannedCommand { protected override (string, string, string) Info => Planned.Spec; }
 [Transaction(TransactionMode.Manual)] public sealed class ReportCommand : PlannedCommand { protected override (string, string, string) Info => Planned.Report; }

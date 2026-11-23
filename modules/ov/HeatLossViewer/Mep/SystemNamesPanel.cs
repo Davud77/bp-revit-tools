@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
@@ -62,7 +62,7 @@ internal sealed class SystemNamesPanel : UserControl
             TextWrapping = TextWrapping.Wrap, Opacity = 0.75, Margin = new Thickness(0, 8, 0, 8),
             Text = "Тип системы подходит к правилу, если его имя совпадает с записью или оканчивается на «_запись»: «В1» подходит к ADSK_Водопровод_В1. " +
                 "Несколько типов через запятую получают общее имя (Т3, Т4). Срабатывает первое подходящее правило; без правила значение не меняется. " +
-                "Заполняются трубы, воздуховоды, детали, арматура, изоляция, приборы, оборудование и спринклеры; у оборудования с несколькими системами имена перечисляются через «; »."
+                "Заполняются трубы, воздуховоды, детали, арматура, изоляция, приборы, оборудование и спринклеры; у семейства с несколькими системами берётся первая (по порядку соединителей). Имя наследуется вложенными семействами."
         });
         grid.ItemsSource = rows;
         grid.Columns.Add(new DataGridTextColumn { Header = "Типы систем (через запятую)", Binding = new Binding(nameof(SystemRow.Types)) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }, Width = 210 });

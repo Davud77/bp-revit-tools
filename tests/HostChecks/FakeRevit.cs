@@ -9,8 +9,17 @@ namespace Autodesk.Revit.UI
     public class UIControlledApplication
     {
         public List<string> Panels { get; } = [];
-        public void CreateRibbonTab(string name) { }
-        public RibbonPanel CreateRibbonPanel(string tab, string name) { Panels.Add(name); return new(); }
+        public HashSet<string> Tabs { get; } = [];
+        public void CreateRibbonTab(string name)
+        {
+            if (!Tabs.Add(name)) throw new Autodesk.Revit.Exceptions.ArgumentException();
+        }
+        public RibbonPanel CreateRibbonPanel(string tab, string name)
+        {
+            if (!Tabs.Contains(tab)) throw new InvalidOperationException("Missing tab " + tab);
+            Panels.Add(name);
+            return new();
+        }
     }
     public class RibbonPanel { public void AddItem(PushButtonData data) { } }
     public class PushButtonData { public string AvailabilityClassName {get;set;}=""; public string ToolTip {get;set;}=""; public PushButtonData(string id,string text,string assembly,string type) { } }
@@ -22,7 +31,6 @@ namespace BotPlus.Shared
     internal static class BotPlusSettings
     {
         internal static HashSet<string> HiddenPanels { get; } = [];
-        internal const string VkTab = "BP ВК";
         internal static void Load() { }
     }
 }
@@ -54,9 +62,23 @@ namespace BotPlus.Openings { public sealed class App() : FakeModule("openings");
 namespace BotPlus.Eom { public sealed class App() : FakeModule("eom"); }
 namespace BotPlus.RT { public sealed class SettingsCommand { } }
 namespace BotPlus.RT { public sealed class MatchTagCommand { } public sealed class CopyTagCommand { } }
-namespace BotPlus.RT { public sealed class ScheduleNumberingCommand { } public sealed class ScheduleNumberingAvailable { } }
+namespace BotPlus.RT { public sealed class ScheduleNumberingCommand { } public sealed class ScheduleNumberingAvailable { }
+    internal static class ScheduleContext { public static void Attach(Autodesk.Revit.UI.UIControlledApplication app){} public static void Detach(Autodesk.Revit.UI.UIControlledApplication app){} } }
 namespace BotPlus.RT { internal static class StartupUpdates { public static void Attach(Autodesk.Revit.UI.UIControlledApplication app){} public static void Detach(Autodesk.Revit.UI.UIControlledApplication app){} } }
 namespace BotPlus.RT { public sealed class HostAvailable{} }
 namespace BotPlus.RT { public sealed class OpenViewCommand { } public sealed class OpenViewAvailable { } public sealed class ViewRangeCommand { } public sealed class ViewRangeAvailable { }
     internal static class ViewportContext { public const string ButtonName = "BotPlusOpenView"; public static void Attach(Autodesk.Revit.UI.UIControlledApplication app){} public static void Detach(Autodesk.Revit.UI.UIControlledApplication app){} } }
-namespace BotPlus.RT { public sealed class UpdateCommand { } internal static class RibbonStyle { public static void Apply(Autodesk.Revit.UI.UIControlledApplication app){} } }
+namespace BotPlus.RT
+{
+    internal sealed class RibbonNavigation : IDisposable
+    {
+        internal RibbonNavigation(Autodesk.Revit.UI.UIControlledApplication app)
+        {
+            app.CreateRibbonPanel("BotPlus RT", "BotPlus");
+            app.CreateRibbonPanel("BotPlus RT", "Избранное");
+        }
+        internal void CapturePanels(Autodesk.Revit.UI.UIControlledApplication app, string? module = null) { }
+        internal void Complete() { }
+        public void Dispose() { }
+    }
+}

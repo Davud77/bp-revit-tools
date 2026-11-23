@@ -6,6 +6,62 @@ static bool Near(double a, double b, double eps = 1e-6) => Math.Abs(a - b) <= ep
 var s = new EomSettings();
 var catalog = EomCatalog.Demo();
 
+if (OperatingSystem.IsWindows())
+{
+    var root = Directory.CreateTempSubdirectory("BotPlus-EomChecks-");
+    try
+    {
+        var nested = root.CreateSubdirectory("Семейства");
+        var example = Path.Combine(AppContext.BaseDirectory, "Fixtures", "AC2R_RectangularBeam.rfa");
+        var primary = Path.Combine(nested.FullName, "Балка.RFA");
+        File.Copy(example, primary);
+        File.Copy(example, Path.Combine(nested.FullName, "Балка.0001.rfa"));
+        File.WriteAllText(Path.Combine(nested.FullName, "Сломанный.rfa"), "not a Revit family");
+        var empty = new EquipmentLibrary("", []);
+        var categoryNames = new Dictionary<string, int> { ["Каркас несущий"] = -2001320 };
+        var scanned = EquipmentLibrary.ReadFolder(root.FullName, empty, categoryNames, (_, _) => { }, default);
+        var family = scanned.Library.Entries.Single();
+        Check(scanned.Skipped == 1, "one corrupt file skipped, backup omitted");
+        Check(family.Name == "Балка" && family.CategoryName == "Каркас несущий" && family.Category == -2001320,
+            "localized RFA category and filename fallback for an internal GUID");
+        Check(family.File == Path.Combine("Семейства", "Балка.RFA") && family.Preview is { Length: > 8 } &&
+            family.Preview.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }), "PNG and relative path stored");
+        var unknown = EquipmentLibrary.ReadFolder(root.FullName, empty, new Dictionary<string, int>(), (_, _) => { }, default);
+        Check(unknown.Library.Entries.Length == 0 && unknown.Skipped == 2,
+            "unmapped categories are skipped together with damaged files");
+        var cached = EquipmentLibrary.ReadFolder(root.FullName, scanned.Library, new Dictionary<string, int>(), (_, _) => { }, default);
+        Check(ReferenceEquals(family, cached.Library.Entries.Single()), "reuse metadata only for unchanged files");
+        File.SetLastWriteTimeUtc(primary, family.Modified.AddMinutes(5));
+        var changed = EquipmentLibrary.ReadFolder(root.FullName, scanned.Library, new Dictionary<string, int>(), (_, _) => { }, default);
+        Check(changed.Library.Entries.Length == 0 && changed.Skipped == 2,
+            "a changed RFA invalidates its indexed category and thumbnail");
+        Console.WriteLine("PASS UGO index: background metadata, PNG, backup exclusion, skipped files and cache invalidation");
+    }
+    finally { root.Delete(recursive: true); }
+}
+
+const double coincidenceMm = 0.03;
+const double minimumMm = 3;
+Check(!ConduitRoutingRule.OfferAlignment(0, 50, coincidenceMm), "an axial connection needs no move");
+Check(ConduitRoutingRule.OfferAlignment(50, 50, coincidenceMm), "alignment includes exactly 50 mm");
+Check(!ConduitRoutingRule.OfferAlignment(50.01, 50, coincidenceMm), "larger offset leaves the device in place");
+Check(!ConduitRoutingRule.OfferAlignment(20, 0, coincidenceMm), "zero alignment threshold disables the offer");
+Check(Near(ConduitRoutingRule.ParallelLead(1000, 0, coincidenceMm, minimumMm), 0), "collinear connections are straight");
+Check(Near(ConduitRoutingRule.ParallelLead(1000, 125, coincidenceMm, minimumMm), 500), "zigzag corners split the forward run");
+foreach (var (forward, offset) in new[] { (-100.0, 80.0), (5.0, 80.0), (100.0, 2.0) })
+{
+    bool rejectedRoute = false;
+    try { ConduitRoutingRule.ParallelLead(forward, offset, coincidenceMm, minimumMm); }
+    catch (InvalidOperationException) { rejectedRoute = true; }
+    Check(rejectedRoute, "reversed or short zigzag must be rejected");
+}
+var existingRouteSettings = EomSettings.FromJson("{\"LightingFixtureHeightMm\":3000}");
+Check(existingRouteSettings.RouteAlignmentMm == 50 && existingRouteSettings.SwitchBoxOffsetMm == 100
+    && existingRouteSettings.LightingFixtureHeightMm == 3000, "old RVT settings gain routing defaults");
+var customRouteSettings = s with { RouteAlignmentMm = 12.5, SwitchBoxOffsetMm = 150 };
+Check(EomSettings.FromJson(customRouteSettings.ToJson()) == customRouteSettings, "routing settings round trip");
+Console.WriteLine("PASS lighting conduit geometry thresholds and settings");
+
 // Токи: 2,3 кВт при cosφ = 1 на 230 В — 10 А; 3ф 10 кВт при cosφ 0,9 — 16,04 А.
 Check(Near(EomCalc.Current(2300, 1, 1, s), 10), "single-phase current");
 Check(Near(EomCalc.Current(10000, 0.9, 3, s), 10000 / (Math.Sqrt(3) * 400 * 0.9)), "three-phase current");
@@ -97,6 +153,19 @@ Check(EomSettings.Mark(s.GroupMask, "ЩР1", "3") == "ЩР1.Гр3" && EomSetting
 var restored = EomSettings.FromJson((s with { CableReserve = 15, GroupMask = "Гр.{N}" }).ToJson());
 Check(restored.CableReserve == 15 && restored.GroupMask == "Гр.{N}", "settings round-trip");
 Check(EomSettings.FromJson("{bad").CableReserve == 10 && EomSettings.FromJson("""{"CableReserve":99}""").CableReserve == 10, "invalid settings fall back to defaults");
+var legacyHeights = EomSettings.FromJson("""{"CableReserve":15}""");
+Check(legacyHeights.CableReserve == 15 && legacyHeights.SwitchHeightMm == 1000
+    && legacyHeights.ElectricalFixtureHeightMm == 300 && legacyHeights.ElectricalEquipmentHeightMm == 1500
+    && legacyHeights.LightingFixtureHeightMm == 2700, "placement heights default in older project settings");
+var customHeights = EomSettings.FromJson((legacyHeights with
+{
+    SwitchHeightMm = 1100, ElectricalFixtureHeightMm = 0, ElectricalEquipmentHeightMm = 1400,
+    LightingFixtureHeightMm = 2600.5
+}).ToJson());
+Check(customHeights.SwitchHeightMm == 1100 && customHeights.ElectricalFixtureHeightMm == 0
+    && customHeights.ElectricalEquipmentHeightMm == 1400 && customHeights.LightingFixtureHeightMm == 2600.5,
+    "placement heights round-trip with zero and fractional offsets");
+Check(EomSettings.FromJson("""{"SwitchHeightMm":-1}""").SwitchHeightMm == 1000, "negative placement height rejected");
 Console.WriteLine("PASS marking masks and settings storage");
 
 string file = Path.Combine(Path.GetTempPath(), "eom-catalog-" + Guid.NewGuid().ToString("N") + ".json");

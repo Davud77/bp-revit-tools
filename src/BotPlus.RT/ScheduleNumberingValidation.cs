@@ -60,7 +60,32 @@ public sealed class ScheduleNumberingValidationCommand : IExternalCommand
             Assert(rows.Count == 1 && rows[0].Count == 3, "Grouped native membership");
             result = ScheduleNumbering.Apply(doc, rows, parameter, 30, null);
             Assert(result.Rows == 1 && result.Updated == 3, "Grouped numbering");
-            TaskDialog.Show("Проверка нумерации", "PASS: порядок строк, все/выделенные элементы, общая нумерация группы, откат временных данных.");
+            long extra;
+            using (var grouping = new Transaction(doc, "Hidden sort and repeated rows"))
+            {
+                grouping.Start();
+                var wall = (Wall)doc.GetElement(new ElementId(ids[1]));
+                var copy = ElementTransformUtils.CopyElement(doc, wall.Id, new XYZ(0, 50, 0)).Single();
+                extra = copy.Value;
+                var lengthField = schedule.Definition.GetFieldOrder().Select(schedule.Definition.GetField)
+                    .Single(f => f.ParameterId.Value == (long)BuiltInParameter.CURVE_ELEM_LENGTH);
+                lengthField.IsHidden = true;
+                schedule.Definition.AddSortGroupField(new ScheduleSortGroupField(lengthField.FieldId)
+                    { SortOrder = ScheduleSortOrder.Descending, ShowHeader = true, ShowFooter = true, ShowBlankLine = true });
+                if (grouping.Commit() != TransactionStatus.Committed) throw new Exception("Hidden sort fixture");
+            }
+            candidates = ScheduleNumbering.Elements(doc, schedule);
+            for (int repeat = 0; repeat < 2; repeat++)
+            {
+                rows = ScheduleNumbering.ReadRows(doc, schedule, candidates);
+                Assert(rows.Count == 3 && rows[0].SequenceEqual(new[] { ids[0] }) && rows[1].SequenceEqual(new[] { ids[2] }) &&
+                    rows[2].ToHashSet().SetEquals(new[] { ids[1], extra }), "Hidden descending sort/group membership");
+                Assert(new FilteredElementCollector(doc).OfClass(typeof(SharedParameterElement)).GetElementCount() == parameterCount &&
+                    new FilteredElementCollector(doc).OfClass(typeof(ViewSchedule)).GetElementCount() == scheduleCount &&
+                    doc.Application.SharedParametersFilename == previousFile, "Repeated probe left resources/settings");
+            }
+            Assert(schedule.Definition.GetSortGroupFields().Single().ShowHeader, "Probe changed original formatting");
+            TaskDialog.Show("Проверка нумерации", "PASS: порядок строк, все/выделенные элементы, группы, скрытая сортировка, повторное чтение и откат временных данных.");
             return Result.Succeeded;
         }
         catch (Exception error) { message = error.ToString(); return Result.Failed; }

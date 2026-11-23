@@ -10,6 +10,8 @@ foreach (var file in new[] { "modules/codex-mcp/plugin/BP.Revit.AI.dll", "module
 var app = new UIControlledApplication();
 var host = new BotPlus.RT.Application();
 if (host.OnStartup(app) != Result.Succeeded) throw new Exception("Startup failed");
+if (!app.Tabs.SetEquals(["BotPlus RT"]) || app.Panels[0] != "BotPlus")
+    throw new Exception("The host must create one ribbon tab with BotPlus at the start");
 host.OnShutdown(app);
 if (!State.Calls.SequenceEqual(new[] { "start:mcp", "start:ac2revit", "start:ov", "start:openings", "start:eom", "stop:eom", "stop:openings", "stop:ov", "stop:ac2revit", "stop:mcp" }))
     throw new Exception("Incorrect module order");
@@ -43,9 +45,9 @@ Console.WriteLine("PASS partial startup failure cleans up handlers and reports t
 
 State.Calls.Clear();
 var configuredApp = new UIControlledApplication();
-BotPlus.Shared.BotPlusSettings.HiddenPanels.UnionWith(["MCP", "Ac2Revit", "Отверстия", "ВК", "ЭОМ", "Марки", "Спецификации", "Виды"]);
+BotPlus.Shared.BotPlusSettings.HiddenPanels.UnionWith(["MCP", "Ac2Revit", "Отверстия", "ЭОМ", "Марки", "Спецификации", "Виды"]);
 if (host.OnStartup(configuredApp) != Result.Succeeded) throw new Exception("Disabled module started");
 host.OnShutdown(configuredApp);
-if (!State.Calls.SequenceEqual(new[] { "start:ov", "stop:ov" }) || !configuredApp.Panels.SequenceEqual(new[] { "Настройки" }))
-    throw new Exception("Disabled modules were started or the settings panel is missing");
-Console.WriteLine("PASS host skips disabled modules and keeps the settings panel");
+if (!State.Calls.SequenceEqual(new[] { "start:ov", "stop:ov" }) || !configuredApp.Panels.SequenceEqual(new[] { "BotPlus", "Избранное" }))
+    throw new Exception("Disabled modules were started or the host panels are missing");
+Console.WriteLine("PASS host skips disabled modules and keeps the BotPlus panel");

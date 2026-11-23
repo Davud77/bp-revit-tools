@@ -39,3 +39,9 @@ modules/ov/reference.html
 
 # Local Elproject compatibility experiment; excluded from the main source payload.
 /experiments/elpo/
+
+# Local Autodesk licensing data is private and excluded from source distribution.
+/Autodesk/
+
+# Local family-upgrade queues, captures and helpers are not product sources.
+/tools/

@@ -26,6 +26,7 @@ function Step([string]$name, [string]$directory, [scriptblock]$command) {
 Step 'Build' $root { & (Join-Path $root 'build.ps1') }
 Step 'Host lifecycle checks' $root { dotnet run --project tests\HostChecks\HostChecks.csproj -c Release }
 Step 'MEP updater rules and system tools geometry' $root { dotnet run --project tests\MepChecks\MepChecks.csproj -c Release }
+Step 'Engineering updater startup lifecycle' $root { dotnet run --project tests\EngineeringStartupChecks\EngineeringStartupChecks.csproj -c Release }
 Step 'MEP updater window' $root { dotnet run --project tests\UpdaterUiChecks\UpdaterUiChecks.csproj -c Release -- (Join-Path $root 'Выходные данные/Проверки/Апдейтер') }
 Step 'Schedule numbering policy' $root { dotnet run --project tests\ScheduleNumberingChecks\ScheduleNumberingChecks.csproj -c Release }
 Step 'Schedule numbering window' $root { dotnet run --project tests\ScheduleUiChecks\ScheduleUiChecks.csproj -c Release -- (Join-Path $root 'Выходные данные/Проверки/ScheduleNumbering') }
@@ -36,6 +37,7 @@ Step 'Update window states' $root { dotnet run --project tests\UpdateUiChecks\Up
 Step 'Opening workflow and exchange checks' $root { dotnet run --project tests\OpeningChecks\OpeningChecks.csproj -c Release }
 Step 'EOM calculations and catalog' $root { dotnet run --project tests\EomChecks\EomChecks.csproj -c Release }
 Step 'MCP approval settings' $root { dotnet run --project modules\codex-mcp\tests\ApprovalSettings.Tests\ApprovalSettings.Tests.csproj -c Release }
+Step 'MCP bridge transport and queue' $root { dotnet run --project modules\codex-mcp\tests\BridgeChecks\BridgeChecks.csproj -c Release }
 Step 'MCP tests' (Join-Path $root 'modules\codex-mcp\server') { & $Node --test test/*.test.js }
 Step 'MCP configuration tests' $root { & $Node --test installer/configure-mcp.test.mjs }
 $ac2revit = Join-Path $root 'modules\ac2revit'

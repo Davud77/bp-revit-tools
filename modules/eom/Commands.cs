@@ -133,6 +133,16 @@ public abstract class RouteCommand : EomCommand
     protected abstract PostableCommand Command { get; }
     protected override Result Run(UIDocument ui)
     {
+        PrepareWiring(ui);
+        if (Command == PostableCommand.CableTray)
+            RouteTools.StartTray(ui);
+        else
+            ui.Application.PostCommand(RevitCommandId.LookupPostableCommandId(Command));
+        return Result.Succeeded;
+    }
+
+    internal static void PrepareWiring(UIDocument ui)
+    {
         var doc = ui.Document;
         if (RouteService.Current != WiringSymbols.None)
         {
@@ -144,12 +154,14 @@ public abstract class RouteCommand : EomCommand
             if (!ready && warned.Add(doc.PathName + doc.Title))
                 new TaskDialog("BotPlus ЭОМ") { MainInstruction = "Трасса будет построена без обозначения проводки", MainContent = message }.Show();
         }
-        ui.Application.PostCommand(RevitCommandId.LookupPostableCommandId(Command));
-        return Result.Succeeded;
     }
 }
 [Transaction(TransactionMode.Manual)] public sealed class TrayCommand : RouteCommand { protected override PostableCommand Command => PostableCommand.CableTray; }
-[Transaction(TransactionMode.Manual)] public sealed class ConduitCommand : RouteCommand { protected override PostableCommand Command => PostableCommand.Conduit; }
+[Transaction(TransactionMode.Manual)] public sealed class ManualConduitCommand : RouteCommand { protected override PostableCommand Command => PostableCommand.Conduit; }
+[Transaction(TransactionMode.Manual)] public sealed class ConduitCommand : EomCommand
+{
+    protected override Result Run(UIDocument ui) => ConduitThroughLightsCommand.Route(ui);
+}
 
 /// <summary>Обозначает способ прокладки (ГОСТ 21.210) у всех лотков и коробов активного плана, перестраивает существующие обозначения.</summary>
 [Transaction(TransactionMode.Manual)]

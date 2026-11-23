@@ -25,6 +25,7 @@ public static class OpeningStage
         // Survives a native Revit crash: the marker lives next to the session's openings plan.
         var guard=new CrashGuard(CrashGuard.SessionFolder(plan),"openingCuts");
         using var process=System.Diagnostics.Process.GetCurrentProcess();process.Refresh();long initialMemory=process.PrivateMemorySize64;
+        var cutClock=System.Diagnostics.Stopwatch.StartNew();
         foreach(var record in records)
         {
             string key=record.S("sourceGuid"),cutKey=record.B("emptyOpening")?key:"opening:"+key;
@@ -146,6 +147,7 @@ public static class OpeningStage
             }
             finally{guard.Exit();foreach(var solid in owned)try{solid.Dispose();}catch(Exception){}}
         }
+        report.Add("opening-cuts-timing","Opening","notice",$"{records.Count} openings cut in {cutClock.Elapsed.TotalSeconds:0.0} s");
         report.Save(Path.Combine(folder,"cut-report.json"));
         foreach(string kind in new[]{"Door","Window"})
         {

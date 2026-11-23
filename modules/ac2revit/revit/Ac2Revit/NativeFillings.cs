@@ -24,6 +24,10 @@ public static class NativeFillings
         var symbols = new Dictionary<string, FamilySymbol>();
         var broken = new HashSet<string>();
         int n = 0;
+        ShiftedOf.Clear();
+        BuildTime.Reset(); LoadTime.Reset(); PlaceTime.Reset(); FamiliesBuilt = 0; Attempts = 0;
+        var total = System.Diagnostics.Stopwatch.StartNew();
+        try {
         foreach (var record in records)
         {
             progress?.Invoke(n++, records.Count);
@@ -40,8 +44,59 @@ public static class NativeFillings
             }
             catch (Exception ex) { report.Add(key, record.S("kind"), "notice", "Native family not built, exact IFC geometry kept: " + ex.Message); }
         }
+        } finally { CloseTemplates(); }
+        PurgeUnused(doc, index, report);
+        report.Add("native-fillings-timing", "NativeFillings", "notice",
+            $"{records.Count} fillings in {total.Elapsed.TotalSeconds:0.0} s: {FamiliesBuilt} families built in {BuildTime.Elapsed.TotalSeconds:0.0} s, loaded in {LoadTime.Elapsed.TotalSeconds:0.0} s; {Attempts} placement attempts in {PlaceTime.Elapsed.TotalSeconds:0.0} s.");
         return built;
     }
+
+    /// <summary>A family measured once and replaced by its shifted variant has no instance: remove it so the project lists only used families.</summary>
+    static void PurgeUnused(Document doc, Dictionary<string, Element> index, Report report)
+    {
+        var used = new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>().Select(i => i.Symbol.Family.Id).ToHashSet();
+        var unused = index.Where(p => p.Key.StartsWith("native-filling-family:", StringComparison.Ordinal) && p.Value is Family f && f.IsValidObject && !used.Contains(f.Id)).ToList();
+        if (unused.Count == 0) return;
+        using var transaction = new Transaction(doc, "Remove unused filling families");
+        transaction.Start();
+        doc.Delete(unused.Select(p => p.Value.Id).ToList());
+        if (transaction.Commit() == TransactionStatus.Committed) foreach (var p in unused) index.Remove(p.Key);
+        report.Add("native-fillings-purge", "NativeFillings", "notice", $"{unused.Count} measured but unused filling families removed.");
+    }
+
+    /// <summary>The point of the wall's middle plane (between its two side faces) nearest to <paramref name="center"/>, at the height of the center.</summary>
+    static XYZ OnWallMiddle(Wall wall, Line axis, XYZ center)
+    {
+        var start = axis.GetEndPoint(0); var direction = new XYZ(axis.Direction.X, axis.Direction.Y, 0).Normalize();
+        var normal = new XYZ(-direction.Y, direction.X, 0);
+        double lo = double.MaxValue, hi = double.MinValue;
+        var solids = NativeGeometry.Solids(wall);
+        try
+        {
+            foreach (var solid in solids)
+                foreach (Face face in solid.Faces)
+                    if (face is PlanarFace planar && Math.Abs(Math.Abs(planar.FaceNormal.DotProduct(normal)) - 1) < 1e-6)
+                    {
+                        double d = (planar.Origin - start).DotProduct(normal);
+                        lo = Math.Min(lo, d); hi = Math.Max(hi, d);
+                    }
+        }
+        finally { foreach (var s in solids) try { s.Dispose(); } catch (Exception) { } }
+        double middle = lo <= hi ? (lo + hi) / 2 : 0;
+        double along = (center - start).DotProduct(direction);
+        var p = start + direction * along + normal * middle;
+        return new XYZ(p.X, p.Y, center.Z);
+    }
+
+    static readonly Dictionary<string, FamilySymbol> ShiftedOf = new();
+
+    sealed class KeepLoaded : IFamilyLoadOptions
+    {
+        public bool OnFamilyFound(bool familyInUse, out bool overwriteParameterValues) { overwriteParameterValues = false; return false; }
+        public bool OnSharedFamilyFound(Family sharedFamily, bool familyInUse, out FamilySource source, out bool overwriteParameterValues) { source = FamilySource.Family; overwriteParameterValues = false; return false; }
+    }
+    static readonly System.Diagnostics.Stopwatch BuildTime = new(), LoadTime = new(), PlaceTime = new();
+    static int FamiliesBuilt, Attempts;
 
     static string? Place(Document doc, string project, string ifcSha, string folder, JsonElement record, Dictionary<string, Element> index,
         Dictionary<string, string?> templates, Dictionary<string, FamilySymbol> symbols, HashSet<string> broken, out FamilyInstance? result)
@@ -55,7 +110,10 @@ public static class NativeFillings
         var max = new XYZ(points.Max(p => p.X), points.Max(p => p.Y), points.Max(p => p.Z));
         var center = (min + max) / 2;
         double angle = Math.Atan2(axis.Direction.Y, axis.Direction.X);
-        var local = Transform.CreateRotation(XYZ.BasisZ, -angle).Multiply(Transform.CreateTranslation(center.Negate()));
+        // A hosted instance stands on the middle plane of its wall: put the family origin there, so the family is right the first time
+        // and identical openings in walls of the same build-up share one family.
+        var origin = OnWallMiddle(wall, axis, center);
+        var local = Transform.CreateRotation(XYZ.BasisZ, -angle).Multiply(Transform.CreateTranslation(origin.Negate()));
         var localPoints = points.Select(local.OfPoint).ToList();
         var styles = IfcSurfaceStyles.Read(record, faces.Count);
 
@@ -73,16 +131,21 @@ public static class NativeFillings
             {
                 string? templatePath = Template(doc.Application, kind, templates);
                 if (templatePath == null) { problemWithFamily = "Revit has no " + (kind == "Door" ? "door" : "window") + " family template"; return null; }
-                string file = Path.Combine(folder, "AC2R_" + kind + "_" + variantKey[..20] + ".rfa");
-                try { BuildFamily(doc.Application, templatePath, file, shapePoints, faces, styles, record); }
+                Document familyDocument;
+                try { BuildTime.Start(); FamiliesBuilt++; familyDocument = BuildFamily(doc.Application, templatePath, shapePoints, faces, styles, record); }
                 catch (Exception ex) { broken.Add(variantKey); problemWithFamily = ex.Message; return null; }
-                // Called both outside and inside the instance transaction.
-                using var load = doc.IsModifiable ? null : new Transaction(doc, "Load exact filling family");
-                load?.Start();
-                if (!doc.LoadFamily(file, out var family) || family == null) { if (load?.GetStatus() == TransactionStatus.Started) load.RollBack(); broken.Add(variantKey); problemWithFamily = "Revit could not load the family"; return null; }
+                finally { BuildTime.Stop(); }
+                LoadTime.Start();
+                // Loaded outside any transaction of the project (Revit requires it for a load from memory).
+                Family? family = null;
+                try { family = familyDocument.LoadFamily(doc, new KeepLoaded()); } catch (Exception ex) { problemWithFamily = "Revit could not load the family: " + ex.Message; }
+                if (family == null) { LoadTime.Stop(); broken.Add(variantKey); problemWithFamily ??= "Revit could not load the family"; return null; }
+                using var load = new Transaction(doc, "Name exact filling family");
+                load.Start();
                 SourceNames.RenameFamily(doc, family, (kind == "Door" ? "Дверь" : "Окно") + " — " + record.S("mark"));
                 Storage.Tag(family, project, familyKey, ifcSha, "");
-                load?.Commit();
+                load.Commit();
+                LoadTime.Stop();
                 index[familyKey] = family;
                 made = (FamilySymbol)doc.GetElement(family.GetFamilySymbolIds().First());
             }
@@ -97,6 +160,11 @@ public static class NativeFillings
         FamilyInstance? placed = null;
         // One attempt = one transaction. A hosted instance cannot be moved across its wall, so a measured offset is put into a shifted family (loaded outside the transaction) and the attempt is repeated.
         string? Attempt(FamilySymbol symbol, bool allowShift, out XYZ? needShift)
+        {
+            Attempts++; PlaceTime.Start();
+            try { return AttemptCore(symbol, allowShift, out needShift); } finally { PlaceTime.Stop(); }
+        }
+        string? AttemptCore(FamilySymbol symbol, bool allowShift, out XYZ? needShift)
         {
         needShift = null; XYZ? delta0 = null;
         using var transaction = new Transaction(doc, "Native " + kind + " " + record.S("sourceGuid"));
@@ -170,6 +238,12 @@ public static class NativeFillings
             return ex.Message;
         }
         }
+        // Identical bodies need the same shift: try the shifted family found for this shape first.
+        if (ShiftedOf.TryGetValue(shapeKey, out var known) && known.IsValidObject)
+        {
+            string? reuse = Attempt(known, false, out _);
+            if (reuse == null && placed != null) { result = placed; return null; }
+        }
         string? outcome = Attempt(symbol, true, out var shiftNeeded);
         if (shiftNeeded != null)
         {
@@ -177,6 +251,7 @@ public static class NativeFillings
             var shiftedSymbol = Symbol(Hash(kind, shiftedPoints, faces, styles), shiftedPoints);
             if (shiftedSymbol == null) return problemWithFamily;
             outcome = Attempt(shiftedSymbol, false, out _);
+            if (outcome == null && placed != null) ShiftedOf[shapeKey] = shiftedSymbol;
         }
         result = placed;
         return outcome;
@@ -232,20 +307,28 @@ public static class NativeFillings
         return found;
     }
 
-    static void BuildFamily(Autodesk.Revit.ApplicationServices.Application app, string template, string file, List<XYZ> points, List<List<int>> faces,
+    /// <summary>
+    /// One family document per template is kept open for the whole stage: opening a template and saving an .rfa cost seconds per family.
+    /// Each body replaces the forms of the previous one and is loaded straight from memory; the loaded family is renamed at once,
+    /// so the next load under the document's own name makes a new family.
+    /// </summary>
+    static readonly Dictionary<string, Document> OpenTemplates = new();
+    static void CloseTemplates() { foreach (var d in OpenTemplates.Values) try { d.Close(false); } catch (Exception) { } OpenTemplates.Clear(); }
+
+    static Document BuildFamily(Autodesk.Revit.ApplicationServices.Application app, string template, List<XYZ> points, List<List<int>> faces,
         (IReadOnlyList<IfcSurfaceStyles.Style> Styles, IReadOnlyList<int> Faces)? styles, JsonElement record)
     {
-        if (File.Exists(file)) File.Delete(file);
-        var family = app.NewFamilyDocument(template);
-        try
+        if (!OpenTemplates.TryGetValue(template, out var family) || !family.IsValidObject) OpenTemplates[template] = family = app.NewFamilyDocument(template);
         {
             var materials = new Dictionary<IfcSurfaceStyles.Style, ElementId>();
             if (styles != null)
             {
                 using var materialTransaction = new Transaction(family, "Surface materials");
                 materialTransaction.Start();
+                var known = new FilteredElementCollector(family).OfClass(typeof(Material)).Cast<Material>().GroupBy(m => m.Name).ToDictionary(g => g.Key, g => g.First().Id);
                 foreach (var style in styles.Value.Styles.Distinct())
                 {
+                    if (known.TryGetValue(style.MaterialName, out var reused)) { materials[style] = reused; continue; }
                     var id = Material.Create(family, style.MaterialName);
                     var material = (Material)family.GetElement(id);
                     material.Color = new Color((byte)style.R, (byte)style.G, (byte)style.B); material.Transparency = style.Transparency;
@@ -253,24 +336,31 @@ public static class NativeFillings
                 }
                 materialTransaction.Commit();
             }
-            var solids = BuildSolids(points, faces, styles, materials);
+            var solids = BuildSolids(points, faces, styles, materials, out var solidMaterials);
             using (var t = new Transaction(family, "Exact filling geometry"))
             {
                 t.Start();
                 var options = t.GetFailureHandlingOptions(); options.SetFailuresPreprocessor(new DropWarnings()); t.SetFailureHandlingOptions(options);
                 // The template's own frame, sash and cut: only the exact body remains.
                 var oldForms = new FilteredElementCollector(family).OfClass(typeof(GenericForm)).Select(e => e.Id).ToList();
+                oldForms.AddRange(new FilteredElementCollector(family).OfClass(typeof(FreeFormElement)).Select(e => e.Id));
+                oldForms = oldForms.Distinct().ToList();
                 // The template's own wall opening cut would try to cut the host again; the native cut is a separate element.
                 oldForms.AddRange(new FilteredElementCollector(family).OfClass(typeof(Opening)).Select(e => e.Id));
                 if (oldForms.Count > 0) family.Delete(oldForms);
-                foreach (var solid in solids) FreeFormElement.Create(family, solid);
+                // A family form shows one material, not the materials of its faces: give each form the material of most of its surface.
+                for (int k = 0; k < solids.Count; ++k)
+                {
+                    var form = FreeFormElement.Create(family, solids[k]);
+                    var materialParameter = form.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM);
+                    if (solidMaterials[k] != ElementId.InvalidElementId && materialParameter != null && !materialParameter.IsReadOnly) materialParameter.Set(solidMaterials[k]);
+                }
                 family.Regenerate();
                 LastFamilyContents = string.Join(", ", new FilteredElementCollector(family).WhereElementIsNotElementType().GroupBy(e => e.GetType().Name + "/" + (e.Category?.Name ?? "-")).Select(g => g.Key + "x" + g.Count()));
                 if (t.Commit() != TransactionStatus.Committed) throw new InvalidDataException("family geometry rolled back");
             }
-            family.SaveAs(file, new SaveAsOptions { OverwriteExistingFile = true });
+            return family;
         }
-        finally { family.Close(false); }
     }
 
     public static string LastFamilyContents = "";
@@ -280,12 +370,14 @@ public static class NativeFillings
     /// Solids of a filling body. Closed shells are built as they are (exact, per shell; the BRep builder takes the ones the tessellation builder
     /// refuses). A shell that is an open planar sheet (glass without thickness) becomes a plate of <see cref="SheetThickness"/>.
     /// </summary>
-    static List<Solid> BuildSolids(List<XYZ> points, List<List<int>> faces, (IReadOnlyList<IfcSurfaceStyles.Style> Styles, IReadOnlyList<int> Faces)? styles, Dictionary<IfcSurfaceStyles.Style, ElementId> materials)
+    static List<Solid> BuildSolids(List<XYZ> points, List<List<int>> faces, (IReadOnlyList<IfcSurfaceStyles.Style> Styles, IReadOnlyList<int> Faces)? styles, Dictionary<IfcSurfaceStyles.Style, ElementId> materials, out List<ElementId> solidMaterials)
     {
         ElementId MaterialOf(int face) => styles != null && styles.Value.Faces[face] >= 0 ? materials[styles.Value.Styles[styles.Value.Faces[face]]] : ElementId.InvalidElementId;
-        var solids = new List<Solid>();
+        var solids = new List<Solid>(); solidMaterials = new List<ElementId>();
+        double Area(int i) => (points[faces[i][1]] - points[faces[i][0]]).CrossProduct(points[faces[i][2]] - points[faces[i][0]]).GetLength();
         foreach (var shell in Shells(faces))
         {
+            var shellMaterial = shell.Faces.GroupBy(MaterialOf).OrderByDescending(g => g.Sum(Area)).First().Key;
             if (shell.Closed)
             {
                 try
@@ -312,10 +404,11 @@ public static class NativeFillings
                         solids.AddRange(Welded(points, faces, shell.Faces, MaterialOf));
                     }
                 }
+                while (solidMaterials.Count < solids.Count) solidMaterials.Add(shellMaterial);
                 continue;
             }
             // Open shell (glass as a surface): each triangle becomes a thin plate along its own normal.
-            foreach (int i in shell.Faces) solids.Add(Plate(points[faces[i][0]], points[faces[i][1]], points[faces[i][2]], MaterialOf(i)));
+            foreach (int i in shell.Faces) { solids.Add(Plate(points[faces[i][0]], points[faces[i][1]], points[faces[i][2]], MaterialOf(i))); solidMaterials.Add(MaterialOf(i)); }
         }
         if (solids.Count == 0) throw new InvalidDataException("the body has no solids");
         return solids;

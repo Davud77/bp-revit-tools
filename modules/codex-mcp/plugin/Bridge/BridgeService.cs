@@ -1,5 +1,7 @@
 using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Events;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -12,20 +14,24 @@ internal sealed class BridgeService
 {
     public const int Port = 37651;
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(5);
-    private const int MaxLineLength = 1024 * 1024;
-    private static readonly ConcurrentQueue<PendingRequest> Queue = new();
+    private const int MaxRequestBytes = 1024 * 1024;
+    private const int MaxClients = 64;
+    private readonly BridgeRequestQueue _queue = new(32);
+    private readonly ConcurrentDictionary<TcpClient, byte> _clients = new();
     private static BridgeService? _instance;
 
     private readonly TcpListener _listener;
     private readonly CancellationTokenSource _cancellation = new();
+    private readonly CancellationToken _stopToken;
     private readonly ExternalEvent _externalEvent;
     private readonly string _token;
 
-    private BridgeService()
+    internal BridgeService(int port = Port, string? token = null)
     {
-        _externalEvent = ExternalEvent.Create(new RevitRequestHandler());
-        _token = LoadOrCreateToken();
-        _listener = new TcpListener(IPAddress.Loopback, Port);
+        _stopToken = _cancellation.Token;
+        _token = token ?? LoadOrCreateToken();
+        _externalEvent = ExternalEvent.Create(new RevitRequestHandler(this));
+        _listener = new TcpListener(IPAddress.Loopback, port);
         try { _listener.Start(8); }
         catch
         {
@@ -48,10 +54,18 @@ internal sealed class BridgeService
         var instance = _instance;
         _instance = null;
         if (instance is null) return;
-        instance._cancellation.Cancel();
-        instance._listener.Stop();
-        instance._externalEvent.Dispose();
-        instance._cancellation.Dispose();
+        instance.Shutdown();
+    }
+
+    internal int ListeningPort => ((IPEndPoint)_listener.LocalEndpoint).Port;
+    internal void Shutdown()
+    {
+        _cancellation.Cancel();
+        _queue.Stop();
+        _listener.Stop();
+        foreach (var client in _clients.Keys) client.Dispose();
+        _externalEvent.Dispose();
+        _cancellation.Dispose();
     }
 
     private static string LoadOrCreateToken()
@@ -72,39 +86,63 @@ internal sealed class BridgeService
 
     private async Task AcceptLoopAsync()
     {
-        while (!_cancellation.IsCancellationRequested)
+        while (!_stopToken.IsCancellationRequested)
         {
             try
             {
-                var client = await _listener.AcceptTcpClientAsync(_cancellation.Token);
+                var client = await _listener.AcceptTcpClientAsync(_stopToken);
                 var endpoint = client.Client.RemoteEndPoint as IPEndPoint;
-                if (endpoint is null || !IPAddress.IsLoopback(endpoint.Address))
+                if (endpoint is null || !IPAddress.IsLoopback(endpoint.Address) || _clients.Count >= MaxClients)
                 {
                     client.Dispose();
                     continue;
                 }
-                _ = Task.Run(() => HandleClientAsync(client, _cancellation.Token));
+                _clients.TryAdd(client, 0);
+                _ = HandleClientAsync(client, _stopToken);
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
-            catch (SocketException) when (_cancellation.IsCancellationRequested) { break; }
+            catch (SocketException) when (_stopToken.IsCancellationRequested) { break; }
             catch { await Task.Delay(250); }
         }
     }
 
     private async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
     {
-        using (client)
+        // Stop may dispose a client between Accept and GetStream. Own cleanup
+        // outside stream construction as well as inside the normal exchange.
+        try { await ExchangeClientAsync(client, cancellationToken); }
+        catch (IOException) { }
+        catch (SocketException) { }
+        catch (ObjectDisposedException) { }
+        finally
+        {
+            _clients.TryRemove(client, out _);
+            client.Dispose();
+        }
+    }
+
+    private async Task ExchangeClientAsync(TcpClient client, CancellationToken cancellationToken)
+    {
         using (var stream = client.GetStream())
-        using (var reader = new StreamReader(stream, new UTF8Encoding(false), false, 4096, leaveOpen: true))
         using (var writer = new StreamWriter(stream, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true })
         {
+            PendingRequest? pending = null;
+            var requestId = "";
+            async Task SendAsync(BridgeResponse response)
+            {
+                using var sendTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                sendTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+                await writer.WriteLineAsync(JsonSerializer.Serialize(response, JsonTools.SerializerOptions).AsMemory(), sendTimeout.Token);
+            }
             try
             {
-                var line = await reader.ReadLineAsync(cancellationToken);
-                if (string.IsNullOrWhiteSpace(line) || line.Length > MaxLineLength)
+                using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                readTimeout.CancelAfter(TimeSpan.FromSeconds(10));
+                var line = await BridgeFrame.ReadAsync(stream, MaxRequestBytes, readTimeout.Token);
+                if (string.IsNullOrWhiteSpace(line))
                 {
-                    await writer.WriteLineAsync(JsonSerializer.Serialize(BridgeResponse.Failure("", "Request is empty or exceeds the 1 MB limit."), JsonTools.SerializerOptions));
+                    await SendAsync(BridgeResponse.Failure("", "Request is empty."));
                     return;
                 }
 
@@ -112,51 +150,70 @@ internal sealed class BridgeService
                 try { request = JsonSerializer.Deserialize<BridgeRequest>(line, JsonTools.SerializerOptions); }
                 catch (JsonException exception)
                 {
-                    await writer.WriteLineAsync(JsonSerializer.Serialize(BridgeResponse.Failure("", $"Invalid JSON request: {exception.Message}"), JsonTools.SerializerOptions));
+                    await SendAsync(BridgeResponse.Failure("", $"Invalid JSON request: {exception.Message}"));
                     return;
                 }
 
                 if (request is null || !TokensMatch(request.Token, _token))
                 {
-                    await writer.WriteLineAsync(JsonSerializer.Serialize(BridgeResponse.Failure(request?.Id ?? "", "Authentication failed."), JsonTools.SerializerOptions));
+                    await SendAsync(BridgeResponse.Failure(request?.Id ?? "", "Authentication failed."));
                     return;
                 }
-
-                var pending = new PendingRequest(request);
-                Queue.Enqueue(pending);
+                requestId = request.Id;
+                if (string.IsNullOrWhiteSpace(request.Id) || request.Id.Length > 128
+                    || string.IsNullOrWhiteSpace(request.Tool) || request.Tool.Length > 128
+                    || request.Arguments.ValueKind != JsonValueKind.Object)
+                {
+                    await SendAsync(BridgeResponse.Failure(request.Id, "Invalid request id, tool or arguments object."));
+                    return;
+                }
+                pending = new PendingRequest(request, RequestTimeout);
+                if (!_queue.TryEnqueue(pending))
+                {
+                    await SendAsync(BridgeResponse.Failure(request.Id, "Revit request queue is full or stopped. This request was not executed."));
+                    return;
+                }
                 var raised = _externalEvent.Raise();
                 if (raised == ExternalEventRequest.Denied)
                 {
-                    pending.Cancelled = true;
-                    await writer.WriteLineAsync(JsonSerializer.Serialize(BridgeResponse.Failure(request.Id, "Revit is not accepting external API events."), JsonTools.SerializerOptions));
+                    pending.Cancel("Revit is not accepting external API events.");
+                    await SendAsync(await pending.Completion);
                     return;
                 }
 
-                var deadline = DateTime.UtcNow + RequestTimeout;
-                while (!pending.Completed.Wait(TimeSpan.FromMilliseconds(200)))
+                using var poller = new PeriodicTimer(TimeSpan.FromMilliseconds(100));
+                while (!pending.Completion.IsCompleted)
                 {
+                    if (pending.Cancelled)
+                    {
+                        pending.Cancel("Revit did not respond within 5 minutes. Check the model before repeating a write; its outcome may be unknown.");
+                        break;
+                    }
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (client.Client.Poll(0, SelectMode.SelectRead) && client.Available == 0)
                     {
-                        pending.Cancelled = true;
+                        pending.Cancel("MCP client disconnected. Check the model before repeating a write.");
                         return;
                     }
-                    if (DateTime.UtcNow >= deadline)
-                    {
-                        pending.Cancelled = true;
-                        await writer.WriteLineAsync(JsonSerializer.Serialize(BridgeResponse.Failure(request.Id, "Revit did not respond within 5 minutes. The request was cancelled."), JsonTools.SerializerOptions));
-                        return;
-                    }
+                    // Completion wakes immediately; the timer only checks disconnects.
+                    // Keep one outstanding timer wait, rather than blocking a worker.
+                    var tick = poller.WaitForNextTickAsync(cancellationToken).AsTask();
+                    await Task.WhenAny(pending.Completion, tick);
+                    if (!pending.Completion.IsCompleted) await tick;
                 }
-
-                var response = pending.Response ?? BridgeResponse.Failure(request.Id, "Revit finished without a result.");
-                await writer.WriteLineAsync(JsonSerializer.Serialize(response, JsonTools.SerializerOptions));
+                await SendAsync(await pending.Completion);
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) { client.Dispose(); }
             catch (IOException) { }
             catch (Exception exception)
             {
-                try { await writer.WriteLineAsync(JsonSerializer.Serialize(BridgeResponse.Failure("", exception.Message), JsonTools.SerializerOptions)); }
+                pending?.Cancel("Bridge failed before returning a result. Check the model before repeating a write.");
+                try { await SendAsync(BridgeResponse.Failure(requestId, exception.Message)); }
                 catch { }
+            }
+            finally
+            {
+                pending?.Cancel("Bridge connection ended. Check the model before repeating a write.");
             }
         }
     }
@@ -167,31 +224,45 @@ internal sealed class BridgeService
         return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(supplied), Encoding.UTF8.GetBytes(expected));
     }
 
-    public static void ProcessPending(UIApplication application)
+    public static void OnIdling(object? sender, IdlingEventArgs args)
     {
-        while (Queue.TryDequeue(out var pending))
+        _instance?.SchedulePending();
+    }
+
+    internal void SchedulePending()
+    {
+        if (_queue.HasPending && !_stopToken.IsCancellationRequested) _externalEvent.Raise();
+    }
+
+    public void ProcessPending(UIApplication application)
+    {
+        var elapsed = Stopwatch.StartNew();
+        var processed = 0;
+        // Yield between operations. An individual Revit API call remains atomic and
+        // cannot be preempted; Idling schedules the next bounded portion.
+        while (!_stopToken.IsCancellationRequested && processed < 4 && elapsed.ElapsedMilliseconds < 100
+            && _queue.TryDequeue(out var pending))
         {
-            if (pending.Cancelled) { pending.Completed.Set(); continue; }
+            processed++;
             try
             {
-                if (pending.Cancelled)
+                if (pending!.Cancelled)
                 {
-                    pending.Response = BridgeResponse.Failure(pending.Request.Id, "The MCP client cancelled the request before Revit started it.");
+                    pending.Cancel("The MCP client cancelled the request before Revit started it.");
                     continue;
                 }
-                pending.Response = RevitTools.Execute(application, pending.Request, () => pending.Cancelled);
+                pending.Complete(RevitTools.Execute(application, pending.Request, () => pending.Cancelled || _stopToken.IsCancellationRequested));
             }
             catch (Exception exception)
             {
-                pending.Response = BridgeResponse.Failure(pending.Request.Id, exception.Message);
+                pending!.Complete(BridgeResponse.Failure(pending.Request.Id, exception.Message));
             }
-            finally { pending.Completed.Set(); }
         }
     }
 }
 
-internal sealed class RevitRequestHandler : IExternalEventHandler
+internal sealed class RevitRequestHandler(BridgeService service) : IExternalEventHandler
 {
-    public void Execute(UIApplication application) => BridgeService.ProcessPending(application);
+    public void Execute(UIApplication application) => service.ProcessPending(application);
     public string GetName() => "BP.Revit.AI local MCP bridge";
 }

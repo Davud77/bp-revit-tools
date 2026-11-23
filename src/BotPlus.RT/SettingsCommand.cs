@@ -19,7 +19,7 @@ public sealed class SettingsCommand : IExternalCommand
         try
         {
             BotPlusSettings.Save(window.ThemeMode, window.HiddenPanels);
-            RibbonStyle.ApplyVisibility(RibbonStyle.Panels(data.Application.GetRibbonPanels));
+            RibbonNavigation.Current?.RefreshVisibility();
         }
         catch (Exception error) { message = "Не удалось сохранить настройки: " + error.Message; return Result.Failed; }
         return Result.Succeeded;

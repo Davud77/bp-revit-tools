@@ -7,6 +7,8 @@
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/ReserveWindow.cs" Link="ReserveWindow.cs" />
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/InsulationRules.cs" Link="InsulationRules.cs" />
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/InsulationWindow.cs" Link="InsulationWindow.cs" />
+    <Compile Include="../../modules/ov/HeatLossViewer/Mep/RiserNumberingPolicy.cs" Link="RiserNumberingPolicy.cs" />
+    <Compile Include="../../modules/ov/HeatLossViewer/Mep/RiserNumberingWindow.cs" Link="RiserNumberingWindow.cs" />
     <Compile Include="../../src/BotPlus.RT/MepIcons.cs" Link="MepIcons.cs" />
     <Compile Include="../../src/Shared/BotPlusUi.cs" Link="BotPlusUi.cs" />
   </ItemGroup>
