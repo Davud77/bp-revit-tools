@@ -193,17 +193,18 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
         var targetAxis = IsRiser(source) ? Nearest(FreePorts(target, null), targetHit, inPlan).FirstOrDefault()?.Axis : null;
         var from = CandidatePorts(source, sourceHit, sourcePortId, targetAnchor, inPlan, targetAnchor.Z, targetAxis);
         var toward = from.FirstOrDefault()?.Point ?? sourceHit ?? targetHit;
-        var to = switchBox == null ? CandidatePorts(target, targetHit, targetPortId, toward, inPlan, toward.Z, from.FirstOrDefault()?.Axis) : [];
+        bool targetTap = switchBox == null && inPlan && targetPortId == null && target is Conduit && !IsRiser(target);
+        var to = switchBox == null && !targetTap ? CandidatePorts(target, targetHit, targetPortId, toward, inPlan, toward.Z, from.FirstOrDefault()?.Axis) : [];
         var sourcePorts = from;
         var targetPorts = to;
         bool sourceBox = sourcePortId == null && sourcePorts.Length == 0 && IsLight(source) && Ports(source).Length == 0;
         if (sourcePorts.Length == 0 && !sourceBox)
             throw new InvalidOperationException(PortMessage(source, diameter, from));
         bool targetBox = switchBox != null || !branch && IsLight(target) && Ports(target).Length == 0;
-        if (targetPorts.Length == 0 && !targetBox)
+        if (targetPorts.Length == 0 && !targetBox && !targetTap)
             throw new InvalidOperationException(PortMessage(target, diameter ?? sourcePorts.FirstOrDefault()?.Diameter, to));
 
-        var destination = switchBox ?? (targetBox ? FixturePoint((FamilyInstance)target) : targetPorts[0].Point);
+        var destination = switchBox ?? (targetBox ? FixturePoint((FamilyInstance)target) : targetTap ? targetAnchor : targetPorts[0].Point);
         if (source is Conduit main && sourceHit != null && sourcePortId == null && !IsRiser(main))
             sourcePorts = TapPorts(main, sourceHit, destination, inPlan);
         if (sourceBox)
@@ -230,6 +231,12 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
             if (!targetBox)
             {
                 var ends = targetPorts;
+                if (targetTap && target is Conduit targetMain)
+                {
+                    var hit = SnapTapToNormal(targetMain, targetHit, start.Point, start.Axis, alignment);
+                    try { ends = TapPorts(targetMain, hit, start.Point, true); }
+                    catch (InvalidOperationException) { return []; }
+                }
                 if (IsRiser(target) && inPlan && targetPortId == null)
                 {
                     try { ends = CandidatePorts(target, targetHit, null, start.Point, true, start.Point.Z, start.Axis); }

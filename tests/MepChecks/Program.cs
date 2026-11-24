@@ -111,7 +111,8 @@ migratedGroups.EnsureConditionalGroups();
 foreach (var old in migratedGroups.Rules)
 {
     var resolved = migratedGroups.ResolveConditionals(old.Category, old.TypeMark, _ => null);
-    Check(resolved.First(r => r.NameEnabled).Parts.Select(p => p.Parameter).SequenceEqual(old.Parts.Select(p => p.Parameter)), "Legacy name formula retained");
+    if (old.NameEnabled)
+        Check(resolved.First(r => r.NameEnabled).Parts.Select(p => p.Parameter).SequenceEqual(old.Parts.Select(p => p.Parameter)), "Legacy name formula retained");
     Check(resolved.First(r => r.QuantityEnabled).QuantitySource == old.QuantitySource, "Legacy quantity formula retained");
 }
 Check(migratedGroups.ResolveConditionals("OST_PipeCurves", "Неизвестная", _ => null).Count == 0, "Migration preserves coverage; unmatched old marks stay untouched");
@@ -145,7 +146,9 @@ Check(!afterDelete.ConditionalGroups.Any(g => g.Category == "OST_PipeCurves") &&
 Console.WriteLine("PASS requested pipe defaults and persistent rule deletion");
 
 var enabledDefaults = new EngineeringRuleSet(); enabledDefaults.PrepareDefaults();
-Check(enabledDefaults.ConditionalGroups.Count == 20 && enabledDefaults.ConditionalGroups.All(g => g.IsActive) && enabledDefaults.SystemNames.Enabled, "All ten default categories and system names enabled");
+Check(enabledDefaults.ConditionalGroups.Count == 19 && enabledDefaults.ConditionalGroups.All(g => g.IsActive)
+    && enabledDefaults.ConditionalGroups.Where(g => g.Category == "OST_PipeInsulations").Single().IsQuantity
+    && enabledDefaults.SystemNames.Enabled, "Defaults enable all quantity categories, supported names and system names");
 enabledDefaults.ValidateConditionalGroups();
 foreach (var group in enabledDefaults.ConditionalGroups)
     Check(group.Conditions.Select(c => c.Formula).Append(group.Otherwise).All(f => group.IsQuantity ? f.QuantityEnabled : f.NameEnabled), "Every default condition and fallback enabled");
@@ -428,7 +431,16 @@ Check(ins.Resolve(null, "Труба PP-R Ø25") is null && ins.Resolve("ADSK_К�
 ins.Put("ADSK_Водопровод_В1", "Труба PP-R Ø25", null, 0);
 Check(ins.Rules.Count == 2 && ins.Get("ADSK_Водопровод_В1", "Труба PP-R Ø25") is null, "Row without type removed");
 var insCopy = InsulationSettings.FromJson(ins.ToJson());
-Check(insCopy.Rules.Count == 2 && insCopy.Auto && insCopy.Fittings && insCopy.Resolve("ADSK_Водопровод_Т3", "Труба стальная Ø20")!.ThicknessMm == 19, "Insulation settings round trip");
+Check(insCopy.Rules.Count == 2 && insCopy.Auto && insCopy.Categories == (InsulationCategories.Pipes | InsulationCategories.Fittings)
+    && insCopy.Resolve("ADSK_Водопровод_Т3", "Труба стальная Ø20")!.ThicknessMm == 19, "Insulation settings round trip and default categories");
+Check(InsulationSettings.FromJson("""{"Version":1,"Fittings":false}""").Categories == InsulationCategories.Pipes
+    && InsulationSettings.FromJson("""{"Version":1,"Fittings":true}""").Categories ==
+        (InsulationCategories.Pipes | InsulationCategories.Fittings | InsulationCategories.Accessories), "Legacy switches retain their previous selection");
+var removalSettings = new InsulationSettings { Categories = InsulationCategories.Accessories, PreserveManualRemovals = true };
+Check(removalSettings.Clone() is { Categories: InsulationCategories.Accessories, PreserveManualRemovals: true }
+    && InsulationPolicy.MatchesRecordedHost("original", "original")
+    && !InsulationPolicy.MatchesRecordedHost("copy", "original")
+    && !InsulationPolicy.MatchesRecordedHost("never insulated", null), "Manual removal preference persists and only the original host matches");
 Check(InsulationSettings.FromJson(null).IsEmpty && !ins.IsEmpty, "Empty settings");
 Fails(() => InsulationSettings.FromJson("{broken"), "Broken insulation settings reported");
 ins.Rules[0].ThicknessMm = 0; Fails(() => ins.Validate(), "Zero thickness rejected");
@@ -451,7 +463,18 @@ Check(defaults.Count == 7 && defaults.Select(d => (d.Category, d.TypeMark)).Dist
 var pipeDefault = defaults.First(d => d.Category == "OST_PipeCurves" && d.TypeMark is null);
 Check(EngineeringRulesPolicy.ComposeName(pipeDefault.Parts, p => p switch { "Комментарии к типоразмеру" => "Труба стальная", "Внешний диаметр" => "26,8", _ => "2,8" }) == "Труба стальная ø26,8x2,8", "Default pipe name");
 var tubes = defaults.First(d => d.TypeMark == "Трубки");
-Check(EngineeringRulesPolicy.ComposeName(tubes.Parts, p => p switch { "Комментарии к типоразмеру" => "Трубка K-Flex", "Толщина изоляции" => "13 мм", _ => "ø20" }) == "Трубка K-Flex толщиной 13 мм для трубы ø20", "Default insulation name");
+Check(!tubes.NameEnabled && tubes.QuantityEnabled, "Pipe insulation defaults only calculate quantity");
+var oldTubes = tubes.Clone();
+oldTubes.NameEnabled = true;
+oldTubes.Parts = [new() { Parameter = "Комментарии к типоразмеру" }];
+var oldInsulationRules = new EngineeringRuleSet { Rules = [oldTubes] };
+Check(oldInsulationRules.ResolveConditionals(tubes.Category, tubes.TypeMark, _ => null).Single() is { NameEnabled: false, QuantityEnabled: true },
+    "Saved pipe insulation naming no longer runs through legacy rules");
+oldInsulationRules.ConditionalGroups.Add(new() { Category = tubes.Category, Otherwise = oldTubes });
+oldInsulationRules.PrepareDefaults();
+var resolvedInsulation = oldInsulationRules.ResolveConditionals(tubes.Category, tubes.TypeMark, _ => null);
+Check(resolvedInsulation.Count > 0 && resolvedInsulation.All(r => !r.NameEnabled && r.QuantityEnabled),
+    "Saved conditional naming is skipped and quantity still runs after preparing defaults");
 Check(defaults.All(d => d.Reserve == 1 && d.Decimals == 6 && d.Rounding == QuantityRounding.Nearest) && defaults.First(d => d.TypeMark == "Гофры").QuantitySource == EngineeringRulesPolicy.CountSource
     && defaults.First(d => d.TypeMark == "Цилиндры").QuantitySource == "Объем", "Default quantities: no reserve, no rounding, count and volume sources");
 var withDefaults = new EngineeringRuleSet(); foreach (var d in defaults) withDefaults.Put(d);

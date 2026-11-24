@@ -16,14 +16,23 @@ public sealed class InsulationRule
     public string NameTemplate { get; set; } = InsulationPolicy.DefaultNameTemplate;
 }
 
-/// <summary>Настройки изоляции проекта: хранятся в RVT вместе с правилами апдейтера.</summary>
+[Flags]
+public enum InsulationCategories
+{
+    None = 0,
+    Pipes = 1,
+    Fittings = 2,
+    Accessories = 4
+}
+
+/// <summary>Настройки изоляции проекта.</summary>
 public sealed class InsulationSettings
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     /// <summary>Строить и обновлять изоляцию новых и изменённых труб автоматически.</summary>
     public bool Auto { get; set; } = true;
-    /// <summary>Фитинги и арматура получают изоляцию соединённой трубы.</summary>
-    public bool Fittings { get; set; } = true;
+    public InsulationCategories Categories { get; set; } = InsulationCategories.Pipes | InsulationCategories.Fittings;
+    public bool PreserveManualRemovals { get; set; }
     public List<InsulationRule> Rules { get; set; } = [];
 
     public bool IsEmpty => !Rules.Any(r => r.InsulationType != null);
@@ -58,7 +67,20 @@ public sealed class InsulationSettings
     public static InsulationSettings FromJson(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return new InsulationSettings();
-        try { return JsonSerializer.Deserialize<InsulationSettings>(json) ?? new InsulationSettings(); }
+        try
+        {
+            var settings = JsonSerializer.Deserialize<InsulationSettings>(json) ?? new InsulationSettings();
+            using var source = JsonDocument.Parse(json);
+            if (source.RootElement.ValueKind == JsonValueKind.Object &&
+                (!source.RootElement.TryGetProperty(nameof(Version), out _) || settings.Version == 1))
+            {
+                settings.Categories = InsulationCategories.Pipes;
+                if (!source.RootElement.TryGetProperty("Fittings", out var fittings) || fittings.ValueKind != JsonValueKind.False)
+                    settings.Categories |= InsulationCategories.Fittings | InsulationCategories.Accessories;
+                settings.Version = 2;
+            }
+            return settings;
+        }
         catch (JsonException) { throw new InvalidOperationException("Повреждены настройки изоляции проекта."); }
     }
 
@@ -69,6 +91,9 @@ public enum InsulationAction { None, Create, Update, Keep }
 
 public static class InsulationPolicy
 {
+    internal static bool MatchesRecordedHost(string host, string? recordedHost) =>
+        string.Equals(host, recordedHost, StringComparison.Ordinal);
+
     public const double DefaultThicknessMm = 13;
     public const string DiameterToken = "{Ø}";
     public const string DefaultNameTemplate = "Трубная изоляция для ø" + DiameterToken;

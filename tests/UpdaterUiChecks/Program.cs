@@ -229,12 +229,29 @@ internal static class Program
             BotPlusTheme.Override = dark;
             var stored = new InsulationSettings();
             stored.Put("ADSK_Водопровод_Т3", "Труба стальная водогазопроводная Ø20х2,8", "K-Flex ST 13", 13);
-            var insulation = new InsulationWindow(new FakeInsulationModel(), stored.Clone(), ["ADSK_Водопровод_Т3"]) { ShowActivated = false, ShowInTaskbar = false };
+            var insulation = new InsulationWindow(new FakeInsulationModel(), stored.Clone(), ["ADSK_Водопровод_Т3"], insulationCount: 12) { ShowActivated = false, ShowInTaskbar = false };
             var warnings = new List<string>(); insulation.Warn = warnings.Add;
             insulation.Show(); insulation.UpdateLayout();
+            Check(All<Button>(insulation).Single(b => Equals(b.Content, "Удалить всю изоляцию…")).IsEnabled && !insulation.DeleteAllRequested,
+                "Bulk removal is available when the project has insulation and awaits confirmation");
             Check(insulation.Rows.Count == 3 && insulation.Rows[0].Type == "K-Flex ST 13" && insulation.Rows[0].Insulated == "4 из 12" && insulation.Rows[1].Type == InsulationPolicy.NoInsulation, "Pipes of the system with stored rule");
             Check(insulation.Selected.SequenceEqual(["ADSK_Водопровод_Т3"]), "Starts on the selected pipes' systems");
             Check(insulation.Rows[0].InsulationName == InsulationPolicy.DefaultNameTemplate && insulation.Title == "Менеджер изоляций", "Default insulation name template, window title");
+            var insulationGrid = All<DataGrid>(insulation).Single();
+            var rowType = All<ComboBox>(insulationGrid).First(box => ReferenceEquals(box.DataContext, insulation.Rows[0]));
+            Check(rowType.IsEnabled && Equals(rowType.SelectedItem, "K-Flex ST 13"),
+                "Insulation type is an enabled dropdown in the displayed cell");
+            var copied = new InsulationRow();
+            foreach (var column in insulationGrid.Columns.Skip(4)) insulation.Fill(column, insulation.Rows[0], [copied]);
+            Check(copied.Type == insulation.Rows[0].Type && copied.Thickness == insulation.Rows[0].Thickness
+                && copied.InsulationName == insulation.Rows[0].InsulationName && copied.Edited, "Fill handle copies type, thickness and name into editable rows");
+            var categoryMenu = All<Button>(insulation).Single(b => Equals(b.Content, "Что изолировать ▾")).ContextMenu;
+            var categoryItems = categoryMenu.Items.OfType<MenuItem>().ToArray();
+            Check(categoryItems.Select(item => item.IsChecked).SequenceEqual([true, true, false])
+                && categoryItems.All(item => item.StaysOpenOnClick), "Category dropdown defaults to pipes and fittings and supports multiple selections");
+            categoryItems[1].IsChecked = false;
+            categoryItems[2].IsChecked = true;
+            All<CheckBox>(insulation).Single(b => Equals(b.Content, "Не восстанавливать изоляцию, снятую вручную")).IsChecked = true;
             insulation.Rows[0].InsulationName = "Изоляция K-Flex ø{Ø}";
             insulation.SelectSystems("ADSK_Водопровод_Т3", "ADSK_Водопровод_В1"); insulation.UpdateLayout();
             Check(insulation.Rows.Count == 4 && insulation.Rows.First(r => r.Name.StartsWith("Труба PP-R PN20 Ø25")).Count == 25, "Several systems: pipes merged by name");
@@ -259,6 +276,7 @@ internal static class Program
             insulation.SelectSystem("");
             Check(insulation.Rows.Count == 4 && insulation.Selected.SequenceEqual([""]), "«Все системы» lists every pipe of the project");
             Check(insulation.Accept() && insulation.Result is { } saved
+                && saved.Categories == (InsulationCategories.Pipes | InsulationCategories.Accessories) && saved.PreserveManualRemovals
                 && saved.Resolve("ADSK_Водопровод_Т3", "Труба стальная водогазопроводная Ø20х2,8")!.InsulationType == "Energoflex Super 9"
                 && saved.Resolve("ADSK_Водопровод_В1", "Труба PP-R PN20 Ø25")!.ThicknessMm == 19
                 && saved.Resolve("ADSK_Водопровод_Т3", "Труба PP-R PN20 Ø25")!.ThicknessMm == 9
@@ -315,6 +333,8 @@ internal static class Program
                 Check(entries.SequenceEqual(entries.OrderBy(s => s.Target, StringComparer.CurrentCultureIgnoreCase).ThenBy(s => s.CategoryLabel, StringComparer.CurrentCultureIgnoreCase)), "Rules sorted by target then category, independent of configured dot: " + string.Join(" | ", entries.Select(s => s.Target + ":" + s.CategoryLabel)));
             }
             CheckOrder();
+            Check(navigation.Items.Cast<ScopeChoice>().Where(s => s.Category == "OST_PipeInsulations").Single().IsQuantity
+                && !manager.CreateRule("OST_PipeInsulations", false, "Комментарии"), "Pipe insulation has quantity rules only");
             Check(new[] { "OST_DuctFitting", "OST_PipeFitting" }.All(c => navigation.Items.Cast<ScopeChoice>().Count(s => s.Category == c) == 2), "Both fitting categories offered even without model samples");
             Check(All<ComboBox>(manager).Any(c => c.IsVisible && c.SelectedItem as string == "Комментарии к типоразмеру"), "Requested pipe criterion configured on opening");
             var pipeParts = All<DataGrid>(manager).Single(g => g.IsVisible).Items.Cast<PartRow>().ToList();

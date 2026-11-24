@@ -248,7 +248,7 @@ public sealed partial class ConduitThroughLightsCommand
 
                 var frame = new Rect(ToScreen(body.Footprint.TopLeft), ToScreen(body.Footprint.BottomRight));
                 frame.Inflate(3, 3);
-                var marker = marked?.Point ?? tap ?? leg?.ConnectorPoint ?? port?.Point ?? body.BoxPoint;
+                var marker = marked?.Point ?? leg?.ConnectorPoint ?? tap ?? port?.Point ?? body.BoxPoint;
                 var conduitAxis = body.Axis is { } line
                     ? new[] { ToScreen(Project(line.GetEndPoint(0))), ToScreen(Project(line.GetEndPoint(1))) } : null;
                 overlay.Draw(frame, body.Ports.Select(port => ToScreen(Project(port.Point))).ToArray(),

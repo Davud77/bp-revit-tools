@@ -80,6 +80,7 @@ public sealed partial class ConduitThroughLightsCommand
     {
         var doc = ui.Document;
         var minimum = FreeMinimum(doc);
+        var alignment = Feet(EomStore.Settings(doc).RouteAlignmentMm);
         var diameter = start.Diameter!.Value;
         var bends = CheckFreeBends(doc, type, level, elbowType, start);
         var angles = bends.Select(bend => bend.Angle).ToArray();
@@ -96,6 +97,8 @@ public sealed partial class ConduitThroughLightsCommand
         Port[] Ends(Element element, XYZ hit, int? marker)
         {
             var from = vertices.Count == 0 ? start.Point : vertices[^1];
+            if (element is Conduit main && marker == null)
+                hit = SnapTapToNormal(main, hit, from, FreeDirection(start, vertices), alignment);
             var candidates = CandidatePorts(element, hit, marker, from, true, start.Point.Z);
             if (IsRiser(element) && vertices.Count > 0 && marker == null)
             {

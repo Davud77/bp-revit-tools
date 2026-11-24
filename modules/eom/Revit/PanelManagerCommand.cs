@@ -17,7 +17,8 @@ public sealed class PanelManagerCommand : EomCommand
 {
     sealed record PanelRow(PanelInfo Panel, string Label, string Floor, double Elevation, string Room);
     sealed record GroupRow(CircuitInfo Circuit, string Number, string Load, string Power, string Demand, string Apparent, string Current, string Voltage, string Leakage, string Phase,
-        string Poles, string Length, string Breaker, string Cable, string Drop, string Status);
+        string Poles, string Length, string Breaker, string Cable, string Drop, string Status,
+        bool Reserve, string Cos, string ModelBreaker, string SelectedBreaker, string ModelCable, string SelectedCable);
 
     protected override Result Run(UIDocument ui)
     {
@@ -26,15 +27,8 @@ public sealed class PanelManagerCommand : EomCommand
         var catalog = EomCatalog.Load();
         var links = new FilteredElementCollector(doc).OfClass(typeof(RevitLinkInstance)).Cast<RevitLinkInstance>()
             .Select(link => (Document: link.GetLinkDocument(), Inverse: link.GetTotalTransform().Inverse)).Where(x => x.Document != null).ToList();
-        PanelRow Locate(PanelInfo panel)
+        (Autodesk.Revit.DB.Architecture.Room? Room, Transform? Transform) LocateRoom(FamilyInstance instance, XYZ? point)
         {
-            var instance = (FamilyInstance)doc.GetElement(panel.Id);
-            var point = Network.Point(instance);
-            var level = doc.GetElement(instance.LevelId) as Level;
-            if (level == null && instance.get_Parameter(BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM) is { StorageType: StorageType.ElementId } p)
-                level = doc.GetElement(p.AsElementId()) as Level;
-            if (level == null && instance.Host is { } host && host.Document.Equals(doc))
-                level = host as Level ?? doc.GetElement(host.LevelId) as Level;
             var room = instance.Room;
             Transform? roomTransform = null;
             if (room == null && point != null)
@@ -47,6 +41,17 @@ public sealed class PanelManagerCommand : EomCommand
                     if (room != null) roomTransform = link.Inverse.Inverse;
                 }
             }
+            return (room, roomTransform);
+        }
+        PanelRow Locate(PanelInfo panel)
+        {
+            var instance = (FamilyInstance)doc.GetElement(panel.Id);
+            var level = doc.GetElement(instance.LevelId) as Level;
+            if (level == null && instance.get_Parameter(BuiltInParameter.INSTANCE_SCHEDULE_ONLY_LEVEL_PARAM) is { StorageType: StorageType.ElementId } p)
+                level = doc.GetElement(p.AsElementId()) as Level;
+            if (level == null && instance.Host is { } host && host.Document.Equals(doc))
+                level = host as Level ?? doc.GetElement(host.LevelId) as Level;
+            var (room, roomTransform) = LocateRoom(instance, Network.Point(instance));
             if (level == null && room?.Document.Equals(doc) == true) level = room.Level;
             var roomLabel = room == null ? "Без помещения" : $"{room.Number} {room.get_Parameter(BuiltInParameter.ROOM_NAME)?.AsString() ?? room.Name}".Trim();
             string? floorName = level?.Name;
@@ -84,15 +89,18 @@ public sealed class PanelManagerCommand : EomCommand
             double? volts = Value(element, BuiltInParameter.RBS_ELEC_VOLTAGE, UnitTypeId.Volts);
             bool reserve = element is ElectricalSystem { CircuitType: CircuitType.Spare };
             var saved = EomStore.CircuitChoice(element);
-            string breaker = saved?.Breaker ?? (c.RatingA > 0 ? $"{c.RatingA:0.##} А" : "—");
-            string cable = saved?.Cable ?? "—";
-            if (!reserve && calculation.Breaker is { } recommended) breaker += $" → {recommended.Name}";
-            if (!reserve && calculation.Cable is { } recommendation)
-                cable += $" → {(calculation.CableCount > 1 ? $"{calculation.CableCount} × " : "")}{recommendation.Name}";
+            string modelBreaker = saved?.Breaker ?? (c.RatingA > 0 ? $"{c.RatingA:0.##} А" : "—");
+            string modelCable = saved?.Cable ?? "—";
+            string selectedBreaker = reserve ? "—" : calculation.Breaker?.Name ?? "—";
+            string selectedCable = !reserve && calculation.Cable is { } recommendation
+                ? $"{(calculation.CableCount > 1 ? $"{calculation.CableCount} × " : "")}{recommendation.Name}" : "—";
+            string breaker = selectedBreaker == "—" ? modelBreaker : $"{modelBreaker} → {selectedBreaker}";
+            string cable = selectedCable == "—" ? modelCable : $"{modelCable} → {selectedCable}";
             return new(c, EomSettings.Mark(settings.GroupMask, input.Panel, input.Number), reserve ? "Резерв" : input.Name,
                 Format(calculation.Installed), Format(calculation.Demand), Format(calculation.Apparent), Format(calculation.Current), Format(volts),
                 calculation.Length > 0 && !reserve ? Format(calculation.Leakage) : "—", phase, input.Poles.ToString(),
-                calculation.Length > 0 ? Format(calculation.Length) : "—", breaker, cable, Format(calculation.Drop), reserve ? "Резерв Revit" : calculation.Note);
+                calculation.Length > 0 ? Format(calculation.Length) : "—", breaker, cable, Format(calculation.Drop), reserve ? "Резерв Revit" : calculation.Note,
+                reserve, Format(input.PowerFactor is > 0 and <= 1 ? input.PowerFactor : null), modelBreaker, selectedBreaker, modelCable, selectedCable);
         }
 
         var window = EomUi.Window("Менеджер щитов", 1450, 790);
@@ -111,6 +119,7 @@ public sealed class PanelManagerCommand : EomCommand
         var demandByPanel = new Dictionary<ElementId, double>();
         var demandByCircuit = new Dictionary<ElementId, double>();
         ElementId? activePanel = null;
+        PanelDiagram.Summary? diagramSummary = null;
         var groups = new DataGrid { AutoGenerateColumns = false, IsReadOnly = true, CanUserAddRows = false, SelectionMode = DataGridSelectionMode.Single };
         void Column(string label, string property, int width) => groups.Columns.Add(new DataGridTextColumn { Header = label, Binding = new Binding(property), Width = width });
         Column("Группа", nameof(GroupRow.Number), 100);
@@ -130,6 +139,8 @@ public sealed class PanelManagerCommand : EomCommand
         Column("Примечание", nameof(GroupRow.Status), 300);
         var devices = new ListBox { Height = 115, DisplayMemberPath = nameof(DeviceInfo.Name) };
         var deviceLabel = EomUi.Heading("Потребители группы");
+        var deleteReserve = EomUi.Button("Удалить резерв…", RemoveReserve);
+        deleteReserve.IsEnabled = false;
 
         PanelInfo SelectedPanel() => (list.SelectedItem as PanelRow)?.Panel ?? throw new InvalidOperationException("Выберите щит.");
         void RefreshPanel()
@@ -137,7 +148,7 @@ public sealed class PanelManagerCommand : EomCommand
             if (list.SelectedItem is not PanelRow row)
             {
                 panelName.Text = panels.Count == 0 ? "Щиты в проекте не найдены" : "Нет щитов по запросу";
-                metrics.Text = ""; groups.ItemsSource = null; return;
+                metrics.Text = ""; groups.ItemsSource = null; diagramSummary = null; return;
             }
             var p = row.Panel;
             var element = doc.GetElement(p.Id);
@@ -205,6 +216,13 @@ public sealed class PanelManagerCommand : EomCommand
             var inputBreaker = inletPoles is 1 or 3 && withoutPhase == 0 && invalidInputs == 0 && installed > 0
                 && inletPoles is { } poles
                 ? PanelCalculation.SelectBreaker(inlet, poles, catalog) : null;
+            var distribution = (element as FamilyInstance)?.MEPModel is ElectricalEquipment equipment
+                ? equipment.DistributionSystem : null;
+            var project = doc.ProjectInformation;
+            diagramSummary = new(p.Name, $"{row.Floor} · {row.Room}", Feed(p), inputBreaker?.Name ?? "—",
+                [$"Pу = {Format(installed)} кВт", $"Pр = {Format(demand)} кВт", $"Sр = {Format(apparent)} кВА"],
+                Enumerable.Range(0, phaseCount == 1 ? 1 : 3).Select(i => $"Iр L{i + 1} = {Format(phase[i])} А").ToArray(),
+                phaseCount ?? 0, distribution?.NumWires > phaseCount, project?.Number ?? "", project?.Name ?? "", project?.OrganizationName ?? "");
             panelName.Text = $"{p.Name}  ·  {p.Circuits.Count} отходящих групп";
             metrics.Text = $"Ввод: {Feed(p)}\n" +
                 $"Расчёт по формулам «элпро»   ·   Pу {installed:0.###} кВт   ·   Pр {demand:0.###} кВт   ·   Sр {apparent:0.###} кВА   ·   cos φ {(apparent > 0 ? demand / apparent : 0):0.##}\n" +
@@ -216,6 +234,26 @@ public sealed class PanelManagerCommand : EomCommand
             var rows = feeders.Select(f => Row(f.Circuit, f.Calculation, assigned.GetValueOrDefault(f.Circuit.Id, "—"))).ToList();
             groups.ItemsSource = rows;
             groups.SelectedItem = rows.FirstOrDefault(g => g.Circuit.Id == selected) ?? rows.FirstOrDefault();
+        }
+        void ShowDiagram()
+        {
+            if (diagramSummary is not { } info) throw new InvalidOperationException("Выберите щит.");
+            var roomByDevice = new Dictionary<ElementId, string?>();
+            string Rooms(CircuitInfo circuit)
+            {
+                foreach (var device in circuit.Devices)
+                {
+                    if (roomByDevice.ContainsKey(device.Id)) continue;
+                    roomByDevice[device.Id] = doc.GetElement(device.Id) is FamilyInstance instance
+                        ? LocateRoom(instance, device.Point).Room?.Number : null;
+                }
+                return string.Join(", ", circuit.Devices.Select(d => roomByDevice[d.Id])
+                    .OfType<string>().Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().OrderBy(n => n, NaturalComparer.Instance));
+            }
+            var feeders = groups.Items.Cast<GroupRow>().Select(g => new PanelDiagram.Feeder(g.Number, g.Load, g.Reserve,
+                g.Phase, g.Poles, g.ModelBreaker, g.SelectedBreaker, g.ModelCable, g.SelectedCable, g.Length, g.Drop,
+                g.Power, g.Demand, g.Apparent, g.Cos, g.Current, g.Voltage, g.Leakage, g.Reserve ? "" : Rooms(g.Circuit), g.Status)).ToList();
+            PanelDiagram.Show(window, info, feeders);
         }
         void Filter(ElementId? preferred)
         {
@@ -242,6 +280,7 @@ public sealed class PanelManagerCommand : EomCommand
             var selected = groups.SelectedItem as GroupRow;
             devices.ItemsSource = selected?.Circuit.Devices;
             deviceLabel.Text = selected == null ? "Потребители группы" : $"Потребители группы {selected.Number} · {selected.Circuit.Devices.Count}";
+            deleteReserve.IsEnabled = selected is { Reserve: true };
         };
         devices.MouseDoubleClick += (_, _) => { if (devices.SelectedItem is DeviceInfo d) EomUi.Show(ui, d.Id); };
         groups.MouseDoubleClick += (_, _) => { if (groups.SelectedItem is GroupRow { Circuit.Devices.Count: > 0 }) ShowDevices(); };
@@ -303,10 +342,22 @@ public sealed class PanelManagerCommand : EomCommand
             panels = ReadPanels();
             Filter(panel.Id);
         }
+        void RemoveReserve()
+        {
+            var panel = SelectedPanel();
+            if (groups.SelectedItem is not GroupRow { Reserve: true } group) return;
+            var confirmation = System.Windows.MessageBox.Show(window,
+                $"Удалить резервную линию «{group.Number}» из щита «{panel.Name}»?",
+                "Удаление резерва", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (confirmation != MessageBoxResult.Yes) return;
+            PanelReserves.Remove(doc, panel.Id, group.Circuit.Id);
+            panels = ReadPanels();
+            Filter(panel.Id);
+        }
         EomUi.Layout(window, body, bottom: EomUi.Buttons(
             EomUi.Button("Добавить резерв…", AddReserve),
-            EomUi.Button("Схема…", () => PanelDiagram.Show(window, SelectedPanel().Name, Feed(SelectedPanel()),
-                groups.Items.Cast<GroupRow>().Select(g => (g.Number, g.Load, g.Breaker, g.Cable, g.Current)).ToList())),
+            deleteReserve,
+            EomUi.Button("Схема…", ShowDiagram),
             EomUi.Button("Показать щит", () => EomUi.Show(ui, SelectedPanel().Id)),
             EomUi.Button("Показать потребителей", ShowDevices), EomUi.Button("Закрыть", window.Close)));
         Filter(ui.Selection.GetElementIds().FirstOrDefault(id => panels.Any(p => p.Panel.Id == id)));

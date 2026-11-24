@@ -64,7 +64,15 @@ internal sealed class InsulationOutcome
 internal static class InsulationEngine
 {
     internal const string NameParameter = "ADSK_Наименование";
-    internal static readonly BuiltInCategory[] Categories = [BuiltInCategory.OST_PipeCurves, BuiltInCategory.OST_PipeFitting, BuiltInCategory.OST_PipeAccessory];
+    static readonly (InsulationCategories Flag, BuiltInCategory Category)[] HostCategories =
+    [
+        (InsulationCategories.Pipes, BuiltInCategory.OST_PipeCurves),
+        (InsulationCategories.Fittings, BuiltInCategory.OST_PipeFitting),
+        (InsulationCategories.Accessories, BuiltInCategory.OST_PipeAccessory)
+    ];
+    internal static BuiltInCategory[] CategoriesFor(InsulationCategories categories) =>
+        HostCategories.Where(pair => categories.HasFlag(pair.Flag)).Select(pair => pair.Category).ToArray();
+    internal static BuiltInCategory[] Categories => HostCategories.Select(pair => pair.Category).ToArray();
 
     /// <summary>Ключ строки окна: ADSK_Наименование трубы, без него — «Семейство: Тип».</summary>
     internal static string Key(Element element)
@@ -95,7 +103,7 @@ internal static class InsulationEngine
     internal static InsulationRule? RuleFor(Element element, InsulationSettings settings)
     {
         if (element is Pipe) return settings.Resolve(SystemType(element), Key(element));
-        if (!settings.Fittings || !IsFitting(element)) return null;
+        if (!IsFitting(element)) return null;
         var seen = new HashSet<ElementId> { element.Id };
         var front = new List<Element> { element };
         InsulationRule? best = null; double bestD = -1;
@@ -141,11 +149,17 @@ internal static class InsulationEngine
 
     internal static void Process(Element element, InsulationSettings settings, Dictionary<string, ElementId> types, InsulationOutcome outcome)
     {
+        if (!HostCategories.Any(pair => element.Category?.BuiltInCategory == pair.Category && settings.Categories.HasFlag(pair.Flag))) return;
         var rule = RuleFor(element, settings);
         if (rule?.InsulationType is null) return;
         if (!types.TryGetValue(rule.InsulationType, out var typeId)) { outcome.Skip($"нет типа изоляции «{rule.InsulationType}»"); return; }
         var doc = element.Document;
         var existing = Existing(doc, element.Id);
+        if (existing == null && settings.PreserveManualRemovals && InsulationHistory.WasInsulated(element))
+        {
+            outcome.Skip("изоляция снята вручную");
+            return;
+        }
         string? currentType = existing is null ? null : doc.GetElement(existing.GetTypeId())?.Name;
         double? currentMm = existing is null ? null : UnitUtils.ConvertFromInternalUnits(existing.Thickness, UnitTypeId.Millimeters);
         double ft = UnitUtils.ConvertToInternalUnits(rule.ThicknessMm, UnitTypeId.Millimeters);
@@ -155,6 +169,7 @@ internal static class InsulationEngine
             {
                 case InsulationAction.Create:
                     WriteName(PipeInsulation.Create(doc, element.Id, typeId, ft), element, rule, outcome);
+                    if (settings.PreserveManualRemovals) InsulationHistory.Remember(element, outcome);
                     outcome.Created++;
                     break;
                 case InsulationAction.Update:
@@ -176,13 +191,66 @@ internal static class InsulationEngine
     {
         var outcome = new InsulationOutcome();
         var types = Types(doc);
-        foreach (var category in Categories)
+        if (settings.PreserveManualRemovals)
         {
-            if (category != BuiltInCategory.OST_PipeCurves && !settings.Fittings) continue;
+            var hosts = new FilteredElementCollector(doc).OfClass(typeof(PipeInsulation)).Cast<PipeInsulation>()
+                .Select(insulation => insulation.HostElementId).Distinct().ToList();
+            foreach (var id in hosts)
+                if (doc.GetElement(id) is { } host) InsulationHistory.Remember(host, outcome);
+        }
+        foreach (var category in CategoriesFor(settings.Categories))
+        {
             foreach (var e in new FilteredElementCollector(doc).OfCategory(category).WhereElementIsNotElementType().ToList())
                 Process(e, settings, types, outcome);
         }
         return outcome;
+    }
+}
+
+internal static class InsulationHistory
+{
+    static readonly Guid Id = new("e0a91421-575c-4ed4-86b7-22cec9b5519a");
+    const string HostId = "HostUniqueId";
+
+    internal static bool WasInsulated(Element host)
+    {
+        if (Schema.Lookup(Id) is not { } schema) return false;
+        var record = host.GetEntity(schema);
+        return record.IsValid() && InsulationPolicy.MatchesRecordedHost(host.UniqueId, record.Get<string>(schema.GetField(HostId)));
+    }
+
+    internal static void Remember(Element host, InsulationOutcome? outcome = null)
+    {
+        try { Record(host); }
+        catch (Autodesk.Revit.Exceptions.ApplicationException error)
+        {
+            string message = "Revit не сохранил историю изоляции: " + error.Message.Trim();
+            if (outcome != null) outcome.Skip(message);
+            else Trace.WriteLine(message);
+        }
+    }
+
+    static void Record(Element host)
+    {
+        if (WasInsulated(host)) return;
+        var schema = Schema.Lookup(Id);
+        if (schema == null)
+        {
+            var builder = new SchemaBuilder(Id);
+            builder.SetSchemaName("BotPlusInsulatedHost");
+            builder.SetReadAccessLevel(AccessLevel.Public);
+            builder.SetWriteAccessLevel(AccessLevel.Public);
+            builder.AddSimpleField(HostId, typeof(string));
+            schema = builder.Finish();
+        }
+        var record = new Entity(schema);
+        record.Set(schema.GetField(HostId), host.UniqueId);
+        host.SetEntity(record);
+    }
+
+    internal static void Forget(Element host)
+    {
+        if (WasInsulated(host) && Schema.Lookup(Id) is { } schema) host.DeleteEntity(schema);
     }
 }
 
@@ -203,6 +271,8 @@ internal sealed class InsulationUpdater : IUpdater
         var filter = new ElementMulticategoryFilter(InsulationEngine.Categories);
         UpdaterRegistry.AddTrigger(updater.id, filter, Element.GetChangeTypeElementAddition());
         UpdaterRegistry.AddTrigger(updater.id, filter, Element.GetChangeTypeAny());
+        var insulationFilter = new ElementClassFilter(typeof(PipeInsulation));
+        UpdaterRegistry.AddTrigger(updater.id, insulationFilter, Element.GetChangeTypeElementAddition());
     }
 
     internal static void Unregister(AddInId addIn)
@@ -218,6 +288,10 @@ internal sealed class InsulationUpdater : IUpdater
         {
             var doc = data.GetDocument();
             var settings = InsulationStore.Read(doc);
+            if (settings.PreserveManualRemovals)
+                foreach (var id in data.GetAddedElementIds())
+                    if (doc.GetElement(id) is PipeInsulation lining && doc.GetElement(lining.HostElementId) is { } host)
+                        InsulationHistory.Remember(host);
             if (!settings.Auto || settings.IsEmpty) return;
             var types = InsulationEngine.Types(doc);
             var outcome = new InsulationOutcome();
@@ -230,12 +304,12 @@ internal sealed class InsulationUpdater : IUpdater
                 {
                     pipes.Add(element);
                     // A pipe that changed system or name changes the rule of its fittings.
-                    if (settings.Fittings)
+                    if ((settings.Categories & (InsulationCategories.Fittings | InsulationCategories.Accessories)) != 0)
                         foreach (var c in Mep.Connectors(element))
                             foreach (var n in Mep.Neighbors(c))
                                 if (n.Owner is FamilyInstance f) fittings.TryAdd(f.Id, f);
                 }
-                else fittings.TryAdd(element.Id, element);
+                else if (element is not PipeInsulation) fittings.TryAdd(element.Id, element);
             }
             foreach (var pipe in pipes) InsulationEngine.Process(pipe, settings, types, outcome);
             foreach (var fitting in fittings.Values) InsulationEngine.Process(fitting, settings, types, outcome);
@@ -281,9 +355,19 @@ public sealed class InsulationCommand : IExternalCommand
             if (doc.IsFamilyDocument) { TaskDialog.Show("Изоляция", "Откройте проект."); return Result.Cancelled; }
             // Selected pipes preselect their systems.
             var picked = ui.Selection.GetElementIds().Select(doc.GetElement).OfType<Pipe>().Select(InsulationEngine.SystemType).OfType<string>().Distinct().ToList();
-            var window = new InsulationWindow(new RevitInsulationModel(doc), InsulationStore.Read(doc).Clone(), picked);
+            var stored = InsulationStore.Read(doc);
+            var insulation = new FilteredElementCollector(doc).OfClass(typeof(PipeInsulation)).Cast<PipeInsulation>()
+                .ToDictionary(i => i.Id, i => i.HostElementId);
+            var window = new InsulationWindow(new RevitInsulationModel(doc), stored.Clone(), picked, insulation.Count);
             new WindowInteropHelper(window) { Owner = data.Application.MainWindowHandle };
-            if (window.ShowDialog() != true || window.Result is not { } settings) return Result.Cancelled;
+            if (window.ShowDialog() != true) return Result.Cancelled;
+            if (window.DeleteAllRequested)
+            {
+                RemoveAll(doc, insulation, stored.Clone());
+                TaskDialog.Show("Изоляция", $"Удалено экземпляров изоляции трубопроводов: {insulation.Count}. Автопостроение выключено.");
+                return Result.Succeeded;
+            }
+            if (window.Result is not { } settings) return Result.Cancelled;
 
             InsulationOutcome outcome;
             using (var t = new Transaction(doc, "BotPlus: изоляция труб"))
@@ -300,5 +384,27 @@ public sealed class InsulationCommand : IExternalCommand
             return Result.Succeeded;
         }
         catch (Exception error) { message = error.Message; return Result.Failed; }
+    }
+
+    static void RemoveAll(Document doc, Dictionary<ElementId, ElementId> insulation, InsulationSettings settings)
+    {
+        using var transaction = new Transaction(doc, "BotPlus: удалить всю изоляцию трубопроводов");
+        if (transaction.Start() != TransactionStatus.Started)
+            throw new InvalidOperationException("Revit не начал удаление изоляции.");
+        settings.Auto = false;
+        bool suspended = InsulationUpdater.Suspended;
+        InsulationUpdater.Suspended = true;
+        try
+        {
+            var removed = doc.Delete(insulation.Keys.ToList()).ToHashSet();
+            if (!insulation.Keys.All(removed.Contains) || removed.Overlaps(insulation.Values))
+                throw new InvalidOperationException("Revit не смог удалить всю изоляцию с сохранением труб и фитингов.");
+            foreach (var id in insulation.Values.Distinct())
+                if (doc.GetElement(id) is { } host) InsulationHistory.Forget(host);
+            InsulationStore.Write(doc, settings);
+            if (transaction.Commit() != TransactionStatus.Committed)
+                throw new InvalidOperationException("Revit отменил удаление изоляции.");
+        }
+        finally { InsulationUpdater.Suspended = suspended; }
     }
 }

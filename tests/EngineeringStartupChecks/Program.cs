@@ -8,7 +8,8 @@ var app = new UIControlledApplication(); var ui = new UIApplication();
 var alreadyOpen = new Document { Title = "Already open" }; ui.Application.Documents.Add(alreadyOpen);
 EngineeringStartupRefresh.Attach(app);
 app.Idle(ui);
-Check(alreadyOpen.Calls == 1 && alreadyOpen.Commits == 1 && alreadyOpen.Settings.ConditionalGroups.Count == 20, "Already-open project gets defaults and one initial refresh");
+Check(alreadyOpen.Calls == 1 && alreadyOpen.Commits == 1 && alreadyOpen.Settings.ConditionalGroups.Count == 19,
+    "Already-open project gets defaults and one initial refresh");
 Check(alreadyOpen.Settings.ConditionalGroups.All(g => g.IsActive) && alreadyOpen.Settings.SystemNames.Enabled, "Every default rule enabled at startup");
 app.Idle(ui); Check(alreadyOpen.Calls == 1, "No repeat refresh on every idle tick");
 var opened = new Document { Title = "Opened" }; app.Open(opened); app.Open(opened);
@@ -22,7 +23,7 @@ var disabled = new Document { Title = "User disabled" }; disabled.Settings.Prepa
 disabled.Settings.ConditionalGroups[0].Otherwise.NameEnabled = false;
 var deleted = disabled.Settings.ConditionalGroups[0]; disabled.Settings.ConditionalGroups.RemoveAt(0);
 app.Open(disabled); app.Idle(ui);
-Check(!disabled.Settings.ConditionalGroups.Contains(deleted) && disabled.Settings.ConditionalGroups.Count == 19, "Startup preserves later deletion");
+Check(!disabled.Settings.ConditionalGroups.Contains(deleted) && disabled.Settings.ConditionalGroups.Count == 18, "Startup preserves later deletion");
 foreach (var excluded in new[] { new Document { IsReadOnly = true }, new Document { IsFamilyDocument = true }, new Document { IsLinked = true }, new Document { IsValidObject = false } })
 { app.Open(excluded); app.Idle(ui); Check(excluded.Calls == 0 && excluded.Commits == 0, "Read-only, family, linked and closed docs skipped"); }
 var failed = new Document { Title = "Commit rejected", RejectCommit = true };

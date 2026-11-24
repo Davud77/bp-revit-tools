@@ -444,7 +444,8 @@ internal sealed class EngineeringRulesWindow : Window
         if (!CanCommit()) return;
         IReadOnlyList<string> TargetsFor(string category, bool quantityRule) => model.Marks(category)
             .SelectMany(m => quantityRule ? model.NumberTargets(category, m.Mark) : model.TextTargets(category, m.Mark)).Distinct().ToList();
-        var dialog = new RuleCreationWindow(Rules.ConditionalGroups, TargetsFor, current?.Category) { Owner = this };
+        var dialog = new RuleCreationWindow(Rules.ConditionalGroups.Where(g => g.IsQuantity || EngineeringRulesPolicy.SupportsNaming(g.Category)),
+            TargetsFor, current?.Category) { Owner = this };
         if (dialog.ShowDialog() != true) return;
         CreateRule(dialog.Category, dialog.IsQuantity, dialog.Target);
     }
@@ -452,8 +453,10 @@ internal sealed class EngineeringRulesWindow : Window
     internal bool CreateRule(string category, bool quantityRule, string target)
     {
         if (!CanCommit()) return false;
-        if (!EngineeringRulesPolicy.Categories.Any(c => c.Key == category) || string.IsNullOrWhiteSpace(target) ||
-            Rules.ConditionalGroups.Any(g => g.Category == category && g.Target == target.Trim())) return false;
+        if ((!quantityRule && !EngineeringRulesPolicy.SupportsNaming(category))
+            || !EngineeringRulesPolicy.Categories.Any(c => c.Key == category) || string.IsNullOrWhiteSpace(target)
+            || Rules.ConditionalGroups.Any(g => g.Category == category && g.Target == target.Trim()
+                && (g.IsQuantity || EngineeringRulesPolicy.SupportsNaming(category)))) return false;
         Rules.ConditionalGroups.Add(NewGroup(category, quantityRule, target.Trim()));
         FillScopes(category, null);
         ShowScope(s => s.Category == category && s.Target == target.Trim());
@@ -473,7 +476,7 @@ internal sealed class EngineeringRulesWindow : Window
     void FillScopes(string? category, string? mark)
     {
         var list = new List<ScopeChoice> { new("", "", null, []) { IsSystems = true } };
-        foreach (var group in Rules.ConditionalGroups)
+        foreach (var group in Rules.ConditionalGroups.Where(g => g.IsQuantity || EngineeringRulesPolicy.SupportsNaming(g.Category)))
         {
             var names = model.Marks(group.Category).SelectMany(m => m.Types).Distinct().ToList();
             list.Add(new ScopeChoice(group.Category, EngineeringRulesPolicy.CategoryLabel(group.Category), null, names) { IsQuantity = group.IsQuantity, Target = group.Target });
@@ -853,6 +856,11 @@ internal sealed class RuleCreationWindow : Window
     void FillTargets()
     {
         if (Category.Length == 0) return;
+        if (!IsQuantity && !EngineeringRulesPolicy.SupportsNaming(Category))
+        {
+            kind.SelectedIndex = 1;
+            return;
+        }
         string standard = IsQuantity ? EngineeringRulesPolicy.DefaultQuantityTarget : EngineeringRulesPolicy.DefaultNameTarget;
         target.ItemsSource = targets(Category, IsQuantity).Append(standard).Distinct().OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase).ToList();
         target.SelectedItem = standard;

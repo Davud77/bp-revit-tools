@@ -4,8 +4,15 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using Brush = System.Windows.Media.Brush;
+using Brushes = System.Windows.Media.Brushes;
+using Cursors = System.Windows.Input.Cursors;
+using MessageBox = System.Windows.MessageBox;
+using MouseEventArgs = System.Windows.Input.MouseEventArgs;
+using Pen = System.Windows.Media.Pen;
+using Point = System.Windows.Point;
 
-namespace BotPlus.Eom;
+namespace BotPlus.Shared;
 
 /// <summary>
 /// Маркер заполнения, как в Excel: квадратик в правом нижнем углу текущей ячейки. Потяните его вниз или вверх —
@@ -157,7 +164,7 @@ internal sealed class FillHandle : Adorner
             var targets = new List<object>();
             for (int i = from; i <= to; i++) if (i != sourceIndex && i < grid.Items.Count) targets.Add(grid.Items[i]!);
             try { fill(col, source, targets); }
-            catch (Exception error) { MessageBox.Show(Window.GetWindow(grid), error.Message, "BotPlus ЭОМ"); }
+            catch (Exception error) { MessageBox.Show(Window.GetWindow(grid), error.Message, "Заполнение ячеек"); }
             grid.SelectedItems.Clear();
             for (int i = from; i <= to && i < grid.Items.Count; i++) grid.SelectedItems.Add(grid.Items[i]);
         }

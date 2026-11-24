@@ -18,6 +18,22 @@ public sealed partial class ConduitThroughLightsCommand
     static bool IsRiser(Element element) => element is Conduit && element.Location is LocationCurve { Curve: Line line }
         && IsVertical(line.Direction);
 
+    static XYZ SnapTapToNormal(Conduit main, XYZ hit, XYZ from, XYZ heading, double tolerance)
+    {
+        if (main.Location is not LocationCurve { Curve: Line line }
+            || Math.Abs(line.Direction.Z) > PointTolerance || Math.Abs(heading.Z) > PointTolerance
+            || heading.GetLength() <= PointTolerance || Math.Abs(line.Direction.DotProduct(heading)) > PointTolerance)
+            return hit;
+        var normal = AxisPoint(line, from, true);
+        var minimum = main.Document.Application.ShortCurveTolerance;
+        if (Math.Abs(normal.Z - from.Z) > PointTolerance
+            || normal.DistanceTo(AxisPoint(line, hit, true)) > tolerance
+            || normal.DistanceTo(line.GetEndPoint(0)) <= minimum || normal.DistanceTo(line.GetEndPoint(1)) <= minimum
+            || (normal - from).DotProduct(heading) <= minimum || !OnAxis(normal - from, heading))
+            return hit;
+        return normal;
+    }
+
     static XYZ AxisPoint(Line line, XYZ hit, bool inPlan, double? riserElevation = null)
     {
         var a = line.GetEndPoint(0);
