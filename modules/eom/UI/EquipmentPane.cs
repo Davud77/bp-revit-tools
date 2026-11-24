@@ -46,7 +46,7 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         public override string ToString() => LibraryPath == null ? $"{Family}: {Type}" : $"{Family} — {Category}";
     }
 
-    const int PageSize = 96;
+    const int PageSize = 250;
     const string LibraryLabel = "Из папки";
     const string PlaceIcon = "M8,2 V14 M2,8 H14 M5,5 H11 V11 H5 Z";
     const string LoadIcon = "M2,8 V14 H14 V8 M8,2 V10 M5,7 L8,10 L11,7";
@@ -70,6 +70,12 @@ internal sealed class EquipmentPane : IDockablePaneProvider
     readonly StackPanel pagination = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
     readonly Button previousPage = new() { Content = "‹", MinWidth = 30, ToolTip = "Предыдущая страница" };
     readonly Button nextPage = new() { Content = "›", MinWidth = 30, ToolTip = "Следующая страница" };
+    readonly TextBox pageNumber = new()
+    {
+        Width = 46, Margin = new Thickness(4, 0, 0, 0), TextAlignment = TextAlignment.Center,
+        VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "Введите номер страницы и нажмите Enter"
+    };
+    readonly TextBlock pageCount = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 4, 0) };
     readonly TextBlock pageRange = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 8, 0) };
     readonly Button place;
     readonly EquipmentLibraryIndexer indexer;
@@ -177,9 +183,23 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         nextPage.Click += (_, _) => ShowPage(page + 1);
         AutomationProperties.SetName(previousPage, "Предыдущая страница");
         AutomationProperties.SetName(nextPage, "Следующая страница");
+        AutomationProperties.SetName(pageNumber, "Номер страницы");
+        pageNumber.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter && e.Key != Key.Escape) return;
+            e.Handled = true;
+            if (e.Key == Key.Enter && int.TryParse(pageNumber.Text, out int number) && number > 0 && number != page + 1)
+                ShowPage(number - 1);
+            else
+                pageNumber.Text = (page + 1).ToString();
+            pageNumber.SelectAll();
+        };
+        pageNumber.LostKeyboardFocus += (_, _) => pageNumber.Text = (page + 1).ToString();
         pagination.Children.Add(previousPage);
-        pagination.Children.Add(pageRange);
+        pagination.Children.Add(pageNumber);
+        pagination.Children.Add(pageCount);
         pagination.Children.Add(nextPage);
+        pagination.Children.Add(pageRange);
         bottom.Children.Add(pagination);
         var preview = new System.Windows.Controls.Grid();
         preview.Children.Add(image);
@@ -453,6 +473,8 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         pagination.Visibility = lastPage > 0 ? Visibility.Visible : Visibility.Collapsed;
         previousPage.IsEnabled = page > 0;
         nextPage.IsEnabled = page < lastPage;
+        pageNumber.Text = (page + 1).ToString();
+        pageCount.Text = $"/ {lastPage + 1}";
         pageRange.Text = $"{start + 1}–{start + entries.Length} из {matches.Count}";
         LoadPagePreviews(entries);
     }

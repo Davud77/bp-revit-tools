@@ -39,7 +39,7 @@ internal sealed record EquipmentLibraryIndex(string Path, Guid Revision, long Pr
                     System.IO.Path.IsPathRooted(entry.File) ||
                     entry.File.Split('\\', '/').Any(part => part.Length == 0 || part[^1] is '.' or ' ' || part.IndexOfAny(InvalidNameChars) >= 0) ||
                     !string.Equals(System.IO.Path.GetExtension(entry.File), ".rfa", StringComparison.OrdinalIgnoreCase) ||
-                    !unique.Add(entry.File.Replace('/', '\\')) || entry.Preview != null ||
+                    !unique.Add(EquipmentLibrary.IndexKey(entry.File)) || entry.Preview != null ||
                     entry.PreviewSize < 0 || entry.PreviewSize > MaxPreview || entry.PreviewOffset < 0 ||
                     entry.PreviewOffset > previewBytes - entry.PreviewSize)
                     throw new InvalidDataException("Недопустимая запись в индексе Базы УГО.");

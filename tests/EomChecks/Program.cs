@@ -33,6 +33,24 @@ if (OperatingSystem.IsWindows())
             "unmapped categories are skipped together with damaged files");
         var cached = EquipmentLibrary.ReadFolder(root.FullName, scanned.Library, new Dictionary<string, int>(), (_, _) => { }, default);
         Check(ReferenceEquals(family, cached.Library.Entries.Single()), "reuse metadata only for unchanged files");
+        var legacyDuplicates = scanned.Library with
+        {
+            Entries =
+            [
+                family with { Name = "Устаревшая запись" },
+                family with { File = family.File.ToLowerInvariant().Replace('\\', '/'), Name = "Другой дубль" }
+            ]
+        };
+        var recovered = EquipmentLibrary.ReadFolder(root.FullName, legacyDuplicates, categoryNames, (_, _) => { }, default);
+        Check(recovered.Library.Entries.Single().Name == family.Name, "ambiguous legacy entries force a fresh RFA read");
+        string alias = Path.Combine(nested.FullName, "балка.rfa");
+        int completedFiles = 0;
+        var duplicates = EquipmentLibrary.ReadFiles(root.FullName, [alias, primary, primary], empty, categoryNames,
+            (done, _) => completedFiles = done, default);
+        Check(duplicates.Library.Entries.Single().File == family.File && duplicates.Skipped == 2 && completedFiles == 3,
+            "case-insensitive and exact duplicates do not stop indexing or progress");
+        EquipmentLibraryIndex.Publish(duplicates.Library, null, default);
+        Check(EquipmentLibraryIndex.Open(root.FullName)!.Entries.Length == 1, "deduplicated scan publishes a readable shared index");
         File.SetLastWriteTimeUtc(primary, family.Modified.AddMinutes(5));
         var changed = EquipmentLibrary.ReadFolder(root.FullName, scanned.Library, new Dictionary<string, int>(), (_, _) => { }, default);
         Check(changed.Library.Entries.Length == 0 && changed.Skipped == 2,

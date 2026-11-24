@@ -49,9 +49,25 @@ internal sealed record EquipmentLibrary(string Folder, IndexedFamily[] Entries)
             AttributesToSkip = FileAttributes.ReparsePoint, MatchCasing = MatchCasing.CaseInsensitive
         };
         var files = Directory.EnumerateFiles(basePath, "*.rfa", options).Where(path => !BackupName.IsMatch(path)).ToArray();
-        var cached = StringComparer.OrdinalIgnoreCase.Equals(basePath, previous.Folder)
-            ? previous.Entries.ToDictionary(item => item.File, StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, IndexedFamily>(StringComparer.OrdinalIgnoreCase);
+        return ReadFiles(basePath, files, previous, categories, progress, cancellation);
+    }
+
+    [SupportedOSPlatform("windows")]
+    internal static Scan ReadFiles(string basePath, string[] files, EquipmentLibrary previous,
+        IReadOnlyDictionary<string, int> categories, Action<int, int> progress, CancellationToken cancellation)
+    {
+        Array.Sort(files, StringComparer.Ordinal);
+        var cached = new Dictionary<string, IndexedFamily?>(StringComparer.OrdinalIgnoreCase);
+        if (StringComparer.OrdinalIgnoreCase.Equals(basePath, previous.Folder))
+        {
+            foreach (var entry in previous.Entries)
+            {
+                var key = IndexKey(entry.File);
+                // Для неоднозначного пути перечитываем сам RFA вместо выбора произвольной записи.
+                if (!cached.TryAdd(key, entry)) cached[key] = null;
+            }
+        }
+        var accepted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var indexed = new List<IndexedFamily>();
         int skipped = 0;
         for (int i = 0; i < files.Length; i++)
@@ -61,11 +77,20 @@ internal sealed record EquipmentLibrary(string Folder, IndexedFamily[] Entries)
             {
                 var info = new FileInfo(files[i]);
                 string relativePath = Path.GetRelativePath(basePath, info.FullName);
-                var entry = cached.TryGetValue(relativePath, out var old) &&
-                    old.Length == info.Length && old.Modified == info.LastWriteTimeUtc
-                    ? old : ReadFamily(info, relativePath, categories);
-                if (entry == null) skipped++;
-                else indexed.Add(entry);
+                string key = IndexKey(relativePath);
+                if (accepted.Contains(key)) skipped++;
+                else
+                {
+                    var entry = cached.TryGetValue(key, out var old) && old != null && old.File == relativePath &&
+                        old.Length == info.Length && old.Modified == info.LastWriteTimeUtc
+                        ? old : ReadFamily(info, relativePath, categories);
+                    if (entry == null) skipped++;
+                    else
+                    {
+                        accepted.Add(key);
+                        indexed.Add(entry);
+                    }
+                }
             }
             catch (Exception error) when (error is COMException or IOException or UnauthorizedAccessException
                 or XmlException or ArgumentException or NotSupportedException)
@@ -76,6 +101,8 @@ internal sealed record EquipmentLibrary(string Folder, IndexedFamily[] Entries)
         }
         return new Scan(new(basePath, indexed.ToArray()), skipped);
     }
+
+    internal static string IndexKey(string path) => path.Replace('/', '\\');
 
     [SupportedOSPlatform("windows")]
     static IndexedFamily? ReadFamily(FileInfo info, string relativePath, IReadOnlyDictionary<string, int> categories)
