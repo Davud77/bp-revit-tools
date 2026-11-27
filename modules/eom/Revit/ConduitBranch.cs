@@ -83,6 +83,8 @@ public sealed partial class ConduitThroughLightsCommand
     static string PortMessage(Element element, double? expected, Port[] available)
     {
         var name = $"«{element.Name}»";
+        if (IsPanel(element) && available.Length == 0)
+            return $"У щита {name} нет доступного концевого ввода. Проверьте свободные круглые и прямоугольные вводы.";
         if (available.Length > 0 && expected is { } size)
         {
             var sizes = string.Join(", ", available.Select(port => port.Diameter).OfType<double>()

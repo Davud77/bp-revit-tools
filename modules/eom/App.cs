@@ -102,6 +102,7 @@ public sealed class App : IExternalApplication
         app.Idling -= RouteService.OnIdling;
         app.Idling -= RouteTools.OnIdling;
         app.Idling -= ConduitSelectionToolbar.OnIdling;
+        LightingSwitchConnection.Reset();
         ConduitSelectionToolbar.Hide();
         app.ControlledApplication.DocumentChanged -= RouteTools.OnDocumentChanged;
         app.ControlledApplication.DocumentChanged -= OnEtmDocumentChanged;

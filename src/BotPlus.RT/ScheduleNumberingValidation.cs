@@ -39,12 +39,19 @@ public sealed class ScheduleNumberingValidationCommand : IExternalCommand
             int parameterCount = new FilteredElementCollector(doc).OfClass(typeof(SharedParameterElement)).GetElementCount();
             int scheduleCount = new FilteredElementCollector(doc).OfClass(typeof(ViewSchedule)).GetElementCount();
             string previousFile = doc.Application.SharedParametersFilename;
-            var rows = ScheduleNumbering.ReadRows(doc, schedule, candidates);
+            var parameter = new NumberingParameter(target, "Комментарии", StorageType.String);
+            Assert(ScheduleNumbering.Parameters(doc, schedule, candidates).Select(p => p.Id).SequenceEqual([target]),
+                "Write choices include fields outside the schedule or non-writable fields");
+            Assert(ScheduleNumbering.SortParameters(schedule).Select(f => f.Id)
+                .SequenceEqual(schedule.Definition.GetFieldOrder().Select(f => (long)f.IntegerValue)),
+                "Sort choices differ from the schedule field order");
+            var rows = ScheduleNumbering.ReadRows(doc, schedule, candidates, parameter);
             Assert(rows.SelectMany(x => x).SequenceEqual(new[] { ids[1], ids[2], ids[0] }), "Native length order differs");
             Assert(new FilteredElementCollector(doc).OfClass(typeof(SharedParameterElement)).GetElementCount() == parameterCount &&
                 new FilteredElementCollector(doc).OfClass(typeof(ViewSchedule)).GetElementCount() == scheduleCount &&
                 doc.Application.SharedParametersFilename == previousFile, "Probe left resources/settings");
-            var parameter = new NumberingParameter(target, "Комментарии", StorageType.String);
+            Assert(candidates.All(e => string.IsNullOrEmpty(ScheduleNumbering.ParameterOf(e, target)!.AsString())),
+                "Existing marker field was not restored");
             var result = ScheduleNumbering.Apply(doc, rows, parameter, 10, null);
             Assert(result.Updated == 3 && result.Rows == 3, "Numbered count");
             foreach (var (id, expected) in new[] { (ids[1], "10"), (ids[2], "11"), (ids[0], "12") })
@@ -77,13 +84,19 @@ public sealed class ScheduleNumberingValidationCommand : IExternalCommand
             candidates = ScheduleNumbering.Elements(doc, schedule);
             for (int repeat = 0; repeat < 2; repeat++)
             {
-                rows = ScheduleNumbering.ReadRows(doc, schedule, candidates);
+                rows = ScheduleNumbering.ReadRows(doc, schedule, candidates, repeat == 0 ? parameter : null);
                 Assert(rows.Count == 3 && rows[0].SequenceEqual(new[] { ids[0] }) && rows[1].SequenceEqual(new[] { ids[2] }) &&
                     rows[2].ToHashSet().SetEquals(new[] { ids[1], extra }), "Hidden descending sort/group membership");
                 Assert(new FilteredElementCollector(doc).OfClass(typeof(SharedParameterElement)).GetElementCount() == parameterCount &&
                     new FilteredElementCollector(doc).OfClass(typeof(ViewSchedule)).GetElementCount() == scheduleCount &&
                     doc.Application.SharedParametersFilename == previousFile, "Repeated probe left resources/settings");
             }
+            Assert(ids.All(id => ScheduleNumbering.ParameterOf(doc.GetElement(new ElementId(id)), target)!.AsString() == "30"),
+                "Grouped probe did not restore existing position values");
+            var lengthSort = ScheduleNumbering.SortParameters(schedule)[1];
+            rows = ScheduleNumbering.ReadRows(doc, schedule, candidates, parameter, lengthSort, [ids[0], ids[1], extra]);
+            Assert(rows.Count == 2 && rows[0].ToHashSet().SetEquals([ids[1], extra]) && rows[1].SequenceEqual([ids[0]]),
+                "Selected groups and ascending hidden column sort");
             Assert(schedule.Definition.GetSortGroupFields().Single().ShowHeader, "Probe changed original formatting");
             TaskDialog.Show("Проверка нумерации", "PASS: порядок строк, все/выделенные элементы, группы, скрытая сортировка, повторное чтение и откат временных данных.");
             return Result.Succeeded;

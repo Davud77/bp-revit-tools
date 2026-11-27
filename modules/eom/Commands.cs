@@ -205,9 +205,10 @@ public sealed class ConnectCommand : EomCommand
         public bool AllowElement(Element e) => e is FamilyInstance && e.Category is { } c && c.BuiltInCategory != BuiltInCategory.OST_ElectricalEquipment && Network.DeviceCategories.Contains(c.BuiltInCategory);
         public bool AllowReference(Reference r, XYZ p) => false;
     }
-    sealed class PanelsOnly : ISelectionFilter
+    sealed class PanelsOnly(IReadOnlyCollection<ElementId> sources) : ISelectionFilter
     {
-        public bool AllowElement(Element e) => e is FamilyInstance && e.Category?.BuiltInCategory == BuiltInCategory.OST_ElectricalEquipment;
+        public bool AllowElement(Element e) => e is FamilyInstance && e.Category?.BuiltInCategory == BuiltInCategory.OST_ElectricalEquipment
+            && !sources.Contains(e.Id);
         public bool AllowReference(Reference r, XYZ p) => false;
     }
     protected override Result Run(UIDocument ui)
@@ -217,6 +218,12 @@ public sealed class ConnectCommand : EomCommand
         var ids = ui.Selection.GetElementIds().Where(id => filter.AllowElement(doc.GetElement(id))).ToList();
         if (ids.Count == 0)
             ids = ui.Selection.PickObjects(ObjectType.Element, filter, "Выберите розетки, светильники и другие приборы группы и нажмите «Готово»").Select(r => r.ElementId).ToList();
+        return ConnectToPanel(ui, ids);
+    }
+
+    internal static Result ConnectToPanel(UIDocument ui, IReadOnlyCollection<ElementId> ids)
+    {
+        var doc = ui.Document;
         // Revit создаёт группу только из приборов со свободным силовым соединителем; остальные отсеиваем заранее и называем.
         var noConnector = new List<string>(); var busy = new List<string>(); var ready = new List<ElementId>();
         foreach (var id in ids)
@@ -240,8 +247,9 @@ public sealed class ConnectCommand : EomCommand
                 "\n\nСемейство можно подключить к щиту, только если в нём есть электрический соединитель типа «Силовой». Обычные модели и аннотации без соединителя Revit в цепь не включает.");
             return Result.Cancelled;
         }
-        var panel = (FamilyInstance)doc.GetElement(ui.Selection.PickObject(ObjectType.Element, new PanelsOnly(), "Выберите щит"));
-        using var t = new Transaction(doc, "ЭОМ: подключение к щиту"); t.Start();
+        var panel = (FamilyInstance)doc.GetElement(ui.Selection.PickObject(ObjectType.Element, new PanelsOnly(ids), "Выберите щит"));
+        using var t = new Transaction(doc, "ЭОМ: подключение к щиту");
+        if (t.Start() != TransactionStatus.Started) return Result.Failed;
         ElectricalSystem system;
         try { system = ElectricalSystem.Create(doc, ready, ElectricalSystemType.PowerCircuit); }
         catch (Autodesk.Revit.Exceptions.ArgumentException)
@@ -258,7 +266,7 @@ public sealed class ConnectCommand : EomCommand
             return Result.Cancelled;
         }
         var settings = EomStore.Settings(doc);
-        t.Commit();
+        if (t.Commit() != TransactionStatus.Committed) return Result.Failed;
         App.Etm?.Refresh(doc);
         TaskDialog.Show("BotPlus ЭОМ", $"Группа {EomSettings.Mark(settings.GroupMask, system.PanelName, system.CircuitNumber)}: подключено приборов {ready.Count}." +
             (noConnector.Count + busy.Count > 0 ? "\n\nПропущено:" + Skipped() : ""));

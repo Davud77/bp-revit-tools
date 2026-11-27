@@ -36,7 +36,7 @@ internal sealed class ReleaseClient(HttpClient http)
     {if(new FileInfo(path).Length!=release.Size)return false;using var stream=File.OpenRead(path);return Convert.ToHexString(SHA256.HashData(stream))==release.Sha256;}
     public async Task<string> Download(ReleaseInfo release,string folder,IProgress<int>? progress,CancellationToken cancellation)
     {
-        Directory.CreateDirectory(folder);string file=Path.Combine(folder,Guid.NewGuid().ToString("N")+"-"+release.Name);
+        Directory.CreateDirectory(folder);string file=Path.Combine(folder,Guid.NewGuid().ToString("N")+".part");
         try
         {
             using var request=new HttpRequestMessage(HttpMethod.Get,release.Download);request.Headers.UserAgent.ParseAdd("BotPlusRT/1.9.11");
@@ -49,7 +49,18 @@ internal sealed class ReleaseClient(HttpClient http)
                 while((read=await input.ReadAsync(buffer,cancellation))>0)
                 {total+=read;if(total>release.Size)throw new InvalidDataException("Превышен размер установщика.");await output.WriteAsync(buffer.AsMemory(0,read),cancellation);progress?.Report((int)(total*100/release.Size));}
             }
-            cancellation.ThrowIfCancellationRequested();if(!Verify(file,release))throw new InvalidDataException("Контрольная сумма SHA-256 не совпала. Установщик удалён.");return file;
+            cancellation.ThrowIfCancellationRequested();
+            if(!Verify(file,release))throw new InvalidDataException("Контрольная сумма SHA-256 не совпала. Установщик удалён.");
+            string stem = Path.GetFileNameWithoutExtension(release.Name);
+            string extension = Path.GetExtension(release.Name);
+            for (int index = 1; ; index++)
+            {
+                cancellation.ThrowIfCancellationRequested();
+                string name = index == 1 ? release.Name : $"{stem} ({index}){extension}";
+                string destination = Path.Combine(folder, name);
+                try { File.Move(file, destination); return destination; }
+                catch (IOException) when (File.Exists(destination) || Directory.Exists(destination)) { }
+            }
         }
         catch{if(File.Exists(file))File.Delete(file);throw;}
     }

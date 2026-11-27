@@ -13,14 +13,17 @@ namespace BotPlus.Eom;
 /// <summary>Панель контекста для выбранных трасс, фитингов и семейств ЭОМ.</summary>
 internal static class ConduitSelectionToolbar
 {
-    sealed record Selection(Document Document, ElementId View, ElementId[] Ids)
+    sealed record Selection(Document Document, ElementId View, ElementId[] SelectedIds, ElementId[] Ids)
     {
-        internal bool Matches(Selection? other) => other != null && Document.Equals(other.Document) && View == other.View && Ids.SequenceEqual(other.Ids);
+        internal bool Matches(Selection? other) => other != null && Document.Equals(other.Document) && View == other.View
+            && SelectedIds.SequenceEqual(other.SelectedIds) && Ids.SequenceEqual(other.Ids);
     }
     static Selection? current;
     static Window? palette;
     static ToggleButton? mode;
     static Button? reverse;
+    static Button? connectPanel;
+    static Button? connectSwitch;
     static bool? displayedMode;
 
     static ConnectorSet? Connectors(FamilyInstance family) => family.MEPModel?.ConnectorManager?.Connectors;
@@ -36,10 +39,11 @@ internal static class ConduitSelectionToolbar
             c.Domain is Domain.DomainElectrical or Domain.DomainCableTrayConduit) == true;
     }
 
-    static List<Element> ReadSelection(UIDocument ui)
+    static ElementId[] SelectedIds(UIDocument ui) => ui.Selection.GetElementIds().OrderBy(id => id.Value).ToArray();
+
+    static List<Element> ReadSelection(Document doc, IEnumerable<ElementId> ids)
     {
-        var doc = ui.Document;
-        return ui.Selection.GetElementIds().Select(doc.GetElement).OfType<Element>().Select(element =>
+        return ids.Select(doc.GetElement).OfType<Element>().Select(element =>
         {
             if (element is FamilyInstance { Symbol.FamilyName: WiringSymbols.Family } && EomStore.WiringHost(element) is { } id)
                 return doc.GetElement(new ElementId(id)) ?? element;
@@ -71,10 +75,12 @@ internal static class ConduitSelectionToolbar
             if (RouteTools.IsDrawing || sender is not UIApplication { ActiveUIDocument: { } ui } || ui.Document.IsFamilyDocument
                 || ui.ActiveView.IsTemplate || !ui.ActiveView.AreGraphicsOverridesAllowed())
             { Hide(); return; }
-            var elements = ReadSelection(ui);
+            if (LightingSwitchConnection.Advance(ui, args)) { Hide(); return; }
+            var selectedIds = SelectedIds(ui);
+            var elements = ReadSelection(ui.Document, selectedIds);
             if (elements.Count == 0) { Hide(); return; }
 
-            var selection = new Selection(ui.Document, ui.ActiveView.Id, elements.Select(e => e.Id).ToArray());
+            var selection = new Selection(ui.Document, ui.ActiveView.Id, selectedIds, elements.Select(e => e.Id).ToArray());
             if (!selection.Matches(current) || palette?.IsVisible != true)
             {
                 Hide();
@@ -82,6 +88,8 @@ internal static class ConduitSelectionToolbar
             }
             UpdateMode(elements);
             if (reverse != null) reverse.IsEnabled = !ui.Document.IsReadOnly;
+            if (connectPanel != null) connectPanel.IsEnabled = !ui.Document.IsReadOnly;
+            if (connectSwitch != null) connectSwitch.IsEnabled = !ui.Document.IsReadOnly;
         }
         catch (Exception error)
         {
@@ -144,24 +152,56 @@ internal static class ConduitSelectionToolbar
         if (elements.Count == 1 && elements[0] is Conduit && ui.ActiveView is ViewPlan)
             controls.Children.Add(IconButton(FloatingToolbarIcons.CreateSimilar, "Создать аналог", "Создать аналог: запустить «Гофра, труба» с типом и диаметром выбранного участка", () =>
                 Post(selection, (active, targets) => ConduitThroughLightsCommand.Route(active, (Conduit)targets[0]))));
+        if (selection.SelectedIds.SequenceEqual(selection.Ids) && elements.All(IsPanelSource))
+        {
+            connectPanel = IconButton(FloatingToolbarIcons.ConnectPanel, "Подключить к панели", "Создать силовую цепь и выбрать щит на виде", () =>
+                Connect(selection, active => ConnectCommand.ConnectToPanel(active, selection.Ids)), showText: true);
+            controls.Children.Add(connectPanel);
+            if (elements.All(e => e.Category?.BuiltInCategory == BuiltInCategory.OST_LightingFixtures))
+            {
+                connectSwitch = IconButton(FloatingToolbarIcons.ConnectSwitch, "Подключить к выключателю", "Создать систему коммутации и выбрать выключатель на виде", () =>
+                    Connect(selection, active => LightingSwitchConnection.Start(active, selection.Ids)), showText: true);
+                controls.Children.Add(connectSwitch);
+            }
+        }
         window.Content = new Border { Child = controls, BorderThickness = new Thickness(1) }.Themed(Border.BorderBrushProperty, "BP.Border");
         window.SourceInitialized += (_, _) => RouteTools.AnchorPalette(window, ui, selection.View);
         window.Show();
     }
 
-    static Button IconButton(string geometry, string name, string tooltip, Action action)
+    static Button IconButton(string geometry, string name, string tooltip, Action action, bool showText = false)
     {
-        var button = new Button { Content = FloatingToolbarIcons.Draw(geometry), Width = 34, Height = 32,
+        var icon = FloatingToolbarIcons.Draw(geometry);
+        FrameworkElement content = icon;
+        if (showText)
+        {
+            var label = new TextBlock { Text = name, Margin = new Thickness(5, 0, 3, 0), VerticalAlignment = VerticalAlignment.Center };
+            content = new StackPanel { Orientation = Orientation.Horizontal, Children = { icon, label } };
+        }
+        var button = new Button { Content = content, Width = showText ? double.NaN : 34, Height = 32,
             Margin = new Thickness(4, 0, 0, 0), Padding = new Thickness(4), ToolTip = tooltip };
         AutomationProperties.SetName(button, name);
         button.Click += (_, _) => action();
         return button;
     }
 
+    static bool IsPanelSource(Element element) => element is FamilyInstance && element.Category?.BuiltInCategory is
+        BuiltInCategory.OST_LightingFixtures or BuiltInCategory.OST_ElectricalFixtures or BuiltInCategory.OST_ElectricalEquipment;
+
+    static void Connect(Selection selection, Action<UIDocument> action) => Post(selection, (ui, _) =>
+    {
+        if (ui.Document.IsReadOnly) return;
+        Hide();
+        try { action(ui); }
+        catch (Autodesk.Revit.Exceptions.OperationCanceledException) { }
+    });
+
     static void Post(Selection selection, Action<UIDocument, List<Element>> action) => App.Queue?.Post(app =>
     {
         if (app.ActiveUIDocument is not { } active || !active.Document.Equals(selection.Document) || active.ActiveView.Id != selection.View) return;
-        var targets = ReadSelection(active);
+        var selectedIds = SelectedIds(active);
+        if (!selectedIds.SequenceEqual(selection.SelectedIds)) return;
+        var targets = ReadSelection(active.Document, selectedIds);
         if (!targets.Select(e => e.Id).SequenceEqual(selection.Ids)) return;
         action(active, targets);
     });
@@ -181,6 +221,8 @@ internal static class ConduitSelectionToolbar
         current = null;
         mode = null;
         reverse = null;
+        connectPanel = null;
+        connectSwitch = null;
         window?.Close();
     }
 }

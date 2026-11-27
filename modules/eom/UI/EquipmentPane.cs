@@ -30,7 +30,7 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         : System.ComponentModel.INotifyPropertyChanged
     {
         public BitmapSource? Preview { get; private set; }
-        public Geometry? Icon => LibraryPath == null ? null : Geometry.Parse(CategoryIcon(CategoryId));
+        public Geometry Icon => EquipmentCategoryIcons.Get(CategoryId, Category);
         public string? LibraryPath { get; init; }
         internal string? FileName { get; init; }
         internal IndexedFamily? LibraryEntry { get; init; }
@@ -149,8 +149,8 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         AutomationProperties.SetName(loadedOnly, "Только загруженные");
         loadedOnly.Click += (_, _) => RefreshSources();
         bar.Children.Add(loadedOnly);
-        AddOption(bar, "Сетка", CategoryIcon(null), true, () => SetGridView(true));
-        AddOption(bar, "Список", "M2,3 H14 M2,8 H14 M2,13 H14", false, () => SetGridView(false));
+        AddOption(bar, "Сетка", EquipmentCategoryIcons.Get(null), true, () => SetGridView(true));
+        AddOption(bar, "Список", Geometry.Parse("M2,3 H14 M2,8 H14 M2,13 H14"), false, () => SetGridView(false));
         root.SizeChanged += (_, e) =>
         {
             const double fullHeaderWidth = 700;
@@ -365,14 +365,14 @@ internal sealed class EquipmentPane : IDockablePaneProvider
             AddCategory(item.CategoryId, item.Category);
 
         void AddCategory(BuiltInCategory? id, string name) =>
-            AddOption(categories, name, CategoryIcon(id), selectedCategory == id, () =>
+            AddOption(categories, name, EquipmentCategoryIcons.Get(id, name), selectedCategory == id, () =>
             {
                 selectedCategory = id;
                 Filter();
             });
     }
 
-    void AddOption(Panel group, string label, string icon, bool selected, Action select)
+    void AddOption(Panel group, string label, Geometry icon, bool selected, Action select)
     {
         var button = new RadioButton
         {
@@ -384,16 +384,18 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         group.Children.Add(button);
     }
 
-    sealed class HeaderIcon : StackPanel
+    internal sealed class HeaderIcon : StackPanel
     {
         readonly TextBlock text;
 
-        internal HeaderIcon(string label, string icon, bool compact)
+        internal HeaderIcon(string label, string icon, bool compact) : this(label, Geometry.Parse(icon), compact) { }
+
+        internal HeaderIcon(string label, Geometry icon, bool compact)
         {
             Orientation = Orientation.Horizontal;
             var mark = new System.Windows.Shapes.Path
             {
-                Data = Geometry.Parse(icon), Stretch = Stretch.None, StrokeThickness = 1.3,
+                Data = icon, Stretch = Stretch.None, StrokeThickness = 1.1,
                 Width = 16, Height = 16
             };
             mark.Themed(System.Windows.Shapes.Path.StrokeProperty, "BP.Text");
@@ -405,20 +407,6 @@ internal sealed class EquipmentPane : IDockablePaneProvider
 
         internal void SetCompact(bool compact) => text.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
     }
-
-    static string CategoryIcon(BuiltInCategory? category) => category switch
-    {
-        null => "M2,2 H6 V6 H2 Z M10,2 H14 V6 H10 Z M2,10 H6 V14 H2 Z M10,10 H14 V14 H10 Z",
-        BuiltInCategory.OST_LightingFixtures => "M8,2 A6,6 0 1 1 7.99,2 Z M4,4 L12,12 M12,4 L4,12",
-        BuiltInCategory.OST_LightingDevices => "M1,11 H4 M4,11 L12,4 M12,11 H15",
-        BuiltInCategory.OST_ElectricalFixtures => "M2,12 A6,6 0 0 1 14,12 Z M8,6 V2",
-        BuiltInCategory.OST_ElectricalEquipment => "M2,3 H14 V13 H2 Z M2,13 L14,3",
-        BuiltInCategory.OST_CommunicationDevices => "M2,3 L5,2 L7,5 L5,7 Q7,10 10,11 L12,9 L15,11 L14,14 Q4,14 2,3 Z",
-        BuiltInCategory.OST_DataDevices => "M2,2 H14 V11 H2 Z M8,11 V14 M5,14 H11",
-        BuiltInCategory.OST_FireAlarmDevices => "M8,1 Q7,5 4,8 A4.5,4.5 0 1 0 12,8 Q11,6 10,5 L9,8 Q9,4 8,1 Z",
-        BuiltInCategory.OST_SecurityDevices => "M8,2 L14,4 V8 Q13,12 8,14 Q3,12 2,8 V4 Z",
-        _ => "M8,2 A6,6 0 1 1 7.99,2 Z M5,11 V5 L8,8 L11,5 V11"
-    };
 
     void SetGridView(bool grid)
     {
@@ -533,9 +521,9 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         previewIcon.Data = null;
         if (list.SelectedItem is not Item i) { image.Source = null; caption.Text = ""; return; }
         image.Source = i.Preview;
+        if (i.Preview == null) previewIcon.Data = i.Icon;
         if (libraryPath != null)
         {
-            if (i.Preview == null) previewIcon.Data = i.Icon;
             caption.Text = $"{i.Family}\n{i.Category}\n{libraryPath}\nЗагрузите семейство, чтобы выбрать тип для размещения.";
             return;
         }
@@ -734,8 +722,6 @@ internal sealed class EquipmentPane : IDockablePaneProvider
                     <Path x:Name="CategoryMark" Data="{Binding Icon}" Visibility="Collapsed" Width="28" Height="28"
                           Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
                           Stroke="{DynamicResource BP.Text}" StrokeThickness="1.5"/>
-                    <TextBlock x:Name="PreviewPlaceholder" Text="Нет эскиза" Visibility="Collapsed"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource BP.Muted}"/>
                   </Grid>
                 </Border>
                 <TextBlock x:Name="TileTitle" Text="{Binding Type}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" Margin="0,3,0,0"/>
@@ -745,21 +731,13 @@ internal sealed class EquipmentPane : IDockablePaneProvider
             <DataTemplate.Triggers>
               <DataTrigger Binding="{Binding Preview}" Value="{x:Null}">
                 <Setter TargetName="PreviewFrame" Property="Background" Value="{DynamicResource BP.Panel}"/>
-                <Setter TargetName="PreviewPlaceholder" Property="Visibility" Value="Visible"/>
+                <Setter TargetName="CategoryMark" Property="Visibility" Value="Visible"/>
               </DataTrigger>
               <DataTrigger Binding="{Binding Type}" Value="Из папки">
                 <Setter TargetName="Tile" Property="ToolTip" Value="{Binding LibraryPath}"/>
                 <Setter TargetName="TileTitle" Property="Text" Value="{Binding Family}"/>
                 <Setter TargetName="TileSubtitle" Property="Text" Value="{Binding Category}"/>
               </DataTrigger>
-              <MultiDataTrigger>
-                <MultiDataTrigger.Conditions>
-                  <Condition Binding="{Binding Type}" Value="Из папки"/>
-                  <Condition Binding="{Binding Preview}" Value="{x:Null}"/>
-                </MultiDataTrigger.Conditions>
-                <Setter TargetName="PreviewPlaceholder" Property="Visibility" Value="Collapsed"/>
-                <Setter TargetName="CategoryMark" Property="Visibility" Value="Visible"/>
-              </MultiDataTrigger>
             </DataTemplate.Triggers>
           </DataTemplate>
         </ResourceDictionary>

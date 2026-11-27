@@ -18,12 +18,14 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
     const double PointTolerance = 0.0001; // футы
     const double DirectionTolerance = 0.99999;
 
-    sealed record Port(int? Id, XYZ Point, XYZ Axis, double? Diameter, bool NeedsBox = false, bool Tap = false, bool TerminalElbow = false)
+    sealed record Port(int? Id, XYZ Point, XYZ Axis, double? Diameter, bool NeedsBox = false, bool Tap = false, bool TerminalElbow = false,
+        bool RectangularPanelInlet = false)
     {
         public override string ToString()
         {
             var direction = $"{Direction(Axis.X)}/{Direction(Axis.Y)}/{Direction(Axis.Z)}";
             if (Tap) return $"Ответвление · Ø{Mm(Diameter!.Value):0.##} мм · {direction}";
+            if (RectangularPanelInlet) return $"№{Id} · прямоугольный ввод · {direction}";
             return Id is { } id ? $"№{id} · Ø{Mm(Diameter!.Value):0.##} мм · {direction}" : "Вывод распределительной коробки";
         }
         static string Direction(double component) => component.ToString("+0.##;-0.##;0");
@@ -118,7 +120,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
                         continue;
                 }
                 if (leg == null) continue;
-                if (!ConfirmDiameter(leg.Start.Diameter, leg.End.Diameter)) continue;
+                if (!ConfirmDiameter(leg.Start.Diameter, leg.End.Diameter, IsPanel(target))) continue;
                 if (!built) RouteCommand.PrepareWiring(ui);
                 var (next, size, _) = switchBox
                     ? CommitSwitchConnection(ui, type, boxTypes, elbowType, source, (FamilyInstance)target, leg)
@@ -130,7 +132,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
                 visited.Add(target.Id);
                 built = true;
                 ui.RefreshActiveView();
-                if (target is Conduit) return Result.Succeeded;
+                if (target is Conduit || IsPanel(target)) return Result.Succeeded;
 
                 if (FreePorts(source, diameter).Length == 0)
                 {
@@ -266,7 +268,13 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
             if (switchBox != null)
                 return SwitchLegs(start, end, ui.Document.Application.ShortCurveTolerance).FirstOrDefault()
                     ?? throw new InvalidOperationException("К коробке нельзя подойти под 90° из выбранного вывода. Выберите другой начальный вывод.");
-            return new(start, end, shift, Path(start, moved, ui.Document.Application.ShortCurveTolerance, plan), plan);
+            var minimum = ui.Document.Application.ShortCurveTolerance;
+            XYZ[] points = DirectPanelJoint(source, target, start, moved)
+                ? [start.Point, moved.Point]
+                : IsPanel(source) || IsPanel(target)
+                ? PanelPath(start, moved, minimum)
+                : Path(start, moved, minimum, plan);
+            return new(start, end, shift, points, plan);
         }
 
         bool CanAlign(Port start, Port to)
@@ -377,6 +385,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
         if (group != null && group.Start() != TransactionStatus.Started)
             throw new InvalidOperationException("Revit не смог начать выравнивание.");
         var size = leg.Start.Diameter ?? leg.End.Diameter;
+        if (size == null && (leg.Start.RectangularPanelInlet || leg.End.RectangularPanelInlet)) size = Feet(20);
         XYZ? expected = null;
         if (align)
         {
@@ -401,11 +410,20 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
         if (leg.End.NeedsBox)
             next = PutCompatibleBox(doc, boxTypes, level, leg.End.Point + leg.Shift, leg.End.Axis, size);
         var end = leg.End.Tap ? InsertTap(doc, (Conduit)next, leg.End) : ResolvePort(next, leg.End, leg.End.NeedsBox ? size : leg.End.Diameter);
-        double nextDiameter = end.Radius * 2;
+        double nextDiameter = end.Shape == ConnectorProfileType.Round ? end.Radius * 2 : size.Value;
 
         var actualStart = leg.Start.TerminalElbow ? leg.Start with { Point = start.Origin } : Snapshot(start);
         var actualEnd = leg.End.TerminalElbow ? leg.End with { Point = end.Origin } : Snapshot(end);
-        var points = leg.BoxPath == BoxPath.Standard
+        if (DirectPanelJoint(source, target, leg.Start, leg.End) && DirectPanelJoint(source, target, actualStart, actualEnd))
+        {
+            if (IsPanel(target)) JoinRouteEnd(doc, start, end);
+            else JoinRouteEnd(doc, end, start);
+            FinishRouteTransaction(transaction, routeFailures, "Revit отменил прямое соединение с вводом щита.");
+            return (next, nextDiameter, [actualStart.Point, actualEnd.Point]);
+        }
+        var points = IsPanel(source) || IsPanel(target)
+            ? PanelPath(actualStart, actualEnd, doc.Application.ShortCurveTolerance)
+            : leg.BoxPath == BoxPath.Standard
             ? Path(actualStart, actualEnd, doc.Application.ShortCurveTolerance, leg.PlanarLights)
             : SwitchPath(Snapshot(start), Snapshot(end), doc.Application.ShortCurveTolerance);
         if (expected != null && (FixturePoint((FamilyInstance)target).DistanceTo(expected) > PointTolerance || points.Length != 2))
@@ -454,6 +472,7 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
 
     static Connector ResolvePort(Element element, Port planned, double? diameter)
     {
+        if (planned.RectangularPanelInlet) return PanelTerminal(element, planned);
         var port = planned.Id is { } id
             ? Ports(element).FirstOrDefault(p => p.Id == id)
             : FacingPort(element, planned.Axis, diameter);
@@ -462,10 +481,15 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
         return port;
     }
 
-    static Port[] FreePorts(Element element, double? diameter) => Ports(element)
-        .Where(p => !p.IsConnected && MatchesDiameter(p, diameter)).OrderBy(p => p.Id).Select(Snapshot).ToArray();
+    static Port[] FreePorts(Element element, double? diameter) => IsPanel(element)
+        ? PanelTerminals(element).Where(p => !p.IsConnected)
+            .Where(p => p.Shape != ConnectorProfileType.Round || MatchesDiameter(p, diameter)).OrderBy(p => p.Id)
+            .Select(PanelPort).ToArray()
+        : Ports(element).Where(p => !p.IsConnected && MatchesDiameter(p, diameter)).OrderBy(p => p.Id).Select(Snapshot).ToArray();
 
-    static Port Snapshot(Connector port) => new(port.Id, port.Origin, port.CoordinateSystem.BasisZ, port.Radius * 2);
+    static Port Snapshot(Connector port) => port.Shape == ConnectorProfileType.Rectangular && IsPanel(port.Owner)
+        ? PanelPort(port)
+        : new(port.Id, port.Origin, port.CoordinateSystem.BasisZ, port.Radius * 2);
 
     static Port[] Nearest(IEnumerable<Port> ports, XYZ point, bool plan) => ports
         .OrderBy(p => (plan ? Horizontal(p.Point - point) : p.Point - point).GetLength())
@@ -480,20 +504,23 @@ public sealed partial class ConduitThroughLightsCommand : EomCommand
     }
 
     static bool SameSize(double? a, double? b) => a == null || b == null || Math.Abs(a.Value - b.Value) <= PointTolerance;
-    static bool ConfirmDiameter(double? first, double? second)
+    static bool ConfirmDiameter(double? first, double? second, bool directPanel = false)
     {
         if (SameSize(first, second)) return true;
         var dialog = new TaskDialog(Title)
         {
             MainInstruction = $"Соединить выводы разных диаметров: Ø{Mm(first!.Value):0.##} и Ø{Mm(second!.Value):0.##} мм?",
-            MainContent = "BotPlus попробует поставить переход или соединить выводы напрямую, если Revit это допускает.",
+            MainContent = directPanel
+                ? "BotPlus подключит короб прямо к вводу щита, если Revit принимает соединение этих размеров."
+                : "BotPlus попробует поставить переход или соединить выводы напрямую, если Revit это допускает.",
             CommonButtons = TaskDialogCommonButtons.Yes | TaskDialogCommonButtons.No,
             DefaultButton = TaskDialogResult.No
         };
         return dialog.Show() == TaskDialogResult.Yes;
     }
 
-    static bool IsRouteTarget(Element e) => e is Conduit || IsFitting(e) || IsLight(e) || IsSwitch(e) || (e is FamilyInstance && Ports(e).Length > 0);
+    static bool IsRouteTarget(Element e) => e is Conduit || IsFitting(e) || IsLight(e) || IsSwitch(e)
+        || IsPanel(e) || (e is FamilyInstance && Ports(e).Length > 0);
     static bool IsLight(Element e) => e.Category?.BuiltInCategory == BuiltInCategory.OST_LightingFixtures && e is FamilyInstance;
     static bool IsSwitch(Element e) => e.Category?.BuiltInCategory == BuiltInCategory.OST_LightingDevices && e is FamilyInstance;
     static bool IsFitting(Element e) => e.Category?.BuiltInCategory == BuiltInCategory.OST_ConduitFitting && e is FamilyInstance;

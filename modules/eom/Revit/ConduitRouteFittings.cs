@@ -34,7 +34,8 @@ public sealed partial class ConduitThroughLightsCommand
     }
 
     static (Conduit First, Conduit Last) BuildPath(Document doc, ConduitType type, Level level, FamilySymbol? elbowType, Connector? start,
-        Connector? end, XYZ[] points, double diameter, bool free = false, bool startElbow = false, bool endElbow = false)
+        Connector? end, XYZ[] points, double diameter, bool free = false, bool startElbow = false, bool endElbow = false,
+        bool panelDrop = false)
     {
         var corners = new (Connector Inlet, Connector Outlet)?[points.Length];
         Element? firstOwner = start?.Owner, lastOwner = end?.Owner;
@@ -88,8 +89,8 @@ public sealed partial class ConduitThroughLightsCommand
 
         var first = pieces[0];
         var last = pieces[^1];
-        start = firstOwner == null ? null : Ports(firstOwner).Single(c => c.Id == firstPortId);
-        end = lastOwner == null ? null : Ports(lastOwner).Single(c => c.Id == lastPortId);
+        start = firstOwner == null ? null : (IsPanel(firstOwner) ? PanelTerminals(firstOwner) : Ports(firstOwner)).Single(c => c.Id == firstPortId);
+        end = lastOwner == null ? null : (IsPanel(lastOwner) ? PanelTerminals(lastOwner) : Ports(lastOwner)).Single(c => c.Id == lastPortId);
         if (startElbow && start != null) JoinElbow(doc, start, first.Segment.ConnectorManager.Lookup(first.Start), "на торце стояка");
         if (endElbow && end != null) JoinElbow(doc, last.Segment.ConnectorManager.Lookup(last.End), end, "на торце стояка");
 
@@ -98,15 +99,15 @@ public sealed partial class ConduitThroughLightsCommand
             var piece = pieces[i];
             var a = piece.Segment.ConnectorManager.Lookup(piece.Start);
             var b = piece.Segment.ConnectorManager.Lookup(piece.End);
-            if (free && (Math.Abs(a.Origin.Z - points[0].Z) > PointTolerance || Math.Abs(b.Origin.Z - points[0].Z) > PointTolerance))
+            if (free && !panelDrop && (Math.Abs(a.Origin.Z - points[0].Z) > PointTolerance || Math.Abs(b.Origin.Z - points[0].Z) > PointTolerance))
                 throw new InvalidOperationException("При установке фитинга Revit изменил отметку участка. Свободная трасса должна оставаться горизонтальной.");
             if ((b.Origin - a.Origin).DotProduct((points[i + 1] - points[i]).Normalize()) <= doc.Application.ShortCurveTolerance)
                 throw new InvalidOperationException($"После установки отводов на участке №{i + 1} не осталось места для короба.");
             if ((i > 0 || start != null) && !a.IsConnected || (i < pieces.Length - 1 || end != null) && !b.IsConnected)
                 throw new InvalidOperationException($"Revit не подключил оба конца участка №{i + 1}.");
         }
-        if (start != null && !startElbow && !TerminalConnected(start, first.Segment.ConnectorManager.Lookup(first.Start))
-            || end != null && !endElbow && !TerminalConnected(end, last.Segment.ConnectorManager.Lookup(last.End)))
+        if (start != null && !startElbow && !RouteEndConnected(start, first.Segment.ConnectorManager.Lookup(first.Start))
+            || end != null && !endElbow && !RouteEndConnected(end, last.Segment.ConnectorManager.Lookup(last.End)))
             throw new InvalidOperationException("После установки отводов крайние участки отсоединились от выбранных выводов.");
         return (first.Segment, last.Segment);
     }
@@ -115,8 +116,24 @@ public sealed partial class ConduitThroughLightsCommand
         first.AllRefs.Cast<Connector>().Where(p => p.IsConnected && p.Owner is FamilyInstance && first.IsConnectedTo(p))
             .Any(p => Ports(p.Owner).Any(c => c.Id != p.Id && second.IsConnectedTo(c)));
 
+    static bool RouteEndConnected(Connector terminal, Connector conduit) =>
+        IsPanel(terminal.Owner) ? terminal.IsConnectedTo(conduit) : TerminalConnected(terminal, conduit);
+
     static void JoinRouteEnd(Document doc, Connector conduit, Connector target)
     {
+        if (IsPanel(target.Owner))
+        {
+            var inletPoint = target.Origin;
+            try { Join(conduit, target); }
+            catch (Exception error) when (error is InvalidOperationException or Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                throw new InvalidOperationException($"Revit не выполнил прямое подключение к вводу щита №{target.Id}. Проверьте свободу вывода и место для подхода. {error.Message}", error);
+            }
+            doc.Regenerate();
+            if (!conduit.IsConnectedTo(target) || target.Origin.DistanceTo(inletPoint) > PointTolerance)
+                throw new InvalidOperationException("Revit не подтвердил прямую связь с вводом щита или изменил его положение.");
+            return;
+        }
         if (MatchesDiameter(target, conduit.Radius * 2)) { Join(conduit, target); return; }
         if (conduit.IsConnected || target.IsConnected || conduit.Origin.DistanceTo(target.Origin) > PointTolerance
             || conduit.CoordinateSystem.BasisZ.DotProduct(target.CoordinateSystem.BasisZ) > -DirectionTolerance)

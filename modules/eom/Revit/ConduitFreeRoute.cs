@@ -60,6 +60,7 @@ public sealed partial class ConduitThroughLightsCommand
             throw new InvalidOperationException("На этой отметке нет горизонтального вывода.");
         var start = compatible.OrderByDescending(port => SameSize(port.Diameter, diameter))
             .ThenByDescending(port => port.Axis.DotProduct((firstPoint - port.Point).Normalize())).First();
+        start = start with { Diameter = start.Diameter ?? diameter ?? Feet(20) };
         var (point, _) = SnapFreePoint(start, [], firstPoint, [], FreeMinimum(source.Document));
         return (start, point);
     }
@@ -108,6 +109,7 @@ public sealed partial class ConduitThroughLightsCommand
                 candidates = candidates.Concat(approaches).DistinctBy(port => Math.Round(TurnBetween(XYZ.BasisX, port.Axis), 4)).ToArray();
             }
             if (candidates.Length == 0) throw new InvalidOperationException(PortMessage(element, diameter, candidates));
+            if (IsPanel(element)) return Nearest(candidates, hit, true);
             var flat = candidates.Where(port => Math.Abs(port.Axis.Z) <= PointTolerance && Math.Abs(port.Point.Z - start.Point.Z) <= PointTolerance).ToArray();
             if (flat.Length == 0)
                 throw new InvalidOperationException($"На отметке свободной трассы {Mm(start.Point.Z):0.##} мм нет совместимого горизонтального вывода.");
@@ -135,7 +137,20 @@ public sealed partial class ConduitThroughLightsCommand
             foreach (var end in Ends(target, hit, marker))
             {
                 XYZ[] points;
-                try { points = ConnectFreePoints(start, vertices, end, bends, minimum); }
+                try
+                {
+                    if (!IsPanel(target))
+                        points = ConnectFreePoints(start, vertices, end, bends, minimum);
+                    else
+                    {
+                        var origin = vertices.Count == 0 ? start.Point : vertices[^1];
+                        var axis = FreeDirection(start, vertices);
+                        if (axis.GetLength() <= PointTolerance)
+                            axis = Horizontal(end.Point - origin).GetLength() > PointTolerance ? Horizontal(end.Point - origin).Normalize() : XYZ.BasisX;
+                        var drop = PanelPath(start with { Point = origin, Axis = axis }, end, minimum);
+                        points = vertices.Count == 0 ? drop : [start.Point, .. vertices.Take(vertices.Count - 1), .. drop.Skip(1)];
+                    }
+                }
                 catch (InvalidOperationException) { continue; }
                 yield return (end, points);
             }
@@ -198,7 +213,7 @@ public sealed partial class ConduitThroughLightsCommand
             (Port End, XYZ[] Points) approach;
             try { approach = Approaches(target, pick.Point, pick.PortId).FirstOrDefault(); }
             catch (InvalidOperationException) { continue; }
-            if (approach.End == null || !ConfirmDiameter(diameter, approach.End.Diameter)) continue;
+            if (approach.End == null || !ConfirmDiameter(diameter, approach.End.Diameter, IsPanel(target))) continue;
             try
             {
                 Prepare();
@@ -222,7 +237,8 @@ public sealed partial class ConduitThroughLightsCommand
         Connector? from = source == null ? null : start.Tap ? InsertTap(doc, (Conduit)source, start) : ResolvePort(source, start, diameter);
         Connector? to = target == null || end == null ? null : end.Tap ? InsertTap(doc, (Conduit)target, end) : ResolvePort(target, end, end.Diameter);
         BuildPath(doc, type, level, elbowType, from, to, points, diameter, free: true,
-            startElbow: start.TerminalElbow, endElbow: end?.TerminalElbow == true);
+            startElbow: start.TerminalElbow, endElbow: end?.TerminalElbow == true,
+            panelDrop: target != null && IsPanel(target));
         FinishRouteTransaction(transaction, failures, "Revit отменил построение свободной трассы.");
     }
 

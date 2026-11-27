@@ -318,6 +318,13 @@ Check(MepGeometry.Nearest(points, new V3(0.5, 0, 0), null) == 1, "3D distance wi
 Check(MepGeometry.Nearest([], x, null) == -1, "No candidates");
 Console.WriteLine("PASS nearest connector to the click in the view plane");
 
+Check(NearV(MepGeometry.ConnectedPipeFarEnd(x, x * 3, x * 5, -x, 0.01), x), "Coaxial extension keeps the far end fixed");
+Check(NearV(MepGeometry.ConnectedPipeFarEnd(x * 3, x, x * 2, x, 0.01), x * 3), "Coaxial shortening keeps the far end fixed");
+Check(NearV(MepGeometry.ConnectedPipeFarEnd(x, x * 3, x * 5 + y, -x, 0.01), x + y), "Lateral connection offsets the far end and extends the pipe");
+Check(NearV(MepGeometry.ConnectedPipeFarEnd(x, x * 3, x * 5, -y, 0.01), x * 5 - y * 2), "Nonparallel connection rotates the pipe without collapsing it");
+Check(NearV(MepGeometry.ConnectedPipeFarEnd(x, x * 3, x, -x, 0.01), -x), "Coincidence with the far end preserves the original length");
+Console.WriteLine("PASS connected pipe alignment: fixed end, lateral offset, turn and minimum length");
+
 var chain = MepGeometry.OrderCollinear([(new V3(10, 0, 0), new V3(6, 0, 0)), (new V3(0, 0, 0), new V3(5, 0, 0)), (new V3(12, 0, 0), new V3(15, 0, 0))]);
 // The first segment (10 → 6) sets the chain direction: -X.
 Check(chain.Order.Select(l => l.Index).SequenceEqual([2, 0, 1]) && !chain.Order[1].Reversed && chain.Order[0].Reversed && chain.Order[2].Reversed, "Order along the line, reversed flag");

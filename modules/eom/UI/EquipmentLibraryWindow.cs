@@ -121,7 +121,12 @@ internal sealed class EquipmentLibraryWindow : Window
         categoryChoices.Children.Clear();
         foreach (var pair in categories.OrderBy(pair => pair.Value, StringComparer.CurrentCultureIgnoreCase))
         {
-            var check = new CheckBox { Content = pair.Value, IsChecked = selected.Contains(pair.Key), Margin = new Thickness(2, 2, 0, 2) };
+            var check = new CheckBox
+            {
+                Content = new EquipmentPane.HeaderIcon(pair.Value, EquipmentCategoryIcons.Get(pair.Key, pair.Value), false),
+                IsChecked = selected.Contains(pair.Key), Margin = new Thickness(2, 2, 0, 2)
+            };
+            AutomationProperties.SetName(check, pair.Value);
             checks.Add(pair.Key, check);
             categoryChoices.Children.Add(check);
         }

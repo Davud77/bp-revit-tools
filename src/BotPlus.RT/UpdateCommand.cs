@@ -34,17 +34,20 @@ internal sealed class UpdateWindow : Window
     readonly TextBox log = new() { IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto, FontFamily = new FontFamily("Consolas"), FontSize = 11,
         Padding = new Thickness(10) };
-    readonly Button check = MakeButton("Проверить обновления"), download = MakeButton("Скачать обновление"), install = MakeButton("Запустить установщик");
+    readonly Button check = MakeButton("Проверить обновления"), download = MakeButton("Скачать обновление"), showInstaller = MakeButton("Показать установщик");
     readonly ProgressBar progress = new() { Height = 6, Maximum = 100 };
     readonly CancellationTokenSource cancellation = new();
-    readonly HttpClient http = new() { Timeout = TimeSpan.FromMinutes(10) };
+    readonly HttpClient http;
     ReleaseInfo? release;
     string? file;
     bool busy, closed;
 
     static Button MakeButton(string text) => new() { Content = text, Padding = new Thickness(14, 4, 14, 4), Margin = new Thickness(0, 0, 8, 0) };
-    public UpdateWindow()
+    public UpdateWindow() : this(new HttpClient { Timeout = TimeSpan.FromMinutes(10) }, UpdateSession.DownloadsFolder, NotifyDownload) { }
+
+    internal UpdateWindow(HttpClient http, Func<string> downloadFolder, Action<UpdateWindow, string> notifyDownload)
     {
+        this.http = http;
         Title = "Обновления BotPlus RT"; Width = 740; Height = 580; MinWidth = 660; MinHeight = 480;
         MaxHeight = SystemParameters.WorkArea.Height - 24; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         BotPlusTheme.Apply(this);
@@ -66,7 +69,7 @@ internal sealed class UpdateWindow : Window
         var summary = new StackPanel { Margin = new Thickness(0, 0, 0, 16) };
         summary.Children.Add(status); checkedAt.SetResourceReference(TextBlock.ForegroundProperty, "BP.Muted"); checkedAt.Margin = new Thickness(0, 6, 0, 0); summary.Children.Add(checkedAt); Add(summary, 2);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal };
-        foreach (var button in new[] { check, download, install }) buttons.Children.Add(button); Add(buttons, 3);
+        foreach (var button in new[] { check, download, showInstaller }) buttons.Children.Add(button); Add(buttons, 3);
         var activity = new StackPanel { Margin = new Thickness(0, 0, 0, 12) }; activity.Children.Add(stage); activity.Children.Add(progress); Add(activity, 4);
         var tabs = new TabControl(); tabs.Items.Add(new TabItem { Header = "Журнал обновления", Content = log }); Add(tabs, 5);
         var footer = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
@@ -77,33 +80,54 @@ internal sealed class UpdateWindow : Window
         try { if (File.Exists(UpdateSession.LogPath)) log.Text = string.Join(Environment.NewLine, File.ReadLines(UpdateSession.LogPath).TakeLast(200)) + Environment.NewLine; } catch (IOException) { }
         release = UpdateSession.Latest; Refresh();
         check.Click += async (_, _) => await Check();
-        download.Click += async (_, _) => await Run("Загрузка установщика", async () =>
+        download.Click += async (_, _) =>
         {
-            if (release == null) return;
-            file = null; Log("INFO", $"Загрузка {release.Name} · {release.Size / 1048576d:F1} МБ.");
-            file = await new ReleaseClient(http).Download(release,
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotPlus.RT", "Updates"),
-                new Progress<int>(n => { if (!closed) { progress.Value = n; stage.Text = $"Загрузка установщика · {n}%"; } }), cancellation.Token);
-            Log("INFO", "Размер файла и SHA-256 подтверждены. Установщик готов."); stage.Text = "Установщик проверен и готов к запуску";
-        });
-        install.Click += (_, _) =>
-        {
-            try
+            if (busy || release is not { } update) return;
+            await Run("Загрузка установщика", async () =>
             {
-                if (file == null || release == null || !ReleaseClient.Verify(file, release)) throw new InvalidDataException("Проверка установщика не пройдена. Скачайте файл заново.");
-                Log("INFO", "Запуск проверенного установщика " + release.Name);
-                Process.Start(new ProcessStartInfo(file) { UseShellExecute = true }); Close();
-            }
-            catch (Exception error) { file = null; Log("ERROR", error.Message); status.Text = error.Message; RefreshButtons(); }
+                file = null;
+                Log("INFO", $"Загрузка {update.Name} · {update.Size / 1048576d:F1} МБ.");
+                file = await new ReleaseClient(http).Download(update, downloadFolder(),
+                    new Progress<int>(n => { if (!closed && busy) { progress.Value = n; stage.Text = $"Загрузка установщика · {n}%"; } }), cancellation.Token);
+                if (closed) return;
+                Log("INFO", $"Размер файла и SHA-256 подтверждены. Установщик сохранён в «Загрузки». {file}");
+                progress.Value = 100;
+                stage.Text = "Установщик скачан. Сохраните модели и закройте Revit.";
+            });
+            if (!closed && file is { } downloaded) notifyDownload(this, downloaded);
         };
+        showInstaller.Click += (_, _) => RevealInstaller();
         Loaded += async (_, _) => { OpenWindow = this; if (release == null) await Check(); };
         Closed += (_, _) => { if (OpenWindow == this) OpenWindow = null; closed = true; cancellation.Cancel(); http.Dispose(); };
+    }
+
+    static void NotifyDownload(UpdateWindow window, string path)
+    {
+        if (MessageBox.Show(window,
+            $"Установщик скачан в папку «Загрузки».\n\nСохраните модели и закройте все окна Revit. Затем запустите {Path.GetFileName(path)}.\n\nПоказать установщик в Проводнике?",
+            "Обновление BotPlus RT скачано", MessageBoxButton.YesNo, MessageBoxImage.Information, MessageBoxResult.No) == MessageBoxResult.Yes)
+            window.RevealInstaller();
+    }
+
+    void RevealInstaller()
+    {
+        try
+        {
+            if (file == null || !File.Exists(file)) throw new FileNotFoundException("Установщик не найден в папке «Загрузки». Скачайте файл заново.");
+            string explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+            Process.Start(new ProcessStartInfo(explorer, $"/select,\"{file}\"") { UseShellExecute = false });
+        }
+        catch (Exception error)
+        {
+            if (error is FileNotFoundException) file = null;
+            Log("ERROR", error.Message); status.Text = error.Message; RefreshButtons();
+        }
     }
     Task Check() => Run("Проверка доступных версий", async () => { release = await UpdateSession.Check(http, cancellation.Token); file = null; Log("INFO", "Последняя версия: " + UpdateSession.Display(release.Version)); });
     void RefreshButtons()
     {
         check.IsEnabled = !busy; download.IsEnabled = !busy && release != null && release.Version > UpdateSession.Current;
-        install.IsEnabled = !busy && file != null;
+        showInstaller.IsEnabled = !busy && file != null;
     }
     void Refresh()
     {
