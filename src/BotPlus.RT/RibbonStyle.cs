@@ -71,6 +71,22 @@ internal static class RibbonStyle
             else if(name.StartsWith("BotPlusOpenView")||name.StartsWith("BotPlusViewRange")){MepIcons.Draw(d,name);}
             else if(name.Contains("Crossings")){d.DrawRoundedRectangle(paper,outline,new Rect(12,3,8,26),1,1);d.DrawRectangle(null,new Pen(blue,3.4),new Rect(2,12,28,8));d.DrawEllipse(Brushes.White,new Pen(green,2),new Point(16,16),4,4);}
             else if(name.Contains("Opening")){d.DrawRoundedRectangle(paper,outline,new Rect(4,4,24,24),1,1);d.DrawEllipse(Brushes.White,new Pen(blue,2),new Point(16,16),7,7);Line(1,16,10,16);Line(22,16,31,16);Line(16,1,16,10);Line(16,22,16,31);}
+            else if (name is "BotPlusCopyFromLink" or "BotPlusCopyFromProject")
+            {
+                if (name == "BotPlusCopyFromLink")
+                {
+                    d.DrawRoundedRectangle(null, new Pen(blue, 2), new Rect(3, 5, 13, 8), 4, 4);
+                    d.DrawRoundedRectangle(null, new Pen(blue, 2), new Rect(9, 10, 13, 8), 4, 4);
+                }
+                else
+                {
+                    Shape("M3,4 L14,4 L19,9 L19,21 L3,21 Z", paper);
+                    Line(7, 9, 13, 9);
+                    Line(7, 14, 15, 14);
+                }
+                d.DrawRectangle(paper, outline, new Rect(15, 17, 14, 12));
+                Shape("M19,23 L25,23 M22,20 L22,26", null, new Pen(green, 2));
+            }
             else if(name.Contains("Tags"))
             {
                 Shape("M3,7 L18,7 L25,14 L18,21 L3,21 Z",paper);d.DrawEllipse(blue,null,new Point(18,14),2,2);Line(6,11,13,11);Line(6,16,12,16);

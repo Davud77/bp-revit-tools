@@ -21,10 +21,10 @@ public sealed partial class ConduitThroughLightsCommand
             .OrderBy(item => item.Priority).ThenBy(item => item.Symbol.Id.Value).Select(item => item.Symbol).ToArray();
     }
 
-    static ConduitType ChooseType(Document doc, Element source)
+    static ConduitType ChooseType(Document doc, Element? source)
     {
         if (source is Conduit conduit) return (ConduitType)doc.GetElement(conduit.GetTypeId());
-        var connected = Ports(source).SelectMany(p => p.AllRefs.Cast<Connector>()).Select(p => p.Owner)
+        var connected = (source == null ? [] : Ports(source)).SelectMany(p => p.AllRefs.Cast<Connector>()).Select(p => p.Owner)
             .OfType<Conduit>().FirstOrDefault();
         if (connected != null) return (ConduitType)doc.GetElement(connected.GetTypeId());
         var preferred = doc.GetDefaultElementTypeId(ElementTypeGroup.ConduitType);
@@ -33,17 +33,21 @@ public sealed partial class ConduitThroughLightsCommand
             ?? throw new InvalidOperationException("В проекте нет типа короба с соединительными деталями.");
     }
 
-    static void BuildPath(Document doc, ConduitType type, Level level, FamilySymbol? elbowType, Connector start,
-        Connector end, XYZ[] points, double diameter)
+    static (Conduit First, Conduit Last) BuildPath(Document doc, ConduitType type, Level level, FamilySymbol? elbowType, Connector? start,
+        Connector? end, XYZ[] points, double diameter, bool free = false, bool startElbow = false, bool endElbow = false,
+        bool panelDrop = false)
     {
         var corners = new (Connector Inlet, Connector Outlet)?[points.Length];
+        Element? firstOwner = start?.Owner, lastOwner = end?.Owner;
+        int? firstPortId = start?.Id, lastPortId = end?.Id;
         for (int i = 1; i < points.Length - 1; i++)
         {
             var inlet = (points[i - 1] - points[i]).Normalize();
             var outlet = (points[i + 1] - points[i]).Normalize();
-            if (Math.Abs(inlet.DotProduct(outlet)) > 1 - DirectionTolerance)
+            bool rightAngle = Math.Abs(inlet.DotProduct(outlet)) <= 1 - DirectionTolerance;
+            if (!free && !rightAngle)
                 throw new InvalidOperationException("Оси участков не образуют угол 90°.");
-            if (elbowType != null && Math.Abs(inlet.Z) < 1 - DirectionTolerance && Math.Abs(outlet.Z) < 1 - DirectionTolerance)
+            if (rightAngle && elbowType != null && Math.Abs(inlet.Z) < 1 - DirectionTolerance && Math.Abs(outlet.Z) < 1 - DirectionTolerance)
             {
                 using var trial = new SubTransaction(doc);
                 trial.Start();
@@ -67,9 +71,10 @@ public sealed partial class ConduitThroughLightsCommand
             var segment = BuildSegment(doc, type, level, a, b, diameter);
             var inlet = EndAt(segment, a);
             var outlet = EndAt(segment, b);
-            if (from != null) Join(from, inlet);
-            if (to != null) Join(outlet, to);
             pieces[i] = (segment, inlet.Id, outlet.Id);
+            if (from != null && (i != 0 || !startElbow)) JoinRouteEnd(doc, inlet, from);
+            if (to != null && (i != pieces.Length - 1 || !endElbow))
+                JoinRouteEnd(doc, segment.ConnectorManager.Lookup(pieces[i].End), to);
         }
 
         for (int i = 1; i < points.Length - 1; i++)
@@ -79,34 +84,110 @@ public sealed partial class ConduitThroughLightsCommand
             var after = pieces[i];
             var beforeEnd = before.Segment.ConnectorManager.Lookup(before.End);
             var afterStart = after.Segment.ConnectorManager.Lookup(after.Start);
-            try
-            {
-                var fitting = doc.Create.NewElbowFitting(beforeEnd, afterStart);
-                doc.Regenerate();
-                var attached = Ports(fitting).SelectMany(p => p.AllRefs.Cast<Connector>()).Select(p => p.Owner.Id).ToHashSet();
-                if (!attached.Contains(before.Segment.Id) || !attached.Contains(after.Segment.Id))
-                    throw new InvalidOperationException("Revit не подключил оба участка к отводу.");
-            }
-            catch (Autodesk.Revit.Exceptions.ApplicationException error)
-                when (error is Autodesk.Revit.Exceptions.ArgumentException or Autodesk.Revit.Exceptions.InvalidOperationException)
-            {
-                throw new InvalidOperationException($"Не удалось поставить отвод №{i}: не хватает места либо для выбранного типа или диаметра Revit не нашёл подходящий отвод. {error.Message}", error);
-            }
+            JoinElbow(doc, beforeEnd, afterStart, $"в точке №{i}");
         }
+
+        var first = pieces[0];
+        var last = pieces[^1];
+        start = firstOwner == null ? null : (IsPanel(firstOwner) ? PanelTerminals(firstOwner) : Ports(firstOwner)).Single(c => c.Id == firstPortId);
+        end = lastOwner == null ? null : (IsPanel(lastOwner) ? PanelTerminals(lastOwner) : Ports(lastOwner)).Single(c => c.Id == lastPortId);
+        if (startElbow && start != null) JoinElbow(doc, start, first.Segment.ConnectorManager.Lookup(first.Start), "на торце стояка");
+        if (endElbow && end != null) JoinElbow(doc, last.Segment.ConnectorManager.Lookup(last.End), end, "на торце стояка");
 
         for (int i = 0; i < pieces.Length; i++)
         {
             var piece = pieces[i];
             var a = piece.Segment.ConnectorManager.Lookup(piece.Start);
             var b = piece.Segment.ConnectorManager.Lookup(piece.End);
+            if (free && !panelDrop && (Math.Abs(a.Origin.Z - points[0].Z) > PointTolerance || Math.Abs(b.Origin.Z - points[0].Z) > PointTolerance))
+                throw new InvalidOperationException("При установке фитинга Revit изменил отметку участка. Свободная трасса должна оставаться горизонтальной.");
             if ((b.Origin - a.Origin).DotProduct((points[i + 1] - points[i]).Normalize()) <= doc.Application.ShortCurveTolerance)
                 throw new InvalidOperationException($"После установки отводов на участке №{i + 1} не осталось места для короба.");
-            if (!a.IsConnected || !b.IsConnected)
+            if ((i > 0 || start != null) && !a.IsConnected || (i < pieces.Length - 1 || end != null) && !b.IsConnected)
                 throw new InvalidOperationException($"Revit не подключил оба конца участка №{i + 1}.");
         }
-        if (!start.IsConnectedTo(pieces[0].Segment.ConnectorManager.Lookup(pieces[0].Start))
-            || !end.IsConnectedTo(pieces[^1].Segment.ConnectorManager.Lookup(pieces[^1].End)))
+        if (start != null && !startElbow && !RouteEndConnected(start, first.Segment.ConnectorManager.Lookup(first.Start))
+            || end != null && !endElbow && !RouteEndConnected(end, last.Segment.ConnectorManager.Lookup(last.End)))
             throw new InvalidOperationException("После установки отводов крайние участки отсоединились от выбранных выводов.");
+        return (first.Segment, last.Segment);
+    }
+
+    static bool TerminalConnected(Connector first, Connector second) => first.IsConnectedTo(second) ||
+        first.AllRefs.Cast<Connector>().Where(p => p.IsConnected && p.Owner is FamilyInstance && first.IsConnectedTo(p))
+            .Any(p => Ports(p.Owner).Any(c => c.Id != p.Id && second.IsConnectedTo(c)));
+
+    static bool RouteEndConnected(Connector terminal, Connector conduit) =>
+        IsPanel(terminal.Owner) ? terminal.IsConnectedTo(conduit) : TerminalConnected(terminal, conduit);
+
+    static void JoinRouteEnd(Document doc, Connector conduit, Connector target)
+    {
+        if (IsPanel(target.Owner))
+        {
+            var inletPoint = target.Origin;
+            try { Join(conduit, target); }
+            catch (Exception error) when (error is InvalidOperationException or Autodesk.Revit.Exceptions.ApplicationException)
+            {
+                throw new InvalidOperationException($"Revit не выполнил прямое подключение к вводу щита №{target.Id}. Проверьте свободу вывода и место для подхода. {error.Message}", error);
+            }
+            doc.Regenerate();
+            if (!conduit.IsConnectedTo(target) || target.Origin.DistanceTo(inletPoint) > PointTolerance)
+                throw new InvalidOperationException("Revit не подтвердил прямую связь с вводом щита или изменил его положение.");
+            return;
+        }
+        if (MatchesDiameter(target, conduit.Radius * 2)) { Join(conduit, target); return; }
+        if (conduit.IsConnected || target.IsConnected || conduit.Origin.DistanceTo(target.Origin) > PointTolerance
+            || conduit.CoordinateSystem.BasisZ.DotProduct(target.CoordinateSystem.BasisZ) > -DirectionTolerance)
+            throw new InvalidOperationException("Для перехода нужны свободные соосные выводы.");
+
+        var segment = conduit.Owner;
+        var appliance = target.Owner;
+        int conduitId = conduit.Id, targetId = target.Id;
+        var fixedPoint = target.Origin;
+        using (var trial = new SubTransaction(doc))
+        {
+            trial.Start();
+            try
+            {
+                doc.Create.NewTransitionFitting(conduit, target);
+                doc.Regenerate();
+                if (TerminalConnected(conduit, target) && target.Origin.DistanceTo(fixedPoint) <= PointTolerance)
+                {
+                    if (trial.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Revit отменил переход.");
+                    return;
+                }
+            }
+            catch (Autodesk.Revit.Exceptions.ApplicationException) { }
+            if (trial.RollBack() != TransactionStatus.RolledBack)
+                throw new InvalidOperationException("Revit не смог откатить пробную установку перехода.");
+        }
+
+        conduit = Ports(segment).Single(c => c.Id == conduitId);
+        target = Ports(appliance).Single(c => c.Id == targetId);
+        try { conduit.ConnectTo(target); }
+        catch (Autodesk.Revit.Exceptions.ApplicationException error)
+        {
+            throw new InvalidOperationException("Revit не подключил выводы разных диаметров. Проверьте переход в типе трубы и место для фитинга.", error);
+        }
+        doc.Regenerate();
+        if (!TerminalConnected(conduit, target) || target.Origin.DistanceTo(fixedPoint) > PointTolerance)
+            throw new InvalidOperationException("Соединение разных диаметров не подтверждено или Revit сдвинул вывод. Участок отменён.");
+    }
+
+    static void JoinElbow(Document doc, Connector before, Connector after, string location)
+    {
+        double degrees = (-before.CoordinateSystem.BasisZ).AngleTo(after.CoordinateSystem.BasisZ) * 180 / Math.PI;
+        try
+        {
+            var fitting = doc.Create.NewElbowFitting(before, after);
+            doc.Regenerate();
+            var ports = Ports(fitting);
+            if (!ports.Any(p => before.IsConnectedTo(p)) || !ports.Any(p => after.IsConnectedTo(p)))
+                throw new InvalidOperationException("Revit не подключил оба конца к отводу.");
+        }
+        catch (Exception error) when (error is InvalidOperationException or Autodesk.Revit.Exceptions.ApplicationException)
+        {
+            throw new InvalidOperationException($"Не удалось поставить отвод {location} ({degrees:0.#}°). Проверьте поддержку угла и место между отводами. {error.Message}", error);
+        }
     }
 
     static (Connector Inlet, Connector Outlet)? PutPlanElbow(Document doc, FamilySymbol symbol, Level level,
@@ -114,6 +195,7 @@ public sealed partial class ConduitThroughLightsCommand
     {
         if (!symbol.IsActive) symbol.Activate();
         var elbow = doc.Create.NewFamilyInstance(corner, symbol, level, StructuralType.NonStructural);
+        if (elbow.Category?.BuiltInCategory != BuiltInCategory.OST_ConduitFitting) RouteService.StyleNewElement(elbow);
         doc.Regenerate();
         var ports = FitPorts(doc, elbow, diameter);
         if (ports.Length != 2 || ports.Any(p => !MatchesDiameter(p, diameter))) return null;
@@ -169,6 +251,7 @@ public sealed partial class ConduitThroughLightsCommand
     {
         if (!symbol.IsActive) symbol.Activate();
         var box = doc.Create.NewFamilyInstance(new XYZ(center.X, center.Y, level.ProjectElevation), symbol, level, StructuralType.NonStructural);
+        if (box.Category?.BuiltInCategory != BuiltInCategory.OST_ConduitFitting) RouteService.StyleNewElement(box);
         doc.Regenerate();
         var ports = FitPorts(doc, box, diameter);
         var compatible = ports.Where(p => !p.IsConnected && MatchesDiameter(p, diameter)).ToArray();

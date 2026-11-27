@@ -1,4 +1,4 @@
-﻿using BotPlus.RT;
+using BotPlus.RT;
 
 void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
 NumberingTarget Target(long id, bool writable = true, bool selected = true) => new(id, writable, selected);
@@ -22,30 +22,19 @@ catch (OverflowException) { }
 Check(ScheduleNumberingPolicy.Build([Row(Target(1))], int.MaxValue, false).Groups[0].Number == int.MaxValue, "Maximum single value");
 Console.WriteLine("PASS ambiguous row identities and integer overflow fail before writes");
 
-// Grouped (non-itemized) table: Revit's collapsed rows matched to our groups.
-var exact = ScheduleNumberingPolicy.Reconcile([0, 1, 2], 3, out _);
-Check(exact!.Select(r => string.Join(",", r)).SequenceEqual(["0", "1", "2"]), "One row per group");
-var merged = ScheduleNumberingPolicy.Reconcile([0, null, 3], 4, out _);
-Check(merged!.Select(r => string.Join(",", r)).SequenceEqual(["0", "1,2", "3"]), "Blank marker merges neighbouring groups (Revit grouped them together)");
-var mergedEnd = ScheduleNumberingPolicy.Reconcile([0, null], 3, out _);
-Check(mergedEnd!.Last().SequenceEqual([1, 2]), "Merged row at the end");
-Check(ScheduleNumberingPolicy.Reconcile([0, 0, 1], 2, out var f1) is null && f1!.Contains("разделена"), "Group split over rows is rejected");
-Check(ScheduleNumberingPolicy.Reconcile([null, null], 4, out var f2) is null && f2!.Contains("подряд"), "Two merged rows in a row are ambiguous");
-Check(ScheduleNumberingPolicy.Reconcile([0, 2], 3, out _) is null && ScheduleNumberingPolicy.Reconcile([0, null, 2], 3, out _) is null, "Missing group and a one-group blank row rejected");
-Console.WriteLine("PASS grouped rows reconciled with Revit's collapsed table");
+long[] ordered = [100, 80, 42, 15, 9, 70];
+var split = ScheduleNumberingPolicy.SplitRows(ordered, [2, 2, 1, 1]);
+Check(split != null && split.Select(row => string.Join(",", row)).SequenceEqual(["100,80", "42,15", "9", "70"]),
+    "Consecutive multi-element native rows retain order and membership");
+Check(ScheduleNumberingPolicy.SplitRows(ordered, [2, 2, 1]) == null, "Missing element must fail");
+Check(ScheduleNumberingPolicy.SplitRows(ordered, [2, 2, 3]) == null, "Excess element count must fail");
+Check(ScheduleNumberingPolicy.SplitRows(ordered, [2, 0, 4]) == null, "An empty group must fail");
+Check(ScheduleNumberingPolicy.SplitRows(ordered, [2, int.MaxValue]) == null, "Malformatted counts cannot overflow");
+Console.WriteLine("PASS native row counts and incomplete or invalid grouping rejected");
 
-IReadOnlyList<IReadOnlyList<long>> sortRows = new IReadOnlyList<long>[] { new long[] { 100 }, new long[] { 70 }, new long[] { 10 } };
-var values = new Dictionary<long, NumberingSortValue> { [100] = new(1, 10, ""), [70] = new(1, 2, ""), [10] = new(1, 2, "") };
-var sorted = ScheduleNumberingPolicy.Sort(sortRows, id => values[id], null);
-Check(sorted.SelectMany(r => r).SequenceEqual(new long[] { 70, 10, 100 }), "Numeric sorting and stable equal keys");
-values[100] = new(2, 0, "шт."); values[70] = new(2, 0, "м"); values[10] = new(2, 0, "м");
-sorted = ScheduleNumberingPolicy.Sort(sortRows, id => values[id], null);
-Check(sorted.SelectMany(r => r).SequenceEqual(new long[] { 70, 10, 100 }), "Unit sorting before numbering");
-try
-{
-    ScheduleNumberingPolicy.Sort([new long[] { 100, 70 }], id => values[id], null);
-    throw new Exception("Mixed grouped sort keys must fail");
-}
-catch (InvalidOperationException) { }
-Check(ScheduleNumberingPolicy.Sort([new long[] { 100, 70 }], id => values[id], new HashSet<long> { 70 }).Count == 1, "Selection restricts grouped sort keys");
-Console.WriteLine("PASS sorting by units/numbers, stable ties and ambiguous grouped keys");
+IReadOnlyList<IReadOnlyList<long>> sortRows = [new long[] { 100, 101 }, new long[] { 70 }, new long[] { 10, 11 }];
+var sorted = ScheduleNumberingPolicy.Sort(sortRows, [new(1, 10, ""), new(1, 2, ""), new(1, 2, "")]);
+Check(sorted.SelectMany(r => r).SequenceEqual(new long[] { 70, 10, 11, 100, 101 }), "Sort by the row total, keeping groups and stable ties");
+sorted = ScheduleNumberingPolicy.Sort(sortRows, [new(2, 0, "шт."), new(2, 0, "м"), new(0, 0, "")]);
+Check(sorted.SelectMany(r => r).SequenceEqual(new long[] { 10, 11, 70, 100, 101 }), "Sort by native row text with blank first");
+Console.WriteLine("PASS sorting by row values, stable ties and grouped row membership");

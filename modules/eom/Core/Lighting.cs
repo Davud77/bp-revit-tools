@@ -225,6 +225,22 @@ public static class Lighting
         return Grid(minX, minY, maxX, maxY, rows, cols);
     }
 
+    /// <summary>Центрированная сетка с заданными шагами; шаг сохраняется при отбрасывании точек вне контура.</summary>
+    public static List<(double X, double Y)> SpacedGrid(double minX, double minY, double maxX, double maxY, double stepX, double stepY)
+    {
+        if (new[] { minX, minY, maxX, maxY, stepX, stepY }.Any(v => !double.IsFinite(v)) || stepX <= 0 || stepY <= 0 || maxX <= minX || maxY <= minY)
+            throw new InvalidOperationException("Проверьте габариты помещения и положительные шаги по X и Y.");
+        double cols = Math.Max(1, Math.Floor((maxX - minX) / stepX + 1e-9));
+        double rows = Math.Max(1, Math.Floor((maxY - minY) / stepY + 1e-9));
+        if (rows * cols > 5000) throw new InvalidOperationException("Сетка содержит больше 5000 точек. Увеличьте шаг.");
+        var points = new List<(double X, double Y)>((int)(rows * cols));
+        double startX = minX + ((maxX - minX) - (cols - 1) * stepX) / 2;
+        double startY = minY + ((maxY - minY) - (rows - 1) * stepY) / 2;
+        for (int y = 0; y < rows; y++)
+            for (int x = 0; x < cols; x++) points.Add((startX + x * stepX, startY + y * stepY));
+        return points;
+    }
+
     /// <summary>Стандартная шкала освещённости, лк.</summary>
     public static readonly double[] LuxScale = [5, 7, 10, 20, 30, 50, 75, 100, 150, 200, 300, 400, 500, 600, 750, 1000, 1250, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000];
 }

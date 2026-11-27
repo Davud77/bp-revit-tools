@@ -1,5 +1,7 @@
 using BotPlus.Eom.Core;
 
+PointLightingChecks.Run();
+
 static void Check(bool ok, string message) { if (!ok) throw new Exception(message); }
 static bool Near(double a, double b, double eps = 1e-6) => Math.Abs(a - b) <= eps;
 
@@ -31,10 +33,54 @@ if (OperatingSystem.IsWindows())
             "unmapped categories are skipped together with damaged files");
         var cached = EquipmentLibrary.ReadFolder(root.FullName, scanned.Library, new Dictionary<string, int>(), (_, _) => { }, default);
         Check(ReferenceEquals(family, cached.Library.Entries.Single()), "reuse metadata only for unchanged files");
+        var legacyDuplicates = scanned.Library with
+        {
+            Entries =
+            [
+                family with { Name = "Устаревшая запись" },
+                family with { File = family.File.ToLowerInvariant().Replace('\\', '/'), Name = "Другой дубль" }
+            ]
+        };
+        var recovered = EquipmentLibrary.ReadFolder(root.FullName, legacyDuplicates, categoryNames, (_, _) => { }, default);
+        Check(recovered.Library.Entries.Single().Name == family.Name, "ambiguous legacy entries force a fresh RFA read");
+        string alias = Path.Combine(nested.FullName, "балка.rfa");
+        int completedFiles = 0;
+        var duplicates = EquipmentLibrary.ReadFiles(root.FullName, [alias, primary, primary], empty, categoryNames,
+            (done, _) => completedFiles = done, default);
+        Check(duplicates.Library.Entries.Single().File == family.File && duplicates.Skipped == 2 && completedFiles == 3,
+            "case-insensitive and exact duplicates do not stop indexing or progress");
+        EquipmentLibraryIndex.Publish(duplicates.Library, null, default);
+        Check(EquipmentLibraryIndex.Open(root.FullName)!.Entries.Length == 1, "deduplicated scan publishes a readable shared index");
         File.SetLastWriteTimeUtc(primary, family.Modified.AddMinutes(5));
         var changed = EquipmentLibrary.ReadFolder(root.FullName, scanned.Library, new Dictionary<string, int>(), (_, _) => { }, default);
         Check(changed.Library.Entries.Length == 0 && changed.Skipped == 2,
             "a changed RFA invalidates its indexed category and thumbnail");
+
+        var portable = EquipmentLibraryIndex.Publish(scanned.Library, null, default);
+        var fromDisk = EquipmentLibraryIndex.Open(root.FullName)!;
+        Check(fromDisk.Entries is [{ Preview: null, PreviewSize: > 0 }], "opening the index only reads metadata");
+        Check(ReferenceEquals(fromDisk, EquipmentLibraryIndex.Open(root.FullName, fromDisk)), "unchanged shared revision is reused");
+        File.SetLastWriteTimeUtc(primary, family.Modified);
+        var incremental = EquipmentLibrary.ReadFolder(root.FullName, fromDisk, categoryNames, (_, _) => { }, default);
+        Check(ReferenceEquals(fromDisk.Entries.Single(), incremental.Library.Entries.Single()), "unchanged entries reuse preview offsets");
+        var republished = EquipmentLibraryIndex.Publish(incremental.Library, fromDisk, default);
+        Check(republished.Index!.Revision != portable.Index!.Revision, "publishing replaces the revision");
+        using (var reused = republished.Index.OpenPreviews())
+            Check(republished.Index.ReadPreview(reused, republished.Entries.Single()).SequenceEqual(family.Preview!),
+                "incremental publishing retains cached previews");
+        var copied = root.CreateSubdirectory("Другой ПК");
+        var large = Enumerable.Range(0, 30_000).Select(i => family with { File = $"Папка\\{i}.rfa" }).ToArray();
+        EquipmentLibraryIndex.Publish(new(root.FullName, large), null, default);
+        File.Copy(Path.Combine(root.FullName, EquipmentLibraryIndex.FileName), Path.Combine(copied.FullName, EquipmentLibraryIndex.FileName));
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var opened = EquipmentLibraryIndex.Open(copied.FullName)!;
+        timer.Stop();
+        Check(opened.Folder == copied.FullName && opened.Entries.Length == 30_000 && opened.Entries.All(entry => entry.Preview == null),
+            "portable index opens under another root without RFA files or eager previews");
+        using var previews = opened.Index!.OpenPreviews();
+        Check(opened.Index.ReadPreview(previews, opened.Entries[29_999]).SequenceEqual(family.Preview!),
+            "final preview is addressable independently");
+        Console.WriteLine($"PASS UGO portable index: {opened.Entries.Length} metadata rows opened in {timer.ElapsedMilliseconds} ms");
         Console.WriteLine("PASS UGO index: background metadata, PNG, backup exclusion, skipped files and cache invalidation");
     }
     finally { root.Delete(recursive: true); }
@@ -48,6 +94,14 @@ Check(!ConduitRoutingRule.OfferAlignment(50.01, 50, coincidenceMm), "larger offs
 Check(!ConduitRoutingRule.OfferAlignment(20, 0, coincidenceMm), "zero alignment threshold disables the offer");
 Check(Near(ConduitRoutingRule.ParallelLead(1000, 0, coincidenceMm, minimumMm), 0), "collinear connections are straight");
 Check(Near(ConduitRoutingRule.ParallelLead(1000, 125, coincidenceMm, minimumMm), 500), "zigzag corners split the forward run");
+Check(Near(ConduitRoutingRule.SnapTurn(97.6, [30, 45, 90]), 90), "97.6 degree turn snaps to 90 before construction");
+Check(Near(ConduitRoutingRule.SnapTurn(-49, [30, 45, 90]), -45), "clockwise turn keeps its sign");
+Check(Near(ConduitRoutingRule.SnapTurn(46, [30, 90]), 30), "disabled 45 degree bend cannot be selected");
+Check(Near(ConduitRoutingRule.SnapTurn(4, [30, 45, 90]), 0), "small changes in heading extend the straight run");
+Check(Near(ConduitRoutingRule.SnapTurn(97.6, []), 0), "a type without tested bends only draws straight");
+Check(Near(ConduitRoutingRule.SnapHeading(6.9), 0) && Near(ConduitRoutingRule.SnapHeading(11), 15), "free heading snaps to 0 or 15 degrees");
+Check(Near(ConduitRoutingRule.SnapHeading(-27), -30) && Near(ConduitRoutingRule.SnapHeading(137), 135), "free heading snaps in both directions beyond the first quadrant");
+Check(Near(ConduitRoutingRule.SnapTurn(73, ConduitRoutingRule.BendAngles), 75), "75 degree fitting is considered by the 15 degree grid");
 foreach (var (forward, offset) in new[] { (-100.0, 80.0), (5.0, 80.0), (100.0, 2.0) })
 {
     bool rejectedRoute = false;
@@ -84,6 +138,16 @@ Console.WriteLine("PASS breaker and cable selection by current, voltage drop and
 var load = EomCalc.PanelLoad([new("Щ", "1", "", 1000, 1, 1, 0), new("Щ", "2", "", 1000, 0.8, 1, 0)]);
 Check(Near(load.P, 2000) && Near(load.Q, 750) && Near(load.S, Math.Sqrt(2000 * 2000 + 750 * 750)), "panel load");
 Console.WriteLine("PASS panel load P, Q, S");
+
+var panelFeeder = PanelCalculation.Calculate(new("Щ1", "1", "Розетки", 2300, 1, 1, 20), 230, 0.8, s with { CableReserve = 0 }, catalog);
+Check(Near(panelFeeder.Demand, 1.84) && Near(panelFeeder.Apparent, 1.84) && Near(panelFeeder.Current, 10), "Elpro group current uses installed power");
+Check(Near(panelFeeder.Leakage, 4.2) && Near(PanelCalculation.VoltageDrop(10, 230, 1, 20, 1.5, 1), 2.609), "Elpro leakage and copper voltage drop");
+var panelSupply = PanelCalculation.Calculate(new("Щ1", "2", "Щ2", 2300, 1, 1, 20), 230, 0.8, s with { CableReserve = 0 }, catalog, feedsPanel: true);
+Check(Near(panelSupply.Current, 8), "Elpro downstream panel current uses demand power");
+Check(PanelCalculation.SelectBreaker(10, 1, catalog)?.Rating >= 12.5, "Elpro breaker reserve factor");
+var panelPhases = PanelCalculation.Balance([10, 4, 5, 2], 3);
+Check(Near(panelPhases.Totals.Sum(), 30) && panelPhases.Totals.Max() - panelPhases.Totals.Min() < 8, "Elpro phase reallocation reduces imbalance while preserving current");
+Console.WriteLine("PASS Elpro feeder formulas: installed/demand current, apparent power, leakage and copper voltage drop");
 
 // Кабинет 6х5 м, h = 2,2 м: i = 2·30/(2,2·22) ≈ 1,24.
 double index = Lighting.RoomIndex(30, 22, 2.2);

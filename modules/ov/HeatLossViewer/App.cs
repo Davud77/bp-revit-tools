@@ -63,7 +63,7 @@ namespace HeatLossViewer
 
             var connect = Split("OVMepConnect", "Соединить");
             connect.AddPushButton(Item("OVMepConnectConnectors", "Соединить\nконнекторы", typeof(Mep.MepConnectCommand),
-                "Присоединяемый элемент, затем опорный: ближайшие свободные коннекторы. Первый элемент перемещается и поворачивается. Esc — выход."));
+                "Щёлкните по элементу у свободного конца, затем по элементу назначения у нужного вывода. Команда подводит первый элемент ко второму. Esc — выход."));
             connect.AddPushButton(Item("OVMepConnectLine", "Соединить\nпрямолинейные", typeof(Mep.MepConnectLineCommand),
                 "Пакетное соединение прямолинейных участков одной прямой: удлиняются свободные концы, добавляются муфты и переходы."));
             connect.AddPushButton(Item("OVMepConnectDiffuser", "Подключить\nдиффузоры", typeof(Mep.MepDiffuserCommand),

@@ -114,7 +114,7 @@ public sealed class EngineeringRule
     {
         if (string.IsNullOrWhiteSpace(Category)) throw new InvalidOperationException("Не указана категория правила.");
         if (EngineeringRulesPolicy.IsIgnored(TypeMark)) throw new InvalidOperationException("Для маркировки «игнорировать» правило не задаётся.");
-        if (NameEnabled)
+        if (NameEnabled && EngineeringRulesPolicy.SupportsNaming(Category))
         {
             if (string.IsNullOrWhiteSpace(NameTarget)) throw new InvalidOperationException("Укажите параметр для наименования.");
             if (Parts.Count == 0) throw new InvalidOperationException("Добавьте хотя бы один компонент наименования.");
@@ -297,7 +297,8 @@ public sealed class EngineeringRuleSet
         {
             foreach (var (category, _) in EngineeringRulesPolicy.Categories)
                 foreach (bool quantity in new[] { false, true })
-                    if (!ConditionalGroups.Any(g => g.Category == category && g.IsQuantity == quantity))
+                    if ((quantity || EngineeringRulesPolicy.SupportsNaming(category))
+                        && !ConditionalGroups.Any(g => g.Category == category && g.IsQuantity == quantity))
                         ConditionalGroups.Add(new ConditionalRuleGroup { Category = category, IsQuantity = quantity,
                             Target = quantity ? EngineeringRulesPolicy.DefaultQuantityTarget : EngineeringRulesPolicy.DefaultNameTarget,
                             Otherwise = EngineeringRulesPolicy.DefaultFormula(category) });
@@ -306,7 +307,8 @@ public sealed class EngineeringRuleSet
         ApplyPipeNameDefaults();
         ApplyPipeQuantityDefaults();
         if (EnabledDefaultsVersion >= 1) return;
-        foreach (var group in ConditionalGroups.Where(g => g.Target == (g.IsQuantity ? EngineeringRulesPolicy.DefaultQuantityTarget : EngineeringRulesPolicy.DefaultNameTarget)))
+        foreach (var group in ConditionalGroups.Where(g => (g.IsQuantity || EngineeringRulesPolicy.SupportsNaming(g.Category))
+            && g.Target == (g.IsQuantity ? EngineeringRulesPolicy.DefaultQuantityTarget : EngineeringRulesPolicy.DefaultNameTarget)))
             foreach (var formula in group.Conditions.Select(c => c.Formula).Append(group.Otherwise))
             {
                 var standard = EngineeringRulesPolicy.DefaultFormula(group.Category);
@@ -326,9 +328,10 @@ public sealed class EngineeringRuleSet
 
     public void ValidateConditionalGroups()
     {
-        if (ConditionalGroups.GroupBy(g => (g.Category, g.Target)).Any(g => g.Count() > 1))
+        var groups = ConditionalGroups.Where(g => g.IsQuantity || EngineeringRulesPolicy.SupportsNaming(g.Category)).ToList();
+        if (groups.GroupBy(g => (g.Category, g.Target)).Any(g => g.Count() > 1))
             throw new InvalidOperationException("В категории уже есть правило для этого заполняемого параметра.");
-        foreach (var group in ConditionalGroups) group.Validate();
+        foreach (var group in groups) group.Validate();
     }
 
     /// <summary>Legacy mark rules become explicit conditions, without changing their formulas or coverage.</summary>
@@ -339,6 +342,7 @@ public sealed class EngineeringRuleSet
             foreach (bool quantity in new[] { false, true })
             {
                 // Once converted, later edits or deletion of conditions must never restore legacy branches.
+                if (!quantity && !EngineeringRulesPolicy.SupportsNaming(category)) continue;
                 if (ConditionalGroups.Any(g => g.Category == category && g.IsQuantity == quantity)) continue;
                 foreach (var legacy in Rules.Where(r => r.Category == category).GroupBy(r => quantity ? r.QuantityTarget : r.NameTarget))
                     ConditionalGroups.Add(new ConditionalRuleGroup
@@ -407,6 +411,7 @@ public sealed class EngineeringRuleSet
         var results = new List<EngineeringRule>();
         foreach (var group in groups)
         {
+            if (!group.IsQuantity && !EngineeringRulesPolicy.SupportsNaming(category)) continue;
             var f = group.Select(p => p == "Маркировка типоразмера" ? mark ?? "" : text(p));
             var result = new EngineeringRule { Category = category };
             if (!group.IsQuantity)
@@ -429,7 +434,12 @@ public sealed class EngineeringRuleSet
     {
         if (EngineeringRulesPolicy.IsIgnored(typeMark)) return null;
         string? mark = EngineeringRulesPolicy.NormalizeMark(typeMark);
-        return Rules.FirstOrDefault(r => r.Category == category && r.TypeMark == mark && r.IsActive);
+        bool names = EngineeringRulesPolicy.SupportsNaming(category);
+        var rule = Rules.FirstOrDefault(r => r.Category == category && r.TypeMark == mark && (r.QuantityEnabled || names && r.NameEnabled));
+        if (names || rule is not { NameEnabled: true }) return rule;
+        var quantity = rule.Clone();
+        quantity.NameEnabled = false;
+        return quantity;
     }
 
     public EngineeringRule? Find(string category, string? typeMark)
@@ -485,7 +495,7 @@ public sealed class EngineeringRuleSet
     public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
     /// <summary>
-    /// Формулы по умолчанию (как в настройках BIM2B пользователя): трубы, гибкие трубы и изоляция труб по маркировке типоразмера.
+    /// Формулы по умолчанию для труб, гибких труб и количества изоляции труб по маркировке типоразмера.
     /// Подставляются в окно, пока в проекте нет сохранённых правил. Запас — «Нет», округление — «Нет».
     /// </summary>
     public static List<EngineeringRule> DefaultRules()
@@ -494,7 +504,8 @@ public sealed class EngineeringRuleSet
         static NamePart P(string parameter, string prefix = "") => new() { Parameter = parameter, Prefix = prefix };
         static EngineeringRule R(string category, string? mark, string source, QuantityUnit unit, params NamePart[] parts) => new()
         {
-            Category = category, TypeMark = mark, NameEnabled = true, Parts = [.. parts], QuantityEnabled = true, QuantitySource = source,
+            Category = category, TypeMark = mark, NameEnabled = EngineeringRulesPolicy.SupportsNaming(category),
+            Parts = [.. parts], QuantityEnabled = true, QuantitySource = source,
             Reserve = 1, Unit = unit, Decimals = 6, Rounding = QuantityRounding.Nearest
         };
         return
@@ -503,9 +514,9 @@ public sealed class EngineeringRuleSet
             R("OST_PipeCurves", "Ду х Стенка", "Длина", QuantityUnit.Meter, P(comment), P("Диаметр", " ø"), P(EngineeringRulesPolicy.WallThicknessSource, "x")),
             R("OST_FlexPipeCurves", "Гофры", EngineeringRulesPolicy.CountSource, QuantityUnit.Piece, P(comment)),
             R("OST_FlexPipeCurves", "Подводки", EngineeringRulesPolicy.CountSource, QuantityUnit.Piece, P(comment), P("Диаметр", " ø")),
-            R("OST_PipeInsulations", "Трубки", "Длина", QuantityUnit.Meter, P(comment), P("Толщина изоляции", " толщиной "), P("Размер трубы", " для трубы ")),
-            R("OST_PipeInsulations", "Трубки цветные", "Длина", QuantityUnit.Meter, P(comment), P("Размер трубы", " для трубы ")),
-            R("OST_PipeInsulations", "Цилиндры", "Объем", QuantityUnit.Piece, P(comment), P("Толщина изоляции", " толщиной "), P("Размер трубы", " для трубы ")),
+            R("OST_PipeInsulations", "Трубки", "Длина", QuantityUnit.Meter),
+            R("OST_PipeInsulations", "Трубки цветные", "Длина", QuantityUnit.Meter),
+            R("OST_PipeInsulations", "Цилиндры", "Объем", QuantityUnit.Piece),
         ];
     }
 
@@ -588,11 +599,13 @@ public static class EngineeringRulesPolicy
         string size = category is "OST_DuctFitting" or "OST_PipeFitting" ? EngineeringRulesPolicy.FittingSizeSource : EngineeringRulesPolicy.SortedSizeSource;
         return new EngineeringRule
         {
-            Category = category, TypeMark = mark, NameEnabled = true, QuantityEnabled = true,
+            Category = category, TypeMark = mark, NameEnabled = SupportsNaming(category), QuantityEnabled = true,
             Parts = [new NamePart { Parameter = EngineeringRulesPolicy.TypeNameSource }, new NamePart { Parameter = size, Prefix = " " }],
             QuantitySource = source, Unit = unit, Decimals = decimals, Reserve = EngineeringRulesPolicy.DefaultReserve
         };
     }
+
+    internal static bool SupportsNaming(string category) => category != "OST_PipeInsulations";
 
     public static string CategoryLabel(string key) => Categories.FirstOrDefault(c => c.Key == key).Label ?? key;
 

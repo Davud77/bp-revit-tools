@@ -1,10 +1,13 @@
 global using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using BotPlus.RT;
 
 internal static class Program
@@ -23,12 +26,56 @@ internal static class Program
         if (UpdateSession.Error == null || UpdateSession.Latest.Version != new Version(1, 7, 0)) throw new Exception("Network failure lost previous successful result");
         UpdateSession.Error = null; UpdateSession.CheckedAt = DateTime.Now;
         Render("available", output, "Доступно обновление");
+        CheckDownload();
         UpdateSession.Latest = UpdateSession.Latest with { Version = UpdateSession.Current };
         Render("current", output, "Установлена актуальная версия");
         UpdateSession.Latest = null; UpdateSession.Error = "Нет соединения с GitHub";
         Render("offline", output, "Не удалось проверить обновления");
         RenderSettings(output); CheckSettings(output);
         Console.WriteLine("PASS patch version, failed check preserves cached release, three window states rendered without clipped buttons");
+    }
+    static void CheckDownload()
+    {
+        if (!Path.IsPathFullyQualified(UpdateSession.DownloadsFolder())) throw new Exception("Windows Downloads path was not resolved");
+        byte[] bytes = "installer fixture"u8.ToArray();
+        var release = UpdateSession.Latest! with { Size = bytes.Length, Sha256 = Convert.ToHexString(SHA256.HashData(bytes)) };
+        UpdateSession.Latest = release;
+        var folder = Directory.CreateTempSubdirectory("BotPlusDownloadsCheck-").FullName;
+        string expected = Path.Combine(folder, release.Name);
+        string? notified = null;
+        var frame = new DispatcherFrame();
+        using var http = new HttpClient(new DownloadFixture(bytes));
+        var window = new UpdateWindow(http, () => folder, (_, path) =>
+        {
+            notified = path;
+            frame.Continue = false;
+        });
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+        timer.Tick += (_, _) => frame.Continue = false;
+        try
+        {
+            var content = (FrameworkElement)window.Content;
+            content.Measure(new Size(700, 500)); content.Arrange(new Rect(0, 0, 700, 500)); content.UpdateLayout();
+            var buttons = Descendants(content).OfType<Button>().ToArray();
+            var show = buttons.Single(b => Equals(b.Content, "Показать установщик"));
+            if (show.IsEnabled) throw new Exception("Installer is visible before download");
+            var download = buttons.Single(b => Equals(b.Content, "Скачать обновление"));
+            window.Dispatcher.BeginInvoke(new Action(() => download.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent))));
+            timer.Start();
+            Dispatcher.PushFrame(frame);
+            if (notified != expected || !ReleaseClient.Verify(expected, release) || !show.IsEnabled)
+                throw new Exception("Reminder was not shown after the verified download became available");
+            if (!Descendants(content).OfType<TextBlock>().Any(text => text.Text.Contains("Установщик скачан. Сохраните модели и закройте Revit.")))
+                throw new Exception("Download completion omitted the close-Revit reminder");
+            Console.WriteLine("PASS Windows Downloads path, close-Revit reminder and Reveal button after verified download");
+        }
+        finally
+        {
+            timer.Stop();
+            window.Close();
+            File.Delete(expected);
+            Directory.Delete(folder);
+        }
     }
     static void CheckSettings(string output)
     {
@@ -79,5 +126,7 @@ internal static class Program
     }
     sealed class Failure : HttpMessageHandler
     { protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)); }
+    sealed class DownloadFixture(byte[] bytes) : HttpMessageHandler
+    { protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) }); }
 }
 namespace BotPlus.RT { public sealed class Application { } }

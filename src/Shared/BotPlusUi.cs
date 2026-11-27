@@ -23,7 +23,7 @@ internal static class BotPlusSettings
 {
     internal const string Follow = "follow", Light = "light", Dark = "dark";
     /// <summary>Модули, которыми можно управлять в настройках плагина.</summary>
-    internal static readonly string[] Panels = ["MCP", "Ac2Revit", "ОВ", "Отверстия", "ЭОМ", "Марки", "Спецификации", "Виды"];
+    internal static readonly string[] Panels = ["MCP", "Ac2Revit", "ОВ", "Отверстия", "ЭОМ", "Марки", "Спецификации", "Виды", "Копирование"];
     internal static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BotPlus RT", "settings.json");
 
     internal static string ThemeMode { get; private set; } = Follow;

@@ -62,6 +62,14 @@ public sealed class Application : IExternalApplication
                       AvailabilityClassName = typeof(ViewRangeAvailable).FullName! });
                 ViewportContext.Attach(application);
             }
+            if (!BotPlusSettings.HiddenPanels.Contains("Копирование"))
+            {
+                var copying = application.CreateRibbonPanel("BotPlus RT", "Копирование");
+                copying.AddItem(new PushButtonData("BotPlusCopyFromLink", "Копировать\nиз связи", typeof(Application).Assembly.Location,
+                    typeof(CopyFromLinkCommand).FullName!));
+                copying.AddItem(new PushButtonData("BotPlusCopyFromProject", "Копировать\nиз проекта", typeof(Application).Assembly.Location,
+                    typeof(CopyFromProjectCommand).FullName!));
+            }
             ribbon.CapturePanels(application);
             ribbon.Complete();
             StartupUpdates.Attach(application);

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using Autodesk.Revit.DB;
@@ -59,6 +60,36 @@ internal static class Mep
         int i = MepGeometry.Nearest(list.Select(c => V(c.Origin)).ToList(), V(pick), dir);
         return i < 0 ? null : list[i];
     }
+
+    internal static XYZ? CursorOnView(UIDocument ui)
+    {
+        var view = ui.ActiveView;
+        if (view is View3D { IsPerspective: true } || !GetCursorPos(out var cursor)) return null;
+        var viewport = ui.GetOpenUIViews().FirstOrDefault(v => v.ViewId == view.Id);
+        if (viewport == null) return null;
+        var rect = viewport.GetWindowRectangle();
+        int width = rect.Right - rect.Left;
+        int height = rect.Bottom - rect.Top;
+        if (width <= 0 || height <= 0 || cursor.X < rect.Left || cursor.X > rect.Right ||
+            cursor.Y < rect.Top || cursor.Y > rect.Bottom)
+            return null;
+
+        var corners = viewport.GetZoomCorners();
+        var lowerLeft = corners[0];
+        var diagonal = corners[1] - lowerLeft;
+        var right = view.RightDirection;
+        var up = view.UpDirection;
+        return lowerLeft
+            + right * (diagonal.DotProduct(right) * (cursor.X - rect.Left) / width)
+            + up * (diagonal.DotProduct(up) * (rect.Bottom - cursor.Y) / height);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct ScreenPoint { public int X, Y; }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool GetCursorPos(out ScreenPoint point);
 
     internal static Connector Find(Element e, int connectorId) =>
         Connectors(e).FirstOrDefault(c => c.Id == connectorId) ?? throw new InvalidOperationException("Коннектор больше не существует.");

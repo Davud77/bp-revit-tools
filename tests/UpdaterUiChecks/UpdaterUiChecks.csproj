@@ -11,5 +11,6 @@
     <Compile Include="../../modules/ov/HeatLossViewer/Mep/RiserNumberingWindow.cs" Link="RiserNumberingWindow.cs" />
     <Compile Include="../../src/BotPlus.RT/MepIcons.cs" Link="MepIcons.cs" />
     <Compile Include="../../src/Shared/BotPlusUi.cs" Link="BotPlusUi.cs" />
+    <Compile Include="../../src/Shared/FillHandle.cs" Link="FillHandle.cs" />
   </ItemGroup>
 </Project>

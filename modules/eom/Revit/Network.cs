@@ -39,7 +39,7 @@ internal sealed class Network
         var p = e.get_Parameter(id);
         return p is { StorageType: StorageType.Double, HasValue: true } ? UnitUtils.ConvertFromInternalUnits(p.AsDouble(), unit) : 0;
     }
-    static string Text(Element e, BuiltInParameter id) => e.get_Parameter(id)?.AsString() ?? e.get_Parameter(id)?.AsValueString() ?? "";
+    internal static string Text(Element e, BuiltInParameter id) => e.get_Parameter(id)?.AsString() ?? e.get_Parameter(id)?.AsValueString() ?? "";
 
     internal static DeviceInfo Device(Element e)
     {

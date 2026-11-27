@@ -12,6 +12,8 @@ var host = new BotPlus.RT.Application();
 if (host.OnStartup(app) != Result.Succeeded) throw new Exception("Startup failed");
 if (!app.Tabs.SetEquals(["BotPlus RT"]) || app.Panels[0] != "BotPlus")
     throw new Exception("The host must create one ribbon tab with BotPlus at the start");
+if (!app.Panels.TakeLast(2).SequenceEqual(["Виды", "Копирование"]))
+    throw new Exception("The Copying panel must follow Views");
 host.OnShutdown(app);
 if (!State.Calls.SequenceEqual(new[] { "start:mcp", "start:ac2revit", "start:ov", "start:openings", "start:eom", "stop:eom", "stop:openings", "stop:ov", "stop:ac2revit", "stop:mcp" }))
     throw new Exception("Incorrect module order");
@@ -45,7 +47,7 @@ Console.WriteLine("PASS partial startup failure cleans up handlers and reports t
 
 State.Calls.Clear();
 var configuredApp = new UIControlledApplication();
-BotPlus.Shared.BotPlusSettings.HiddenPanels.UnionWith(["MCP", "Ac2Revit", "Отверстия", "ЭОМ", "Марки", "Спецификации", "Виды"]);
+BotPlus.Shared.BotPlusSettings.HiddenPanels.UnionWith(["MCP", "Ac2Revit", "Отверстия", "ЭОМ", "Марки", "Спецификации", "Виды", "Копирование"]);
 if (host.OnStartup(configuredApp) != Result.Succeeded) throw new Exception("Disabled module started");
 host.OnShutdown(configuredApp);
 if (!State.Calls.SequenceEqual(new[] { "start:ov", "stop:ov" }) || !configuredApp.Panels.SequenceEqual(new[] { "BotPlus", "Избранное" }))

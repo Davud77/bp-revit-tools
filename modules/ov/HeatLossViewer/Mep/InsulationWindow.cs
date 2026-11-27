@@ -2,7 +2,9 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
+using System.Windows.Input;
 using BotPlus.Shared;
 using Binding = System.Windows.Data.Binding;
 using Button = System.Windows.Controls.Button;
@@ -10,6 +12,8 @@ using CheckBox = System.Windows.Controls.CheckBox;
 using ComboBox = System.Windows.Controls.ComboBox;
 using DataGrid = System.Windows.Controls.DataGrid;
 using Grid = System.Windows.Controls.Grid;
+using MenuItem = System.Windows.Controls.MenuItem;
+using ContextMenu = System.Windows.Controls.ContextMenu;
 using MessageBox = System.Windows.MessageBox;
 using Orientation = System.Windows.Controls.Orientation;
 using TextBox = System.Windows.Controls.TextBox;
@@ -46,8 +50,10 @@ internal sealed class InsulationWindow : Window
     readonly List<(string System, CheckBox Box)> systemBoxes = [];
     readonly ComboBox bulkType = new() { MinWidth = 220 };
     readonly TextBox bulkThickness = new() { Width = 60, Text = InsulationPolicy.DefaultThicknessMm.ToString(), VerticalContentAlignment = VerticalAlignment.Center };
-    readonly CheckBox auto = new() { Content = "Строить изоляцию на новых и изменённых трубах автоматически", Margin = new Thickness(0, 0, 0, 4) };
-    readonly CheckBox fittings = new() { Content = "Изолировать фитинги и арматуру (по соединённой трубе)" };
+    readonly CheckBox auto = new() { Content = "Автоматически изолировать новые и изменённые элементы", Margin = new Thickness(0, 0, 0, 4) };
+    readonly CheckBox preserve = new() { Content = "Не восстанавливать изоляцию, снятую вручную", Margin = new Thickness(0, 4, 0, 0) };
+    readonly List<(InsulationCategories Category, MenuItem Item)> categoryChoices = [];
+    readonly Dictionary<DataGridColumn, Action<InsulationRow, InsulationRow>> fillColumns = [];
     readonly DataGrid grid = new() { AutoGenerateColumns = false, CanUserAddRows = false, CanUserDeleteRows = false, SelectionMode = DataGridSelectionMode.Extended, HeadersVisibility = DataGridHeadersVisibility.Column };
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 0) };
     readonly TextBlock caption = new() { VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
@@ -56,12 +62,13 @@ internal sealed class InsulationWindow : Window
     List<string> current = [];
     bool switching;
     internal InsulationSettings? Result { get; private set; }
+    internal bool DeleteAllRequested { get; private set; }
     internal IReadOnlyList<InsulationRow> Rows => rows;
     internal IReadOnlyList<string> Selected => current;
     /// <summary>Сообщение об ошибке ввода; проверки подменяют, чтобы не открывать модальное окно.</summary>
     internal Action<string> Warn;
 
-    internal InsulationWindow(IInsulationModel model, InsulationSettings settings, IReadOnlyCollection<string>? initialSystems)
+    internal InsulationWindow(IInsulationModel model, InsulationSettings settings, IReadOnlyCollection<string>? initialSystems, int insulationCount = 0)
     {
         this.model = model; this.settings = settings;
         Warn = text => MessageBox.Show(this, text, Title);
@@ -116,28 +123,71 @@ internal sealed class InsulationWindow : Window
         grid.Columns.Add(new DataGridTextColumn { Header = "Труб", Binding = new Binding(nameof(InsulationRow.Count)), IsReadOnly = true, Width = 52 });
         grid.Columns.Add(new DataGridTextColumn { Header = "Ø, мм", Binding = new Binding(nameof(InsulationRow.Sizes)), IsReadOnly = true, Width = 70 });
         grid.Columns.Add(new DataGridTextColumn { Header = "Изолировано", Binding = new Binding(nameof(InsulationRow.Insulated)), IsReadOnly = true, Width = 92 });
-        grid.Columns.Add(new DataGridComboBoxColumn { Header = "Тип изоляции", ItemsSource = typeChoices, SelectedItemBinding = new Binding(nameof(InsulationRow.Type)) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }, Width = 230 });
-        grid.Columns.Add(new DataGridTextColumn { Header = "Толщина, мм", Binding = new Binding(nameof(InsulationRow.Thickness)) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }, Width = 96 });
-        grid.Columns.Add(new DataGridTextColumn { Header = new TextBlock { Text = InsulationEngineNames.Name + " изоляции" }, Binding = new Binding(nameof(InsulationRow.InsulationName)) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }, Width = 270 });
+        void EditColumn(DataGridColumn column, Action<InsulationRow, InsulationRow> copy)
+        {
+            grid.Columns.Add(column);
+            fillColumns.Add(column, copy);
+        }
+        var typeBox = new FrameworkElementFactory(typeof(ComboBox));
+        typeBox.SetValue(ItemsControl.ItemsSourceProperty, typeChoices);
+        typeBox.SetValue(FrameworkElement.HorizontalAlignmentProperty, System.Windows.HorizontalAlignment.Stretch);
+        typeBox.SetValue(ComboBox.IsSynchronizedWithCurrentItemProperty, false);
+        typeBox.SetBinding(Selector.SelectedItemProperty, new Binding(nameof(InsulationRow.Type))
+            { Mode = BindingMode.TwoWay, UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged });
+        EditColumn(new DataGridTemplateColumn
+        {
+            Header = "Тип изоляции", Width = 230, IsReadOnly = true, CellTemplate = new DataTemplate { VisualTree = typeBox }
+        }, (source, target) => { if (source.Type != InsulationPolicy.Mixed) target.Type = source.Type; });
+        EditColumn(new DataGridTextColumn { Header = "Толщина, мм", Binding = new Binding(nameof(InsulationRow.Thickness))
+            { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }, Width = 96 }, (source, target) => target.Thickness = source.Thickness);
+        EditColumn(new DataGridTextColumn { Header = new TextBlock { Text = InsulationEngineNames.Name + " изоляции" },
+            Binding = new Binding(nameof(InsulationRow.InsulationName)) { UpdateSourceTrigger = UpdateSourceTrigger.PropertyChanged }, Width = 270 },
+            (source, target) => target.InsulationName = source.InsulationName);
+        grid.PreviewMouseLeftButtonDown += (_, e) =>
+        {
+            if (e.OriginalSource is not DependencyObject part || FillHandle.Ancestor<ComboBox>(part) == null
+                || FillHandle.Ancestor<DataGridCell>(part) is not { DataContext: InsulationRow row } cell) return;
+            if (Keyboard.Modifiers == ModifierKeys.None && !grid.SelectedItems.Contains(row)) grid.SelectedItem = row;
+            grid.CurrentCell = new DataGridCellInfo(row, cell.Column);
+        };
+        new FillHandle(grid, fillColumns.ContainsKey, (column, source, targets) =>
+            Fill(column, (InsulationRow)source, targets.OfType<InsulationRow>())).Attach();
         Add(grid);
 
         var options = new StackPanel { Margin = new Thickness(0, 10, 0, 0) };
         options.Children.Add(new TextBlock { Text = "В наименовании изоляции «" + InsulationPolicy.DiameterToken + "» заменяется диаметром трубы; пустое поле — наименование не заполняется.", Opacity = 0.7, Margin = new Thickness(0, 0, 0, 6), TextWrapping = TextWrapping.Wrap });
-        options.Children.Add(auto); options.Children.Add(fittings);
+        options.Children.Add(CategoriesField());
+        options.Children.Add(auto);
+        options.Children.Add(preserve);
         Grid.SetRow(options, 3); Grid.SetColumn(options, 1); root.Children.Add(options); line++;
         var bottom = new StackPanel();
         bottom.Children.Add(status);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = System.Windows.HorizontalAlignment.Right, Margin = new Thickness(0, 10, 0, 0) };
         var ok = new Button { Content = "OK", IsDefault = true, MinWidth = 85, Margin = new Thickness(0, 0, 8, 0) };
         ok.Themed(BackgroundProperty, "BP.Accent"); ok.Foreground = System.Windows.Media.Brushes.White;
-        ok.ToolTip = "Сохранить правила в проекте и построить изоляцию на всех подходящих трубах.";
+        ok.ToolTip = "Сохранить правила и построить изоляцию для выбранных категорий.";
         var cancel = new Button { Content = "Отмена", IsCancel = true, MinWidth = 85 };
+        var delete = new Button { Content = "Удалить всю изоляцию…", IsEnabled = insulationCount > 0, Margin = new Thickness(0, 0, 12, 0), Padding = new Thickness(10, 2, 10, 2) };
+        delete.ToolTip = "Удалить изоляцию труб, фитингов и арматуры во всём проекте";
+        delete.Click += (_, _) =>
+        {
+            var confirm = MessageBox.Show(this,
+                $"Удалить всю изоляцию труб, фитингов и арматуры в проекте? Экземпляров для удаления: {insulationCount}. "
+                + "Зависимые марки тоже могут удалиться. Автопостроение будет выключено, сохранённые правила останутся в проекте.",
+                Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (confirm != MessageBoxResult.Yes) return;
+            DeleteAllRequested = true;
+            DialogResult = true;
+        };
         ok.Click += (_, _) => Accept();
-        buttons.Children.Add(ok); buttons.Children.Add(cancel);
+        buttons.Children.Add(delete); buttons.Children.Add(ok); buttons.Children.Add(cancel);
         bottom.Children.Add(buttons);
         Grid.SetRow(bottom, 4); Grid.SetColumnSpan(bottom, 2); root.Children.Add(bottom);
 
-        auto.IsChecked = settings.Auto; fittings.IsChecked = settings.Fittings;
+        auto.IsChecked = settings.Auto;
+        preserve.IsChecked = settings.PreserveManualRemovals;
+        preserve.ToolTip = "После сохранения настройки BotPlus запоминает изолированные элементы. "
+            + "Если затем снять с них изоляцию вручную, она не восстановится при построении.";
         // Только системы, в которых есть трубы; число труб — после имени.
         foreach (var (name, count) in new[] { ("", model.Pipes([""]).Sum(g => g.Count)) }.Concat(model.Systems().Select(s => (s, model.Pipes([s]).Sum(g => g.Count)))))
         {
@@ -161,6 +211,42 @@ internal sealed class InsulationWindow : Window
         if (model.InsulationTypes().Count == 0)
             status.Text = "В проекте нет типов изоляции труб. Создайте их в Revit («Изоляция труб» в диспетчере проекта) или загрузите из шаблона.";
         BotPlusTheme.Apply(this);
+    }
+
+    FrameworkElement CategoriesField()
+    {
+        var menu = new ContextMenu { Placement = PlacementMode.Bottom };
+        var button = new Button { Content = "Что изолировать ▾", ContextMenu = menu, Padding = new Thickness(10, 2, 10, 2) };
+        var value = new TextBlock { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
+        foreach (var (category, label) in new[]
+        {
+            (InsulationCategories.Pipes, "Трубы"),
+            (InsulationCategories.Fittings, "Соединительные детали трубопроводов"),
+            (InsulationCategories.Accessories, "Арматура трубопроводов")
+        })
+        {
+            var item = new MenuItem { Header = label, IsCheckable = true, IsChecked = settings.Categories.HasFlag(category), StaysOpenOnClick = true };
+            item.Checked += (_, _) => Refresh();
+            item.Unchecked += (_, _) => Refresh();
+            categoryChoices.Add((category, item));
+            menu.Items.Add(item);
+        }
+        void Refresh()
+        {
+            var labels = categoryChoices.Where(choice => choice.Item.IsChecked).Select(choice => choice.Item.Header).ToList();
+            value.Text = labels.Count == 0 ? "Категории не выбраны" : string.Join(", ", labels);
+        }
+        Refresh();
+        button.Click += (_, _) => { menu.PlacementTarget = button; menu.IsOpen = true; };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
+        row.Children.Add(button);
+        row.Children.Add(value);
+        return row;
+    }
+
+    internal void Fill(DataGridColumn column, InsulationRow source, IEnumerable<InsulationRow> targets)
+    {
+        foreach (var target in targets) fillColumns[column](source, target);
     }
 
     void Toggle(string system, bool on)
@@ -251,7 +337,10 @@ internal sealed class InsulationWindow : Window
     internal bool Accept()
     {
         if (Store() is { } error) { Warn(error); return false; }
-        settings.Auto = auto.IsChecked == true; settings.Fittings = fittings.IsChecked == true;
+        settings.Auto = auto.IsChecked == true;
+        settings.PreserveManualRemovals = preserve.IsChecked == true;
+        settings.Categories = categoryChoices.Where(choice => choice.Item.IsChecked)
+            .Aggregate(InsulationCategories.None, (categories, choice) => categories | choice.Category);
         try { settings.Validate(); }
         catch (InvalidOperationException e) { Warn(e.Message); return false; }
         Result = settings;

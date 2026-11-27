@@ -120,6 +120,17 @@ public static class MepGeometry
         return (d - k * k.Dot(d)).Length;
     }
 
+    public static V3 ConnectedPipeFarEnd(V3 farEnd, V3 freeEnd, V3 target, V3 targetDirection, double minimumLength)
+    {
+        var axis = targetDirection.Unit();
+        var pipe = freeEnd - farEnd;
+        // For parallel pipes, keep the far end's station on the pipe axis.
+        double projectedLength = (farEnd - target).Dot(axis);
+        if (pipe.Unit().Dot(-axis) >= Math.Cos(AngleTolerance) && projectedLength > minimumLength)
+            return target + axis * projectedLength;
+        return target + axis * pipe.Length;
+    }
+
     /// <summary>
     /// Orders straight segments lying on one line. Each link tells whether the segment is reversed so that the chain runs
     /// start → end. Gaps are between consecutive segments; overlap or a segment off the line is an error.

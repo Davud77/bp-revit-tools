@@ -11,10 +11,15 @@ foreach(var malformed in new[]{Json(url:"https://example.com/installer.exe"),Jso
 string folder=Path.Combine(Path.GetTempPath(),"BotPlusUpdateChecks-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);
 using var handler=new Handler(bytes);using var client=new HttpClient(handler);var api=new ReleaseClient(client);
 string file=await api.Download(release,folder,null,CancellationToken.None);if(!ReleaseClient.Verify(file,release))throw new Exception("Verified download failed");
+if (Path.GetFileName(file) != release.Name) throw new Exception("Verified installer did not keep its release name");
+string second = await api.Download(release, folder, null, CancellationToken.None);
+if (Path.GetFileName(second) != "BotPlus.RT-1.6-Setup (2).exe" || !ReleaseClient.Verify(file, release) || !ReleaseClient.Verify(second, release))
+    throw new Exception("Download did not preserve the existing installer");
+File.Delete(second);
 File.AppendAllText(file,"modified");if(ReleaseClient.Verify(file,release))throw new Exception("Post-download change accepted");File.Delete(file);
 handler.Bytes=bytes.Select(b=>(byte)(b^1)).ToArray();
 try{await api.Download(release,folder,null,CancellationToken.None);throw new Exception("Corrupt installer accepted");}catch(InvalidDataException){}
-if(Directory.EnumerateFiles(folder).Any())throw new Exception("Rejected download left an executable");
+if(Directory.EnumerateFiles(folder).Any())throw new Exception("Rejected download left a partial file");
 using var cancelled=new CancellationTokenSource();cancelled.Cancel();try{await api.Download(release,folder,null,cancelled.Token);throw new Exception("Cancellation ignored");}catch(OperationCanceledException){}
 Directory.Delete(folder);Console.WriteLine("PASS release URL/tag/digest checks, streaming download, changed file, corrupt cleanup and cancellation");
 sealed class Handler(byte[] bytes):HttpMessageHandler

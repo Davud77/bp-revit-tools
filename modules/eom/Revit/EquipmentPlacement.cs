@@ -59,45 +59,49 @@ internal static class EquipmentPlacement
     {
         var doc = ui.Document;
         var app = ui.Application.Application;
-        var added = new Dictionary<ElementId, double>();
+        var added = new Dictionary<ElementId, (double? Height, bool Emergency, ElementId View)>();
         var symbolId = symbol.Id;
         void Capture(object? sender, DocumentChangedEventArgs args)
         {
             if (!args.GetDocument().Equals(doc)) return;
-            if ((panel?.OverrideZ ?? defaultZ) is not { } z) return;
+            var settings = (panel?.OverrideZ ?? defaultZ, SystemModeToggle.IsEmergency, doc.ActiveView.Id);
             foreach (var id in args.GetAddedElementIds())
                 if (doc.GetElement(id) is FamilyInstance instance && instance.GetTypeId() == symbolId
                     && instance.SuperComponent == null)
-                    added.TryAdd(id, z);
+                    added.TryAdd(id, settings);
         }
 
-        bool adjustHeight = panel != null || defaultZ != null;
-        if (adjustHeight) app.DocumentChanged += Capture;
+        app.DocumentChanged += Capture;
         try { ui.PromptForFamilyInstancePlacement(symbol); }
         catch (Autodesk.Revit.Exceptions.OperationCanceledException) { }
         finally
         {
-            if (adjustHeight) app.DocumentChanged -= Capture;
+            app.DocumentChanged -= Capture;
             if (panel?.IsVisible == true) panel.Close();
         }
 
-        if (added.Count > 0) ApplyHeight(doc, added);
+        if (added.Count > 0) ApplyPlacement(doc, added);
     }
 
-    static void ApplyHeight(Document doc, Dictionary<ElementId, double> added)
+    static void ApplyPlacement(Document doc, Dictionary<ElementId, (double? Height, bool Emergency, ElementId View)> added)
     {
         var instances = added.Keys.Select(doc.GetElement).OfType<FamilyInstance>().ToList();
         if (instances.Count == 0) return;
 
         var skipped = new List<ElementId>();
-        using var transaction = new Transaction(doc, "ЭОМ: высота вставки оборудования");
+        using var transaction = new Transaction(doc, "ЭОМ: система и высота вставки оборудования");
         transaction.Start();
         foreach (var instance in instances)
-            if (!SetHeight(doc, instance, added[instance.Id]))
+        {
+            var settings = added[instance.Id];
+            EomStore.SaveRouteMode(instance, settings.Emergency);
+            if (doc.GetElement(settings.View) is View view) RouteService.SetRouteColor(view, instance.Id, settings.Emergency);
+            if (settings.Height is { } height && !SetHeight(doc, instance, height))
                 skipped.Add(instance.Id);
+        }
         if (transaction.Commit() != TransactionStatus.Committed)
         {
-            TaskDialog.Show("BotPlus ЭОМ", "Revit отменил изменение высоты. Проверьте размещённые экземпляры.");
+            TaskDialog.Show("BotPlus ЭОМ", "Revit отменил применение системы и высоты. Проверьте размещённые экземпляры.");
             return;
         }
         if (skipped.Count == 0) return;

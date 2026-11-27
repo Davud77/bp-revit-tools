@@ -3,18 +3,19 @@ using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Electrical;
 using Autodesk.Revit.DB.Mechanical;
+using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
 using TaskDialog = Autodesk.Revit.UI.TaskDialog;
-using View = Autodesk.Revit.DB.View;
 
 namespace HeatLossViewer.Mep;
 
-/// <summary>Moves (and turns) the first element so its nearest free connector meets the reference connector. Repeats until Esc.</summary>
+/// <summary>Brings the first picked connector to the second, which serves as the fixed reference.</summary>
 [Transaction(TransactionMode.Manual)]
 public sealed class MepConnectCommand : IExternalCommand
 {
     const string Title = "Соединить коннекторы";
+    const double PositionTolerance = 1e-6; // Internal feet.
 
     public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
     {
@@ -22,26 +23,43 @@ public sealed class MepConnectCommand : IExternalCommand
         var doc = ui.Document;
         while (true)
         {
-            var a = Mep.Pick(ui, "Присоединяемый элемент: щёлкните рядом с его свободным коннектором. Esc — выход");
-            if (a is null) break;
-            var b = Mep.Pick(ui, "Опорный элемент: щёлкните рядом с его свободным коннектором. Esc — выход", e => e.Id != a.Value.Element.Id);
-            if (b is null) break;
-            Mep.Run(doc, Title, () => Connect(doc, a.Value.Element, a.Value.Point, b.Value.Element, b.Value.Point, ui.ActiveView), Title);
+            var source = PickConnector(ui, "Укажите коннектор элемента, который нужно подтянуть. Esc — выход");
+            if (source is null) break;
+            var target = PickConnector(ui, "Укажите коннектор, к которому нужно подключиться. Esc — выход", source.Owner.Id);
+            if (target is null) break;
+            Mep.Run(doc, Title, () => Connect(doc, source, target), Title);
         }
         return Result.Succeeded;
     }
 
-    internal static void Connect(Document doc, Element moving, XYZ movingPick, Element reference, XYZ referencePick, View view)
+    static Connector? PickConnector(UIDocument ui, string prompt, ElementId? excluded = null)
     {
-        var cm = Mep.Nearest(Mep.Ends(moving).Where(c => !Mep.Connected(c)), movingPick, view)
-            ?? throw new InvalidOperationException("У присоединяемого элемента нет свободных коннекторов.");
-        var cr = Mep.Nearest(Mep.Ends(reference).Where(c => !Mep.Connected(c)), referencePick, view)
-            ?? throw new InvalidOperationException("У опорного элемента нет свободных коннекторов.");
-        if (Mep.Ends(moving).Any(c => c.Id != cm.Id && Mep.Connected(c)))
-            throw new InvalidOperationException("Присоединяемый элемент уже подключён к сети и при перемещении оторвался бы от неё. " +
-                "Отключите его или выберите свободный элемент.");
+        var filter = new ElementFilter(e => e.Id != excluded && Mep.Ends(e).Any(c => !Mep.Connected(c)));
+        try
+        {
+            while (true)
+            {
+                var hit = ui.Selection.PickObject(ObjectType.Element, filter, prompt);
+                var element = ui.Document.GetElement(hit.ElementId);
+                var free = Mep.Ends(element).Where(c => !Mep.Connected(c)).OrderBy(c => c.Id).ToList();
+                if (free.Count == 1) return free[0];
+                if ((Mep.CursorOnView(ui) ?? hit.GlobalPoint) is { } point &&
+                    Mep.Nearest(free, point, ui.ActiveView) is { } connector)
+                    return connector;
+                TaskDialog.Show(Title, "Revit не определил коннектор. Щёлкните по элементу рядом с нужным свободным концом.");
+            }
+        }
+        catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return null; }
+    }
+
+    static void Connect(Document doc, Connector cm, Connector cr)
+    {
+        var moving = cm.Owner;
         if (Mep.Locked(moving) is { } why) throw new InvalidOperationException($"Присоединяемый элемент {why}.");
         if (cm.Domain != cr.Domain) throw new InvalidOperationException("Коннекторы относятся к разным инженерным системам.");
+        var existing = Mep.Connectors(moving).Where(Mep.Connected).ToList();
+        if (existing.Count > 0 && (moving is not Pipe || existing.Count != 1 || existing[0].ConnectorType != ConnectorType.End))
+            throw new InvalidOperationException("Первый элемент уже подключён к сети. Его перемещение нарушит существующие соединения.");
         // Joined directly, without unions or transitions; different sizes only on confirmation.
         if (!Mep.SameSize(cm, cr))
         {
@@ -49,8 +67,14 @@ public sealed class MepConnectCommand : IExternalCommand
             if (ask.Show() != TaskDialogResult.Yes) throw new System.OperationCanceledException();
         }
 
-        int id = cm.Id;
         var target = cr.CoordinateSystem;
+        if (existing.Count > 0)
+        {
+            AlignConnectedPipe(doc, (Pipe)moving, cm, existing[0], cr, target);
+            return;
+        }
+
+        int id = cm.Id;
         // 1. Directions opposite: connectors of a joint face each other.
         var turn = MepGeometry.Align(Mep.V(cm.CoordinateSystem.BasisZ), -Mep.V(target.BasisZ), Mep.V(target.BasisX));
         if (Math.Abs(turn.Angle) > MepGeometry.AngleTolerance)
@@ -71,10 +95,50 @@ public sealed class MepConnectCommand : IExternalCommand
             }
         }
         // 3. Origins coincide.
-        var shift = cr.Origin - cm.Origin;
+        var shift = target.Origin - cm.Origin;
         if (shift.GetLength() > 1e-9) ElementTransformUtils.MoveElement(doc, moving.Id, shift);
         doc.Regenerate();
-        Mep.Find(moving, id).ConnectTo(cr);
+        JoinAtReference(doc, Mep.Find(moving, id), cr, target);
+    }
+
+    static void AlignConnectedPipe(Document doc, Pipe pipe, Connector source, Connector anchor, Connector reference, Transform target)
+    {
+        if (pipe.Location is not LocationCurve { Curve: Line line } location)
+            throw new InvalidOperationException("Подключённая труба должна быть прямолинейной.");
+
+        int end = line.GetEndPoint(1).DistanceTo(source.Origin) < line.GetEndPoint(0).DistanceTo(source.Origin) ? 1 : 0;
+        var farEnd = Mep.X(MepGeometry.ConnectedPipeFarEnd(Mep.V(line.GetEndPoint(1 - end)), Mep.V(line.GetEndPoint(end)),
+            Mep.V(target.Origin), Mep.V(target.BasisZ), doc.Application.ShortCurveTolerance));
+
+        int sourceId = source.Id;
+        int anchorId = anchor.Id;
+        var neighbors = Mep.Neighbors(anchor).Select(c => (c.Owner.Id, c.Id)).ToHashSet();
+        if (source.Origin.DistanceTo(target.Origin) > PositionTolerance || anchor.Origin.DistanceTo(farEnd) > PositionTolerance)
+        {
+            // Let Revit adjust the attached branch through its existing connections.
+            location.Curve = end == 1 ? Line.CreateBound(farEnd, target.Origin) : Line.CreateBound(target.Origin, farEnd);
+            doc.Regenerate();
+        }
+        JoinAtReference(doc, Mep.Find(pipe, sourceId), reference, target);
+
+        anchor = Mep.Find(pipe, anchorId);
+        if (!neighbors.SetEquals(Mep.Neighbors(anchor).Select(c => (c.Owner.Id, c.Id))))
+            throw new InvalidOperationException("Revit изменил подключение дальнего конца трубы. Операция отменена.");
+    }
+
+    static void JoinAtReference(Document doc, Connector source, Connector reference, Transform target)
+    {
+        var owner = reference.Owner;
+        int id = reference.Id;
+        reference = Mep.Find(owner, id);
+        if (!reference.CoordinateSystem.AlmostEqual(target))
+            throw new InvalidOperationException("Revit сдвинул опорный коннектор при выравнивании. Операция отменена.");
+        if (source.Origin.DistanceTo(target.Origin) > PositionTolerance)
+            throw new InvalidOperationException("Revit не совместил коннекторы при выравнивании. Операция отменена.");
+        source.ConnectTo(reference);
+        doc.Regenerate();
+        if (!Mep.Find(owner, id).CoordinateSystem.AlmostEqual(target))
+            throw new InvalidOperationException("Revit сдвинул опорный коннектор при соединении. Операция отменена.");
     }
 
     static string Size(Connector c)

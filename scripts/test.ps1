@@ -36,6 +36,7 @@ Step 'GitHub update checks' $root { dotnet run --project tests\UpdateChecks\Upda
 Step 'Update window states' $root { dotnet run --project tests\UpdateUiChecks\UpdateUiChecks.csproj -c Release -- (Join-Path $root 'Выходные данные\Проверки\Обновления') }
 Step 'Opening workflow and exchange checks' $root { dotnet run --project tests\OpeningChecks\OpeningChecks.csproj -c Release }
 Step 'EOM calculations and catalog' $root { dotnet run --project tests\EomChecks\EomChecks.csproj -c Release }
+Step 'EOM lighting map rendering' $root { dotnet run --project tests\IsoluxUiChecks\IsoluxUiChecks.csproj -c Release -- (Join-Path $root 'Выходные данные/Проверки/Изолюксы') }
 Step 'MCP approval settings' $root { dotnet run --project modules\codex-mcp\tests\ApprovalSettings.Tests\ApprovalSettings.Tests.csproj -c Release }
 Step 'MCP bridge transport and queue' $root { dotnet run --project modules\codex-mcp\tests\BridgeChecks\BridgeChecks.csproj -c Release }
 Step 'MCP tests' (Join-Path $root 'modules\codex-mcp\server') { & $Node --test test/*.test.js }

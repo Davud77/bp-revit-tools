@@ -20,6 +20,7 @@ internal sealed class PlacementHeightWindow : Window
     PlacementHeightWindow(IntPtr owner, int left, int top, double? defaultHeight, Func<double, double?> elevation)
     {
         this.owner = owner;
+        Title = FloatingToolbar.Title;
         WindowStyle = WindowStyle.None;
         ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.Manual;
@@ -42,10 +43,16 @@ internal sealed class PlacementHeightWindow : Window
         field.Children.Add(height);
         field.Children.Add(hint);
         var content = new StackPanel { Orientation = Orientation.Horizontal };
+        var mode = SystemModeToggle.Create(ReturnRevitFocus);
+        mode.Margin = new Thickness(0, 0, 6, 0);
+        content.Children.Add(mode);
         content.Children.Add(new TextBlock { Text = "H=", Margin = new Thickness(0, 0, 5, 0), VerticalAlignment = VerticalAlignment.Center });
         content.Children.Add(field);
-        Content = new Border { Child = content, Padding = new Thickness(5, 3, 5, 3), BorderThickness = new Thickness(1) }
-            .Themed(Border.BorderBrushProperty, "BP.Border");
+        Content = FloatingToolbar.Layout(content, () =>
+        {
+            Close();
+            ReturnRevitFocus();
+        });
 
         void ReadInput()
         {
@@ -66,8 +73,7 @@ internal sealed class PlacementHeightWindow : Window
         {
             if (e.Key != Key.Enter) return;
             e.Handled = true;
-            SetActiveWindow(owner);
-            if (previousFocus != IntPtr.Zero && IsChild(owner, previousFocus)) SetFocus(previousFocus);
+            ReturnRevitFocus();
         };
         ReadInput();
 
@@ -79,6 +85,12 @@ internal sealed class PlacementHeightWindow : Window
         };
     }
 
+    void ReturnRevitFocus()
+    {
+        SetActiveWindow(owner);
+        if (previousFocus != IntPtr.Zero && IsChild(owner, previousFocus)) SetFocus(previousFocus);
+    }
+
     internal static PlacementHeightWindow? TryShow(UIDocument ui, double? defaultHeight, Func<double, double?> elevation)
     {
         var view = ui.GetOpenUIViews().FirstOrDefault(view => view.ViewId == ui.ActiveView.Id);
@@ -87,7 +99,7 @@ internal sealed class PlacementHeightWindow : Window
         {
             var bounds = view.GetWindowRectangle();
             if (bounds.Right <= bounds.Left || bounds.Bottom <= bounds.Top) return null;
-            var window = new PlacementHeightWindow(ui.Application.MainWindowHandle, bounds.Left + 8, bounds.Top + 8, defaultHeight, elevation);
+            var window = new PlacementHeightWindow(ui.Application.MainWindowHandle, bounds.Left, bounds.Top, defaultHeight, elevation);
             window.Show();
             return window;
         }

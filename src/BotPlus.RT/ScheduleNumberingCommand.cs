@@ -12,7 +12,11 @@ public sealed class ScheduleNumberingCommand : IExternalCommand
     public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
     {
         try { return Run(data.Application); }
-        catch (Exception error) { message = error.Message; return Result.Failed; }
+        catch (Exception error)
+        {
+            TaskDialog.Show("Нумерация", error.Message);
+            return Result.Cancelled;
+        }
     }
 
     /// <summary>
@@ -30,10 +34,11 @@ public sealed class ScheduleNumberingCommand : IExternalCommand
         var doc = ui.Document;
         ScheduleNumbering.Validate(doc, schedule);
         var candidates = ScheduleNumbering.Elements(doc, schedule);
-        var parameters = ScheduleNumbering.Parameters(candidates);
-        if (parameters.Count == 0) throw new InvalidOperationException("Нет текстовых или целочисленных параметров экземпляров для нумерации.");
-        var selected = ui.Selection.GetElementIds().Select(id => id.Value).ToHashSet();
-        var window = new ScheduleNumberingWindow(parameters, selected.Count > 0, ScheduleNumbering.SortParameters(doc, candidates));
+        var parameters = ScheduleNumbering.Parameters(doc, schedule, candidates);
+        if (parameters.Count == 0) throw new InvalidOperationException("В спецификации нет доступных для записи текстовых или целочисленных полей экземпляра.");
+        var selection = ui.Selection.GetElementIds().Select(id => id.Value).ToHashSet();
+        var selected = candidates.Select(e => e.Id.Value).Where(selection.Contains).ToHashSet();
+        var window = new ScheduleNumberingWindow(parameters, selected.Count > 0, ScheduleNumbering.SortParameters(schedule));
         new WindowInteropHelper(window) { Owner = app.MainWindowHandle };
         if (window.ShowDialog() != true) return Result.Cancelled;
         var chosen = window.Parameter!;
@@ -42,12 +47,11 @@ public sealed class ScheduleNumberingCommand : IExternalCommand
             ScheduleNumbering.Clear(doc, candidates, chosen, selected);
             return Result.Succeeded;
         }
-        var rows = ScheduleNumbering.ReadRows(doc, schedule, candidates);
         var scope = window.SelectedOnly ? selected : null;
-        rows = ScheduleNumbering.SortRows(doc, rows, window.SortParameter, scope);
+        var rows = ScheduleNumbering.ReadRows(doc, schedule, candidates, chosen, window.SortParameter, scope);
         var result = ScheduleNumbering.Apply(doc, rows, chosen, window.Start, scope);
         if (result.Skipped > 0)
-            TaskDialog.Show("Нумерация", $"Изменено элементов: {result.Updated}. Пропущено: {result.Skipped}." +
+            TaskDialog.Show("Нумерация", $"Пронумеровано элементов: {result.Updated}. Пропущено: {result.Skipped}." +
                 (result.Errors.Count > 0 ? "\n" + string.Join("\n", result.Errors) : ""));
         return Result.Succeeded;
     }

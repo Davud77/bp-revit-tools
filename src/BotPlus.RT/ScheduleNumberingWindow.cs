@@ -22,11 +22,11 @@ internal sealed class ScheduleNumberingWindow : Window
         Title = "Нумерация"; Width = 450; SizeToContent = SizeToContent.Height;
         ResizeMode = ResizeMode.NoResize; WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var root = new StackPanel { Margin = new Thickness(16) }; Content = root;
-        root.Children.Add(new TextBlock { Text = "Параметр для записи", Margin = new Thickness(0, 0, 0, 6) });
+        root.Children.Add(new TextBlock { Text = "Поле спецификации для записи", Margin = new Thickness(0, 0, 0, 6) });
         parameters = new ComboBox { ItemsSource = choices, DisplayMemberPath = nameof(NumberingParameter.Label), MinWidth = 360 };
         parameters.SelectedItem = choices.FirstOrDefault(p => p.Name == "ADSK_Позиция") ?? choices[0];
         root.Children.Add(parameters);
-        root.Children.Add(new TextBlock { Text = "Сортировка перед нумерацией (по возрастанию)", Margin = new Thickness(0, 12, 0, 6) });
+        root.Children.Add(new TextBlock { Text = "Поле для сортировки (по возрастанию)", Margin = new Thickness(0, 12, 0, 6) });
         sorting = new ComboBox { DisplayMemberPath = nameof(NumberingSortParameter.Label), MinWidth = 360 };
         sorting.Items.Add("В порядке строк спецификации");
         foreach (var item in sortChoices ?? []) sorting.Items.Add(item);

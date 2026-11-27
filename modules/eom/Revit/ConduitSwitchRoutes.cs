@@ -14,15 +14,14 @@ public sealed partial class ConduitThroughLightsCommand
     static LegChoices VerifySwitchBoxChoices(UIDocument ui, ConduitType type, FamilySymbol[] boxTypes,
         FamilySymbol? elbowType, Element source, FamilyInstance target, LegChoices choices)
     {
-        var tried = new Dictionary<int, (Leg? Leg, string? Error)>();
+        var tried = new Dictionary<Port, (Leg? Leg, string? Error)>();
         Leg Verify(Port start, Port end, bool align)
         {
-            var key = start.Id ?? -1;
-            if (!tried.TryGetValue(key, out var result))
+            if (!tried.TryGetValue(start, out var result))
             {
                 var lead = choices.MakeLeg(start, end, align);
                 result = FindSwitchLeg(ui, type, boxTypes, elbowType, source, target, lead with { End = end });
-                tried.Add(key, result);
+                tried.Add(start, result);
             }
             return result.Leg ?? throw new InvalidOperationException(result.Error);
         }
@@ -57,7 +56,7 @@ public sealed partial class ConduitThroughLightsCommand
 
             try
             {
-                var (_, _, points) = CommitSwitchConnection(ui, type, boxTypes, elbowType, source, target, candidate);
+                var (_, _, points) = CommitSwitchConnection(ui, type, boxTypes, elbowType, source, target, candidate, preview: true);
                 return (candidate with { Points = points }, null);
             }
             catch (Exception error) when (error is InvalidOperationException or Autodesk.Revit.Exceptions.ApplicationException)
@@ -75,7 +74,7 @@ public sealed partial class ConduitThroughLightsCommand
     }
 
     static (Element Next, double Diameter, XYZ[] Points) CommitSwitchConnection(UIDocument ui, ConduitType type,
-        FamilySymbol[] boxTypes, FamilySymbol? elbowType, Element source, FamilyInstance target, Leg main)
+        FamilySymbol[] boxTypes, FamilySymbol? elbowType, Element source, FamilyInstance target, Leg main, bool preview = false)
     {
         var doc = ui.Document;
         using var group = new TransactionGroup(doc, "ЭОМ: коробка и спуск к выключателю");
@@ -84,22 +83,25 @@ public sealed partial class ConduitThroughLightsCommand
 
         var result = CommitLeg(doc, type, boxTypes, elbowType, source, target, main);
         var drop = PrepareLeg(ui, result.Next, null, target, FixturePoint(target), null, result.Diameter, 0, true);
-        BuildSwitchDrop(ui, type, boxTypes, elbowType, result.Next, target, drop);
+        BuildSwitchDrop(ui, type, boxTypes, elbowType, result.Next, target, drop, preview);
         if (group.Assimilate() != TransactionStatus.Committed)
             throw new InvalidOperationException("Revit отменил подключение выключателя.");
         return result;
     }
 
     static void BuildSwitchDrop(UIDocument ui, ConduitType type, FamilySymbol[] boxTypes, FamilySymbol? elbowType,
-        Element box, FamilyInstance target, LegChoices drop)
+        Element box, FamilyInstance target, LegChoices drop, bool preview)
     {
         string? reason = null;
+        var approved = new HashSet<(double?, double?)>();
         foreach (var start in drop.Starts)
         foreach (var end in drop.Ends(start))
         {
             try
             {
                 var leg = drop.MakeLeg(start, end, false);
+                if (!preview && approved.Add((leg.Start.Diameter, leg.End.Diameter)) && !ConfirmDiameter(leg.Start.Diameter, leg.End.Diameter))
+                    throw new OperationCanceledException();
                 CommitLeg(ui.Document, type, boxTypes, elbowType, box, target, leg);
                 return;
             }

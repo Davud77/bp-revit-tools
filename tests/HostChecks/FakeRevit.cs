@@ -62,6 +62,7 @@ namespace BotPlus.Openings { public sealed class App() : FakeModule("openings");
 namespace BotPlus.Eom { public sealed class App() : FakeModule("eom"); }
 namespace BotPlus.RT { public sealed class SettingsCommand { } }
 namespace BotPlus.RT { public sealed class MatchTagCommand { } public sealed class CopyTagCommand { } }
+namespace BotPlus.RT { public sealed class CopyFromLinkCommand { } public sealed class CopyFromProjectCommand { } }
 namespace BotPlus.RT { public sealed class ScheduleNumberingCommand { } public sealed class ScheduleNumberingAvailable { }
     internal static class ScheduleContext { public static void Attach(Autodesk.Revit.UI.UIControlledApplication app){} public static void Detach(Autodesk.Revit.UI.UIControlledApplication app){} } }
 namespace BotPlus.RT { internal static class StartupUpdates { public static void Attach(Autodesk.Revit.UI.UIControlledApplication app){} public static void Detach(Autodesk.Revit.UI.UIControlledApplication app){} } }

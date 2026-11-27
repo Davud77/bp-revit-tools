@@ -27,13 +27,26 @@ namespace BotPlus.Eom;
 internal sealed class EquipmentPane : IDockablePaneProvider
 {
     internal sealed record Item(ElementId Id, BuiltInCategory CategoryId, string Category, string Family, string Type)
+        : System.ComponentModel.INotifyPropertyChanged
     {
-        public BitmapSource? Preview { get; init; }
-        public Geometry? Icon => LibraryPath == null ? null : Geometry.Parse(CategoryIcon(CategoryId));
+        public BitmapSource? Preview { get; private set; }
+        public Geometry Icon => EquipmentCategoryIcons.Get(CategoryId, Category);
         public string? LibraryPath { get; init; }
+        internal string? FileName { get; init; }
+        internal IndexedFamily? LibraryEntry { get; init; }
+        public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+        internal Item SetPreview(BitmapSource? preview)
+        {
+            Preview = preview;
+            PropertyChanged?.Invoke(this, new(nameof(Preview)));
+            return this;
+        }
+
         public override string ToString() => LibraryPath == null ? $"{Family}: {Type}" : $"{Family} — {Category}";
     }
 
+    const int PageSize = 250;
     const string LibraryLabel = "Из папки";
     const string PlaceIcon = "M8,2 V14 M2,8 H14 M5,5 H11 V11 H5 Z";
     const string LoadIcon = "M2,8 V14 H14 V8 M8,2 V10 M5,7 L8,10 L11,7";
@@ -53,7 +66,17 @@ internal sealed class EquipmentPane : IDockablePaneProvider
     readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Opacity = 0.7, Margin = new Thickness(0, 4, 0, 0) };
     readonly ItemsPanelTemplate listPanel;
     readonly ItemsPanelTemplate gridPanel = new(new FrameworkElementFactory(typeof(EquipmentTileGrid)));
-    readonly ToggleButton loadedOnly = new();
+    readonly ToggleButton loadedOnly = new() { IsChecked = true };
+    readonly StackPanel pagination = new() { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+    readonly Button previousPage = new() { Content = "‹", MinWidth = 30, ToolTip = "Предыдущая страница" };
+    readonly Button nextPage = new() { Content = "›", MinWidth = 30, ToolTip = "Следующая страница" };
+    readonly TextBox pageNumber = new()
+    {
+        Width = 46, Margin = new Thickness(4, 0, 0, 0), TextAlignment = TextAlignment.Center,
+        VerticalContentAlignment = VerticalAlignment.Center, ToolTip = "Введите номер страницы и нажмите Enter"
+    };
+    readonly TextBlock pageCount = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 4, 0) };
+    readonly TextBlock pageRange = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 8, 0) };
     readonly Button place;
     readonly EquipmentLibraryIndexer indexer;
     HashSet<BuiltInCategory> shownCategories = EquipmentLibrary.LoadCategories()?.Select(id => (BuiltInCategory)id).ToHashSet()
@@ -63,9 +86,12 @@ internal sealed class EquipmentPane : IDockablePaneProvider
     bool compactHeader;
     List<Item> loadedItems = [];
     List<Item> visibleItems = [];
-    List<Item> folderItems = [];
+    List<Item>? folderItems;
+    List<Item> matches = [];
+    int page;
+    CancellationTokenSource? pagePreviews;
     Dictionary<BuiltInCategory, string> projectCategories = [];
-    EquipmentLibrary library = EquipmentLibrary.Load();
+    EquipmentLibrary library = new("", []);
     string document = "";
     Point? dragStart;
 
@@ -110,8 +136,10 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         AddAction("Загрузить…", LoadIcon, Load,
             "Загрузить семейство .rfa в проект");
         AddAction("Обновить", "M13,6 A5,5 0 1 0 13,10 M13,2 V6 H9", () =>
-            App.Queue?.Post(app => { if (app.ActiveUIDocument?.Document is { IsFamilyDocument: false } doc) Refresh(doc); }),
-            "Перечитать семейства активного проекта");
+        {
+            ReloadLibrary();
+            App.Queue?.Post(app => { if (app.ActiveUIDocument?.Document is { IsFamilyDocument: false } doc) Refresh(doc); });
+        }, "Перечитать семейства проекта и готовый индекс");
         AddAction("Настройки", "M6,1 H10 L10.5,3.5 L12.8,3.4 L14.8,6.6 L13.3,8 L14.8,9.4 L12.8,12.6 L10.5,12.5 L10,15 H6 L5.5,12.5 L3.2,12.6 L1.2,9.4 L2.7,8 L1.2,6.6 L3.2,3.4 L5.5,3.5 Z M8,5.5 A2.5,2.5 0 1 1 7.99,5.5 Z",
             () => OpenSettings(owner),
             "Настройки Базы УГО: библиотека, категории и высоты вставки");
@@ -121,8 +149,8 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         AutomationProperties.SetName(loadedOnly, "Только загруженные");
         loadedOnly.Click += (_, _) => RefreshSources();
         bar.Children.Add(loadedOnly);
-        AddOption(bar, "Сетка", CategoryIcon(null), true, () => SetGridView(true));
-        AddOption(bar, "Список", "M2,3 H14 M2,8 H14 M2,13 H14", false, () => SetGridView(false));
+        AddOption(bar, "Сетка", EquipmentCategoryIcons.Get(null), true, () => SetGridView(true));
+        AddOption(bar, "Список", Geometry.Parse("M2,3 H14 M2,8 H14 M2,13 H14"), false, () => SetGridView(false));
         root.SizeChanged += (_, e) =>
         {
             const double fullHeaderWidth = 700;
@@ -140,17 +168,39 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         indexer.Changed += () =>
         {
             indexing.Text = indexer.Status;
-            indexing.Visibility = Visibility.Visible;
+            indexing.Visibility = indexer.Status.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         };
         indexer.Completed += indexed =>
         {
             library = indexed;
-            RefreshFolderItems();
+            folderItems = null;
             RefreshSources();
             settingsWindow?.SetCategories(AvailableCategories());
         };
 
         var bottom = new StackPanel { Margin = new Thickness(0, 6, 0, 0) };
+        previousPage.Click += (_, _) => ShowPage(page - 1);
+        nextPage.Click += (_, _) => ShowPage(page + 1);
+        AutomationProperties.SetName(previousPage, "Предыдущая страница");
+        AutomationProperties.SetName(nextPage, "Следующая страница");
+        AutomationProperties.SetName(pageNumber, "Номер страницы");
+        pageNumber.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Enter && e.Key != Key.Escape) return;
+            e.Handled = true;
+            if (e.Key == Key.Enter && int.TryParse(pageNumber.Text, out int number) && number > 0 && number != page + 1)
+                ShowPage(number - 1);
+            else
+                pageNumber.Text = (page + 1).ToString();
+            pageNumber.SelectAll();
+        };
+        pageNumber.LostKeyboardFocus += (_, _) => pageNumber.Text = (page + 1).ToString();
+        pagination.Children.Add(previousPage);
+        pagination.Children.Add(pageNumber);
+        pagination.Children.Add(pageCount);
+        pagination.Children.Add(nextPage);
+        pagination.Children.Add(pageRange);
+        bottom.Children.Add(pagination);
         var preview = new System.Windows.Controls.Grid();
         preview.Children.Add(image);
         preview.Children.Add(previewIcon);
@@ -163,9 +213,11 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         DockPanel.SetDock(top, Dock.Top); DockPanel.SetDock(bottom, Dock.Bottom);
         root.Children.Add(top); root.Children.Add(bottom); root.Children.Add(list);
         SetGridView(true);
-        RefreshFolderItems();
         RefreshSources();
+        ReloadLibrary();
     }
+
+    internal void ReloadLibrary() => indexer.Open(library);
 
     void OpenSettings(IntPtr owner)
     {
@@ -188,12 +240,13 @@ internal sealed class EquipmentPane : IDockablePaneProvider
                 projectCategories.TryAdd(category, label);
             }
             var defaults = doc is { IsReadOnly: false } ? EomStore.Settings(doc) : null;
-            var window = new EquipmentLibraryWindow(owner, library, indexer, folder => indexer.Start(folder, library, labels),
+            var window = new EquipmentLibraryWindow(owner, library, indexer,
+                folder => indexer.Start(folder, library, labels), folder => indexer.Open(library, folder),
                 AvailableCategories(), shownCategories, selected =>
                 {
                     EquipmentLibrary.SaveCategories(selected.Select(id => (int)id).Order().ToArray());
                     shownCategories = selected;
-                    RefreshFolderItems();
+                    folderItems = null;
                     RefreshSources();
                     App.Queue?.Post(ui => { if (ui.ActiveUIDocument?.Document is { IsFamilyDocument: false } active) Refresh(active); });
                 }, defaults, doc?.Title, (heights, report) =>
@@ -242,6 +295,8 @@ internal sealed class EquipmentPane : IDockablePaneProvider
     internal void Close()
     {
         settingsWindow?.Close();
+        pagePreviews?.Cancel();
+        pagePreviews?.Dispose();
         indexer.Dispose();
     }
 
@@ -266,36 +321,34 @@ internal sealed class EquipmentPane : IDockablePaneProvider
             projectCategories.TryAdd(category, LabelUtils.GetLabelFor(category));
         loadedItems = symbols
             .Select(s => new Item(s.Id, s.Category.BuiltInCategory, s.Category.Name, s.FamilyName, s.Name)
-            {
-                // Панель немодальная, поэтому эскизы получаем здесь, в контексте Revit API.
-                Preview = shownCategories.Contains(s.Category.BuiltInCategory) ? Preview(s) : null
-            })
+                .SetPreview(shownCategories.Contains(s.Category.BuiltInCategory) ? Preview(s) : null))
             .OrderBy(i => i.Category).ThenBy(i => i.Family).ThenBy(i => i.Type).ToList();
         RefreshSources();
     }
 
-    void RefreshFolderItems()
-    {
-        folderItems = library.Entries.Where(entry => shownCategories.Contains((BuiltInCategory)entry.Category))
-            .Select(entry => new Item(ElementId.InvalidElementId, (BuiltInCategory)entry.Category, entry.CategoryName, entry.Name, LibraryLabel)
+    List<Item> CreateFolderItems() =>
+        library.Entries.Where(entry => shownCategories.Contains((BuiltInCategory)entry.Category))
+            .Select(entry => new Item(ElementId.InvalidElementId, (BuiltInCategory)entry.Category,
+                projectCategories.GetValueOrDefault((BuiltInCategory)entry.Category, entry.CategoryName), entry.Name, LibraryLabel)
             {
                 LibraryPath = Path.Combine(library.Folder, entry.File),
-                Preview = DecodePreview(entry.Preview)
+                FileName = Path.GetFileNameWithoutExtension(entry.File),
+                LibraryEntry = entry
             }).ToList();
-    }
 
     void RefreshSources()
     {
         visibleItems = loadedItems.Where(item => shownCategories.Contains(item.CategoryId)).ToList();
-        if (loadedOnly.IsChecked != true && folderItems.Count > 0)
+        if (loadedOnly.IsChecked != true)
         {
-            var loadedNames = loadedItems.ToLookup(i => i.CategoryId, i => i.Family);
+            folderItems ??= CreateFolderItems();
+            var loadedNames = loadedItems.GroupBy(i => i.CategoryId)
+                .ToDictionary(group => group.Key, group => group.Select(i => i.Family).ToHashSet(StringComparer.OrdinalIgnoreCase));
             visibleItems.AddRange(folderItems.Where(item =>
-                !loadedNames[item.CategoryId].Contains(item.Family, StringComparer.OrdinalIgnoreCase) &&
-                !loadedNames[item.CategoryId].Contains(Path.GetFileNameWithoutExtension(item.LibraryPath), StringComparer.OrdinalIgnoreCase)));
+                !loadedNames.TryGetValue(item.CategoryId, out var names) ||
+                (!names.Contains(item.Family) && !names.Contains(item.FileName!))));
         }
-        visibleItems = visibleItems.Select(item => item with { Category = projectCategories.GetValueOrDefault(item.CategoryId, item.Category) })
-            .OrderBy(item => item.Category).ThenBy(item => item.Family).ThenBy(item => item.Type).ToList();
+        visibleItems = visibleItems.OrderBy(item => item.Category).ThenBy(item => item.Family).ThenBy(item => item.Type).ToList();
         if (!visibleItems.Any(i => i.CategoryId == selectedCategory)) selectedCategory = null;
         BuildCategoryButtons();
         Filter();
@@ -312,14 +365,14 @@ internal sealed class EquipmentPane : IDockablePaneProvider
             AddCategory(item.CategoryId, item.Category);
 
         void AddCategory(BuiltInCategory? id, string name) =>
-            AddOption(categories, name, CategoryIcon(id), selectedCategory == id, () =>
+            AddOption(categories, name, EquipmentCategoryIcons.Get(id, name), selectedCategory == id, () =>
             {
                 selectedCategory = id;
                 Filter();
             });
     }
 
-    void AddOption(Panel group, string label, string icon, bool selected, Action select)
+    void AddOption(Panel group, string label, Geometry icon, bool selected, Action select)
     {
         var button = new RadioButton
         {
@@ -331,16 +384,18 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         group.Children.Add(button);
     }
 
-    sealed class HeaderIcon : StackPanel
+    internal sealed class HeaderIcon : StackPanel
     {
         readonly TextBlock text;
 
-        internal HeaderIcon(string label, string icon, bool compact)
+        internal HeaderIcon(string label, string icon, bool compact) : this(label, Geometry.Parse(icon), compact) { }
+
+        internal HeaderIcon(string label, Geometry icon, bool compact)
         {
             Orientation = Orientation.Horizontal;
             var mark = new System.Windows.Shapes.Path
             {
-                Data = Geometry.Parse(icon), Stretch = Stretch.None, StrokeThickness = 1.3,
+                Data = icon, Stretch = Stretch.None, StrokeThickness = 1.1,
                 Width = 16, Height = 16
             };
             mark.Themed(System.Windows.Shapes.Path.StrokeProperty, "BP.Text");
@@ -352,20 +407,6 @@ internal sealed class EquipmentPane : IDockablePaneProvider
 
         internal void SetCompact(bool compact) => text.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
     }
-
-    static string CategoryIcon(BuiltInCategory? category) => category switch
-    {
-        null => "M2,2 H6 V6 H2 Z M10,2 H14 V6 H10 Z M2,10 H6 V14 H2 Z M10,10 H14 V14 H10 Z",
-        BuiltInCategory.OST_LightingFixtures => "M8,2 A6,6 0 1 1 7.99,2 Z M4,4 L12,12 M12,4 L4,12",
-        BuiltInCategory.OST_LightingDevices => "M1,11 H4 M4,11 L12,4 M12,11 H15",
-        BuiltInCategory.OST_ElectricalFixtures => "M2,12 A6,6 0 0 1 14,12 Z M8,6 V2",
-        BuiltInCategory.OST_ElectricalEquipment => "M2,3 H14 V13 H2 Z M2,13 L14,3",
-        BuiltInCategory.OST_CommunicationDevices => "M2,3 L5,2 L7,5 L5,7 Q7,10 10,11 L12,9 L15,11 L14,14 Q4,14 2,3 Z",
-        BuiltInCategory.OST_DataDevices => "M2,2 H14 V11 H2 Z M8,11 V14 M5,14 H11",
-        BuiltInCategory.OST_FireAlarmDevices => "M8,1 Q7,5 4,8 A4.5,4.5 0 1 0 12,8 Q11,6 10,5 L9,8 Q9,4 8,1 Z",
-        BuiltInCategory.OST_SecurityDevices => "M8,2 L14,4 V8 Q13,12 8,14 Q3,12 2,8 V4 Z",
-        _ => "M8,2 A6,6 0 1 1 7.99,2 Z M5,11 V5 L8,8 L11,5 V11"
-    };
 
     void SetGridView(bool grid)
     {
@@ -391,15 +432,82 @@ internal sealed class EquipmentPane : IDockablePaneProvider
     void Filter()
     {
         string q = search.Text.Trim();
+        bool includesSeparator = q.Contains(':') || q.Contains('—');
         var selected = list.SelectedItem as Item;
-        var matches = visibleItems.Where(i => (selectedCategory == null || i.CategoryId == selectedCategory)
-            && (q.Length == 0 || i.ToString().Contains(q, StringComparison.OrdinalIgnoreCase))).ToList();
-        list.ItemsSource = matches;
-        list.SelectedItem = matches.FirstOrDefault(i => selected != null &&
-            i.Id == selected.Id && i.LibraryPath == selected.LibraryPath) ?? matches.FirstOrDefault();
+        matches = visibleItems.Where(i => (selectedCategory == null || i.CategoryId == selectedCategory)
+            && (q.Length == 0 || i.Family.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                i.FileName?.Contains(q, StringComparison.OrdinalIgnoreCase) == true ||
+                (i.LibraryPath == null ? i.Type : i.Category).Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                includesSeparator && i.ToString().Contains(q, StringComparison.OrdinalIgnoreCase))).ToList();
+        int selectedIndex = selected == null ? -1 : matches.FindIndex(i => i.Id == selected.Id && i.LibraryPath == selected.LibraryPath);
+        ShowPage(Math.Max(0, selectedIndex) / PageSize, selectedIndex);
         if (matches.Count == 0)
             caption.Text = shownCategories.Count == 0 ? "Выберите категории в настройках Базы УГО."
                 : q.Length > 0 ? "По запросу ничего не найдено." : "Список пуст. Загрузите .rfa или укажите папку в настройках.";
+    }
+
+    void ShowPage(int target, int selectedIndex = -1)
+    {
+        int lastPage = Math.Max(0, (matches.Count - 1) / PageSize);
+        page = Math.Clamp(target, 0, lastPage);
+        int start = page * PageSize;
+        var entries = matches.Skip(start).Take(PageSize).ToArray();
+        foreach (var old in list.Items.OfType<Item>())
+            if (old.LibraryEntry != null && old.Preview != null) old.SetPreview(null);
+        list.ItemsSource = entries;
+        list.SelectedIndex = selectedIndex >= start && selectedIndex < start + entries.Length ? selectedIndex - start
+            : entries.Length == 0 ? -1 : 0;
+        if (list.SelectedItem is Item item) list.ScrollIntoView(item);
+        pagination.Visibility = lastPage > 0 ? Visibility.Visible : Visibility.Collapsed;
+        previousPage.IsEnabled = page > 0;
+        nextPage.IsEnabled = page < lastPage;
+        pageNumber.Text = (page + 1).ToString();
+        pageCount.Text = $"/ {lastPage + 1}";
+        pageRange.Text = $"{start + 1}–{start + entries.Length} из {matches.Count}";
+        LoadPagePreviews(entries);
+    }
+
+    async void LoadPagePreviews(Item[] entries)
+    {
+        pagePreviews?.Cancel();
+        pagePreviews?.Dispose();
+        pagePreviews = null;
+        var pending = entries.Where(item => item.LibraryEntry?.HasPreview == true).ToArray();
+        if (pending.Length == 0) return;
+        var index = library.Index;
+        pagePreviews = new CancellationTokenSource();
+        var token = pagePreviews.Token;
+        try
+        {
+            var previews = await Task.Run(() =>
+            {
+                var result = new List<(Item Item, BitmapSource? Preview)>(pending.Length);
+                using var stream = index?.OpenPreviews();
+                foreach (var item in pending)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var entry = item.LibraryEntry!;
+                    byte[]? bytes = entry.Preview ?? (stream != null ? index!.ReadPreview(stream, entry) : null);
+                    result.Add((item, DecodePreview(bytes)));
+                }
+                return result;
+            }, token).ConfigureAwait(false);
+            await root.Dispatcher.InvokeAsync(() =>
+            {
+                if (token.IsCancellationRequested) return;
+                foreach (var (item, preview) in previews) item.SetPreview(preview);
+                if (list.SelectedItem is Item { LibraryEntry: not null } selected)
+                {
+                    image.Source = selected.Preview;
+                    previewIcon.Data = selected.Preview == null ? selected.Icon : null;
+                }
+            });
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            System.Diagnostics.Trace.WriteLine(error);
+        }
     }
 
     void Describe()
@@ -413,9 +521,9 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         previewIcon.Data = null;
         if (list.SelectedItem is not Item i) { image.Source = null; caption.Text = ""; return; }
         image.Source = i.Preview;
+        if (i.Preview == null) previewIcon.Data = i.Icon;
         if (libraryPath != null)
         {
-            if (i.Preview == null) previewIcon.Data = i.Icon;
             caption.Text = $"{i.Family}\n{i.Category}\n{libraryPath}\nЗагрузите семейство, чтобы выбрать тип для размещения.";
             return;
         }
@@ -478,11 +586,8 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         var symbols = ((Family)doc.GetElement(familyId)).GetFamilySymbolIds();
         selectedCategory = null;
         Refresh(doc);
-        if (list.Items.OfType<Item>().FirstOrDefault(i => symbols.Contains(i.Id)) is { } item)
-        {
-            list.SelectedItem = item;
-            list.ScrollIntoView(item);
-        }
+        int index = matches.FindIndex(i => symbols.Contains(i.Id));
+        if (index >= 0) ShowPage(index / PageSize, index);
     }
 
     void Load()
@@ -542,11 +647,11 @@ internal sealed class EquipmentPane : IDockablePaneProvider
         _ => type.ToString()
     };
 
-    static BitmapSource? Preview(ElementType type)
+    internal static BitmapSource? Preview(ElementType type, int size = 200)
     {
         try
         {
-            using var bitmap = type.GetPreviewImage(new System.Drawing.Size(200, 200));
+            using var bitmap = type.GetPreviewImage(new System.Drawing.Size(size, size));
             if (bitmap == null) return null;
             using var stream = new MemoryStream();
             bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
@@ -573,7 +678,7 @@ internal sealed class EquipmentPane : IDockablePaneProvider
             preview.Freeze();
             return preview;
         }
-        catch (Exception error) when (error is IOException or NotSupportedException or ArgumentException) { return null; }
+        catch (Exception error) when (error is IOException or NotSupportedException or ArgumentException or FormatException) { return null; }
     }
 
     const string ViewResources = """
@@ -617,8 +722,6 @@ internal sealed class EquipmentPane : IDockablePaneProvider
                     <Path x:Name="CategoryMark" Data="{Binding Icon}" Visibility="Collapsed" Width="28" Height="28"
                           Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
                           Stroke="{DynamicResource BP.Text}" StrokeThickness="1.5"/>
-                    <TextBlock x:Name="PreviewPlaceholder" Text="Нет эскиза" Visibility="Collapsed"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource BP.Muted}"/>
                   </Grid>
                 </Border>
                 <TextBlock x:Name="TileTitle" Text="{Binding Type}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold" Margin="0,3,0,0"/>
@@ -628,21 +731,13 @@ internal sealed class EquipmentPane : IDockablePaneProvider
             <DataTemplate.Triggers>
               <DataTrigger Binding="{Binding Preview}" Value="{x:Null}">
                 <Setter TargetName="PreviewFrame" Property="Background" Value="{DynamicResource BP.Panel}"/>
-                <Setter TargetName="PreviewPlaceholder" Property="Visibility" Value="Visible"/>
+                <Setter TargetName="CategoryMark" Property="Visibility" Value="Visible"/>
               </DataTrigger>
               <DataTrigger Binding="{Binding Type}" Value="Из папки">
                 <Setter TargetName="Tile" Property="ToolTip" Value="{Binding LibraryPath}"/>
                 <Setter TargetName="TileTitle" Property="Text" Value="{Binding Family}"/>
                 <Setter TargetName="TileSubtitle" Property="Text" Value="{Binding Category}"/>
               </DataTrigger>
-              <MultiDataTrigger>
-                <MultiDataTrigger.Conditions>
-                  <Condition Binding="{Binding Type}" Value="Из папки"/>
-                  <Condition Binding="{Binding Preview}" Value="{x:Null}"/>
-                </MultiDataTrigger.Conditions>
-                <Setter TargetName="PreviewPlaceholder" Property="Visibility" Value="Collapsed"/>
-                <Setter TargetName="CategoryMark" Property="Visibility" Value="Visible"/>
-              </MultiDataTrigger>
             </DataTemplate.Triggers>
           </DataTemplate>
         </ResourceDictionary>

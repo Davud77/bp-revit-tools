@@ -46,6 +46,7 @@ public sealed class EquipmentCommand : EomCommand
     protected override Result Run(UIDocument ui)
     {
         App.Equipment?.Refresh(ui.Document);
+        App.Equipment?.ReloadLibrary();
         ui.Application.GetDockablePane(App.EquipmentPaneId).Show();
         return Result.Succeeded;
     }
@@ -83,12 +84,14 @@ public sealed class LightingCommand : EomCommand
             var (gridRows, gridCols) = row.PlaceGrid;
             double mount = light.MountM > 0 ? light.MountM : row.Geometry.HeightM;
             var placed = Rooms.Place(doc, row.Room, symbols[row.Result!.Luminaire], gridRows, gridCols, row.PlaceCount, mount);
+            if (outcome.Replace && placed.Count == 0)
+                throw new InvalidOperationException($"{row.Number} {row.Name}: не найдено точек для замены. Расстановка отменена.");
             row.Light = light with { Placed = outcome.Replace ? placed : [.. light.Placed, .. placed] };
             total += placed.Count;
             if (placed.Count < row.PlaceCount) problems.Add($"{row.Number} {row.Name}: размещено {placed.Count} из {row.PlaceCount} — контур слишком сложный для сетки.");
         }
         EomStore.SaveRoomLights(doc, rows.ToDictionary(r => r.Room.Key, r => r.Light));
-        t.Commit();
+        if (t.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("Revit отменил сохранение расчёта по Ки.");
         if (outcome.Place.Count == 0) return Result.Succeeded;
         ctx.Catalog.Save();
         new TaskDialog("BotPlus ЭОМ")
@@ -114,7 +117,7 @@ public sealed class LightingCommand : EomCommand
             return (n.Contains("ламп") || n.Contains("lamp")) && !n.Contains("светильн") && !n.Contains("luminaire");
         }
         return new FilteredElementCollector(doc).OfCategory(BuiltInCategory.OST_LightingFixtures).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
-            .Where(s => s.Family.FamilyPlacementType is FamilyPlacementType.OneLevelBased or FamilyPlacementType.OneLevelBasedHosted)
+            .Where(Rooms.CanPlace)
             .Select(s =>
             {
                 var (total, nested) = instances.TryGetValue(s.Id, out var c) ? c : (0, 0);
@@ -202,9 +205,10 @@ public sealed class ConnectCommand : EomCommand
         public bool AllowElement(Element e) => e is FamilyInstance && e.Category is { } c && c.BuiltInCategory != BuiltInCategory.OST_ElectricalEquipment && Network.DeviceCategories.Contains(c.BuiltInCategory);
         public bool AllowReference(Reference r, XYZ p) => false;
     }
-    sealed class PanelsOnly : ISelectionFilter
+    sealed class PanelsOnly(IReadOnlyCollection<ElementId> sources) : ISelectionFilter
     {
-        public bool AllowElement(Element e) => e is FamilyInstance && e.Category?.BuiltInCategory == BuiltInCategory.OST_ElectricalEquipment;
+        public bool AllowElement(Element e) => e is FamilyInstance && e.Category?.BuiltInCategory == BuiltInCategory.OST_ElectricalEquipment
+            && !sources.Contains(e.Id);
         public bool AllowReference(Reference r, XYZ p) => false;
     }
     protected override Result Run(UIDocument ui)
@@ -214,6 +218,12 @@ public sealed class ConnectCommand : EomCommand
         var ids = ui.Selection.GetElementIds().Where(id => filter.AllowElement(doc.GetElement(id))).ToList();
         if (ids.Count == 0)
             ids = ui.Selection.PickObjects(ObjectType.Element, filter, "Выберите розетки, светильники и другие приборы группы и нажмите «Готово»").Select(r => r.ElementId).ToList();
+        return ConnectToPanel(ui, ids);
+    }
+
+    internal static Result ConnectToPanel(UIDocument ui, IReadOnlyCollection<ElementId> ids)
+    {
+        var doc = ui.Document;
         // Revit создаёт группу только из приборов со свободным силовым соединителем; остальные отсеиваем заранее и называем.
         var noConnector = new List<string>(); var busy = new List<string>(); var ready = new List<ElementId>();
         foreach (var id in ids)
@@ -237,8 +247,24 @@ public sealed class ConnectCommand : EomCommand
                 "\n\nСемейство можно подключить к щиту, только если в нём есть электрический соединитель типа «Силовой». Обычные модели и аннотации без соединителя Revit в цепь не включает.");
             return Result.Cancelled;
         }
-        var panel = (FamilyInstance)doc.GetElement(ui.Selection.PickObject(ObjectType.Element, new PanelsOnly(), "Выберите щит"));
-        using var t = new Transaction(doc, "ЭОМ: подключение к щиту"); t.Start();
+        var panel = (FamilyInstance)doc.GetElement(ui.Selection.PickObject(ObjectType.Element, new PanelsOnly(ids), "Выберите щит"));
+        if (panel.MEPModel is not ElectricalEquipment equipment)
+        {
+            TaskDialog.Show("BotPlus ЭОМ", "У выбранного оборудования нет модели распределительного щита.");
+            return Result.Cancelled;
+        }
+        var panelName = Network.Text(panel, BuiltInParameter.RBS_ELEC_PANEL_NAME);
+        if (string.IsNullOrWhiteSpace(panelName)) panelName = panel.Name;
+        var distribution = equipment.DistributionSystem;
+        if (distribution == null)
+        {
+            TaskDialog.Show("BotPlus ЭОМ", $"У питающего щита «{panelName}» (ID {panel.Id.Value}) не задан тип питающей сети.\n\nВыберите питающий щит на виде, задайте «Тип питающей сети» в свойствах Revit и повторите подключение.");
+            return Result.Cancelled;
+        }
+        var distributionName = distribution.Name;
+
+        using var t = new Transaction(doc, "ЭОМ: подключение к щиту");
+        if (t.Start() != TransactionStatus.Started) return Result.Failed;
         ElectricalSystem system;
         try { system = ElectricalSystem.Create(doc, ready, ElectricalSystemType.PowerCircuit); }
         catch (Autodesk.Revit.Exceptions.ArgumentException)
@@ -247,20 +273,35 @@ public sealed class ConnectCommand : EomCommand
             TaskDialog.Show("BotPlus ЭОМ", "Revit не создал группу из выбранных приборов. Обычно причина — разное напряжение или число полюсов у соединителей. Выберите приборы с одинаковыми параметрами питания.");
             return Result.Cancelled;
         }
-        try { system.SelectPanel(panel); }
-        catch (Autodesk.Revit.Exceptions.ApplicationException)
+        try
+        {
+            doc.Regenerate();
+            system.SelectPanel(panel);
+            doc.Regenerate();
+            if (system.BaseEquipment?.Id != panel.Id)
+                throw new InvalidOperationException("Revit не подтвердил назначение выбранного щита.");
+        }
+        catch (Autodesk.Revit.Exceptions.RegenerationFailedException)
         {
             t.RollBack();
-            TaskDialog.Show("BotPlus ЭОМ", "Щит не принял группу. Проверьте, что у щита задана распределительная система, есть силовой соединитель, а напряжение совпадает с напряжением приборов.");
+            throw;
+        }
+        catch (Exception error) when (error is InvalidOperationException or Autodesk.Revit.Exceptions.ApplicationException)
+        {
+            var description = DescribeCircuit(system);
+            t.RollBack();
+            TaskDialog.Show("BotPlus ЭОМ", $"Щит «{panelName}» (ID {panel.Id.Value}) не принял цепь.\nЦепь: {description}.\nСистема распределения щита: {distributionName}.\n\n{error.Message}");
             return Result.Cancelled;
         }
-        var settings = EomStore.Settings(doc);
-        t.Commit();
+        if (t.Commit() != TransactionStatus.Committed) return Result.Failed;
         App.Etm?.Refresh(doc);
-        TaskDialog.Show("BotPlus ЭОМ", $"Группа {EomSettings.Mark(settings.GroupMask, system.PanelName, system.CircuitNumber)}: подключено приборов {ready.Count}." +
-            (noConnector.Count + busy.Count > 0 ? "\n\nПропущено:" + Skipped() : ""));
+        if (noConnector.Count + busy.Count > 0)
+            TaskDialog.Show("BotPlus ЭОМ", "Часть выбранных приборов пропущена." + Skipped());
         return Result.Succeeded;
     }
+
+    static string DescribeCircuit(ElectricalSystem circuit) =>
+        $"{UnitUtils.ConvertFromInternalUnits(circuit.Voltage, UnitTypeId.Volts):0.##} В · полюсов {circuit.PolesNumber}";
 }
 
 [Transaction(TransactionMode.ReadOnly)]
@@ -392,7 +433,7 @@ public sealed class SingleLineCommand : EomCommand
     {
         var doc = ui.Document; var settings = EomStore.Settings(doc);
         var panels = Network.Read(doc, settings).Panels.Where(p => p.Circuits.Count > 0).ToList();
-        if (panels.Count == 0) { TaskDialog.Show("BotPlus ЭОМ", "В проекте нет щитов с подключёнными группами. Подключите приборы командой «Подключить к щиту»."); return Result.Cancelled; }
+        if (panels.Count == 0) { TaskDialog.Show("BotPlus ЭОМ", "В проекте нет щитов с подключёнными группами. Выделите приборы на виде и нажмите «Подключить к панели» на плавающей панели."); return Result.Cancelled; }
         var window = EomUi.Window("Однолинейная схема", 480, 260);
         var list = new ComboBox { Width = 300, ItemsSource = panels.Select(p => $"{p.Name} — групп: {p.Circuits.Count}").ToList(), SelectedIndex = 0 };
         var sheet = new CheckBox { Content = "Разместить на новом листе", IsChecked = true, Margin = new System.Windows.Thickness(0, 8, 0, 0) };

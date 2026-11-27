@@ -1,6 +1,7 @@
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Events;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Windows.Interop;
 using System.Windows.Threading;
 
@@ -8,6 +9,8 @@ namespace BotPlus.RT;
 
 internal static class UpdateSession
 {
+    static readonly Guid DownloadsId = new("374DE290-123F-4565-9164-39C4925E467B");
+    const uint DontVerifyFolder = 0x00004000;
     internal static Version Current { get; } = Normalize(typeof(Application).Assembly.GetName().Version!);
     internal static ReleaseInfo? Latest { get; set; }
     internal static DateTime? CheckedAt { get; set; }
@@ -16,6 +19,19 @@ internal static class UpdateSession
         "BotPlus.RT", "Logs", "updates-" + DateTime.Now.ToString("yyyy-MM-dd") + ".log");
     internal static Version Normalize(Version v) => new(v.Major, v.Minor, Math.Max(0, v.Build));
     internal static string Display(Version v) => v.Build > 0 ? v.ToString(3) : v.ToString(2);
+    internal static string DownloadsFolder()
+    {
+        int result = SHGetKnownFolderPath(in DownloadsId, DontVerifyFolder, IntPtr.Zero, out IntPtr path);
+        try
+        {
+            Marshal.ThrowExceptionForHR(result);
+            return Marshal.PtrToStringUni(path) ?? throw new IOException("Не удалось найти системную папку «Загрузки».");
+        }
+        finally { Marshal.FreeCoTaskMem(path); }
+    }
+
+    [DllImport("shell32.dll", ExactSpelling = true)]
+    static extern int SHGetKnownFolderPath(in Guid folderId, uint flags, IntPtr token, out IntPtr path);
     internal static string Describe(Exception error) => error switch
     {
         OperationCanceledException => "Проверка прервана или превышено время ожидания.",

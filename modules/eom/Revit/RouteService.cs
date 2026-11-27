@@ -26,6 +26,8 @@ internal sealed class RouteService : IUpdater
         UpdaterRegistry.AddTrigger(instance.id, hosts, Element.GetChangeTypeElementAddition());
         UpdaterRegistry.AddTrigger(instance.id, hosts, Element.GetChangeTypeGeometry());
         UpdaterRegistry.AddTrigger(instance.id, hosts, Element.GetChangeTypeElementDeletion());
+        var fittings = new ElementMulticategoryFilter(new[] { BuiltInCategory.OST_ConduitFitting, BuiltInCategory.OST_CableTrayFitting });
+        UpdaterRegistry.AddTrigger(instance.id, fittings, Element.GetChangeTypeElementAddition());
     }
 
     internal static void Unregister()
@@ -39,6 +41,9 @@ internal sealed class RouteService : IUpdater
     {
         var doc = data.GetDocument();
         var added = data.GetAddedElementIds();
+        if (added.Count > 0 && RouteTools.TryMode(doc, out _))
+            foreach (var id in added)
+                if (doc.GetElement(id) is { } route) StyleNewElement(route);
         try { WiringSymbols.Follow(doc, data.GetModifiedElementIds(), data.GetDeletedElementIds()); }
         catch (Exception error) { WiringSymbols.LastError = error.Message; }
         if (Current == WiringSymbols.None || added.Count == 0 || doc.ActiveView is not ViewPlan view || view.IsTemplate) return;
@@ -54,6 +59,61 @@ internal sealed class RouteService : IUpdater
     }
 
     static readonly List<(Document Doc, ElementId View, ElementId Host)> pending = [];
+    static readonly Dictionary<(Document Doc, ElementId View, ElementId Element), bool> pendingColors = [];
+
+    internal static (byte R, byte G, byte B) SystemColor(bool emergency) => emergency ? ((byte)224, (byte)38, (byte)49) : ((byte)0, (byte)119, (byte)230);
+
+    internal static void StyleNewElement(Element route)
+    {
+        var doc = route.Document;
+        if (!RouteTools.TryMode(doc, out bool selected)) return;
+        bool? stored = EomStore.RouteEmergency(route);
+        bool emergency = stored ?? selected;
+        if (stored == null) EomStore.SaveRouteMode(route, emergency);
+        SetRouteColor(doc.ActiveView, route.Id, emergency);
+    }
+
+    static void ApplyRouteColor(View view, ElementId id, bool emergency)
+    {
+        var (r, g, b) = SystemColor(emergency);
+        using var color = new Color(r, g, b);
+        using var settings = view.GetElementOverrides(id);
+        settings.SetProjectionLineColor(color).SetCutLineColor(color);
+        view.SetElementOverrides(id, settings);
+    }
+
+    internal static void SetRouteColor(View view, ElementId id, bool emergency)
+    {
+        if (view.IsTemplate || !view.AreGraphicsOverridesAllowed()) return;
+        var key = (view.Document, view.Id, id);
+        try { ApplyRouteColor(view, id, emergency); pendingColors.Remove(key); }
+        catch (Autodesk.Revit.Exceptions.ApplicationException) { pendingColors[key] = emergency; }
+    }
+
+    static void RetryColors()
+    {
+        foreach (var group in pendingColors.ToList().GroupBy(x => x.Key.Doc))
+        {
+            var doc = group.Key;
+            if (doc.IsValidObject && doc.IsModifiable) continue;
+            foreach (var item in group) pendingColors.Remove(item.Key);
+            if (!doc.IsValidObject || doc.IsReadOnly) continue;
+            var targets = group.Where(x => doc.GetElement(x.Key.Element) != null && doc.GetElement(x.Key.View) is View { IsTemplate: false }).ToList();
+            if (targets.Count == 0) continue;
+            using var transaction = new Transaction(doc, "ЭОМ: цвета систем трасс");
+            try
+            {
+                if (transaction.Start() != TransactionStatus.Started) continue;
+                foreach (var (key, emergency) in targets) ApplyRouteColor((View)doc.GetElement(key.View), key.Element, emergency);
+                transaction.Commit();
+            }
+            catch (Exception error)
+            {
+                if (transaction.HasStarted()) transaction.RollBack();
+                System.Diagnostics.Trace.WriteLine(error);
+            }
+        }
+    }
     static (Document Doc, List<ElementId> Ids)? reselect;
 
     /// <summary>
@@ -79,6 +139,7 @@ internal sealed class RouteService : IUpdater
     /// <summary>Повтор неудавшихся обозначений вне построения трассы. Если и так не получилось — одно окно с причиной.</summary>
     internal static void OnIdling(object? sender, IdlingEventArgs e)
     {
+        if (pendingColors.Count > 0) RetryColors();
         if (reselect is { } r && sender is UIApplication ui && ui.ActiveUIDocument?.Document is { } active && active.Equals(r.Doc))
         {
             reselect = null;
